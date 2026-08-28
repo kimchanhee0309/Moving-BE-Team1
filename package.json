@@ -1,0 +1,28 @@
+{
+  "name": "moving-be-team1",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimchanhee0309/Moving-BE-Team1.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kimchanhee0309/Moving-BE-Team1/issues"
+  },
+  "homepage": "https://github.com/kimchanhee0309/Moving-BE-Team1#readme",
+  "dependencies": {
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
