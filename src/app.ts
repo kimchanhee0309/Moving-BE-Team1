@@ -8,6 +8,7 @@ import { notFoundHandler } from "./common/middleware/not-found-handler";
 import { env } from "./config/env";
 import { apiRouter } from "./routes";
 import { corsOptions } from "./config/cors";
+import { setupSwagger } from "./config/swagger";
 
 export const app = express();
 
@@ -31,6 +32,7 @@ app.use(
 
 app.use(cookieParser());
 app.use(csrfOriginGuard);
+setupSwagger(app);
 app.use("/", apiRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -142,4 +142,9 @@ export const env = {
     process.env.TRUST_PROXY,
     nodeEnvironment === "production",
   ),
+
+  SWAGGER_ENABLED: parseBoolean(
+    process.env.SWAGGER_ENABLED,
+    nodeEnvironment !== "production",
+  ),
 } as const;
