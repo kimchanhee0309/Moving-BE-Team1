@@ -11,3 +11,270 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum UserRole {
+  CUSTOMER
+  MOVEr
+}
+
+enum SocialProvider {
+  NAVER
+  GOOGLE
+  KAKAO
+}
+
+enum MoveRequestStatus {
+  WAITING
+  CONFIRMED
+  COMPLETED
+}
+
+enum QuoteStatus {
+  PROPOSED
+  REJECTED
+  CONFIRMED
+}
+
+enum NotificationType {
+  NEW_QUOTE
+  QUOTE_CONFIRMED
+  NEW_MOVE_REQUEST
+  MOVE_DAY
+}
+
+model User {
+  id             Int             @id @default(autoincrement())
+  role           UserRole
+  name           String          @db.VarChar(50)
+  passwordHash   String?         @db.VarChar(255)
+  email          String          @unique @db.VarChar(255)
+  phone          String?         @unique @db.VarChar(20)
+  socialProvider SocialProvider?
+  socialId       String?         @db.VarChar(255)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
+
+  customer      Customer?
+  mover         Mover?
+  notifications Notification[]
+
+  @@unique([socialProvider, socialId])
+  @@index([role])
+}
+
+model Customer {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique
+  profileImageUrl String?  @db.Text
+  regionId        Int
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  region Region @relation(fields: [regionId], references: [id], onDelete: Restrict)
+
+  serviceTypes CustomerServiceType[]
+  moveRequests MoveRequest[]
+  reviews      Review[]
+  favorites    Favorite[]
+
+  @@index([regionId])
+}
+
+model Mover {
+  id                Int      @id @default(autoincrement())
+  userId            Int      @unique
+  profileImageUrl   String?  @db.Text
+  nickname          String   @unique @db.VarChar(50)
+  careerYears       Int
+  shortIntroduction String   @db.VarChar(255)
+  description       String   @db.Text
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  serviceTypes       MoverServiceType[]
+  regions            MoverRegion[]
+  designatedRequests DesignatedRequest[]
+  quotes             Quote[]
+  reviews            Review[]
+  favorites          Favorite[]
+
+  @@index([nickname])
+}
+
+model ServiceType {
+  id   Int    @id @default(autoincrement())
+  name String @unique @db.VarChar(30)
+
+  customerServiceTypes CustomerServiceType[]
+  moverServiceTypes    MoverServiceType[]
+  moveRequests         MoveRequest[]
+}
+
+model Region {
+  id   Int    @id @default(autoincrement())
+  name String @unique @db.VarChar(30)
+
+  customers    Customer[]
+  moverRegions MoverRegion[]
+}
+
+model CustomerServiceType {
+  id            Int @id @default(autoincrement())
+  customerId    Int
+  serviceTypeId Int
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([customerId, serviceTypeId])
+  @@index([serviceTypeId])
+}
+
+model MoverServiceType {
+  id            Int @id @default(autoincrement())
+  moverId       Int
+  serviceTypeId Int
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([moverId, serviceTypeId])
+  @@index([serviceTypeId])
+}
+
+model MoverRegion {
+  id       Int @id @default(autoincrement())
+  moverId  Int
+  regionId Int
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  region Region @relation(fields: [regionId], references: [id], onDelete: Restrict)
+
+  @@unique([moverId, regionId])
+  @@index([regionId])
+}
+
+model MoveRequest {
+  id            Int               @id @default(autoincrement())
+  customerId    Int
+  serviceTypeId Int
+  moveDate      DateTime          @db.Timestamptz(3)
+  fromAddress   String            @db.VarChar(255)
+  toAddress     String            @db.VarChar(255)
+  status        MoveRequestStatus @default(WAITING)
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Restrict)
+
+  designatedRequests DesignatedRequest[]
+  quotes             Quote[]
+  review             Review?
+  notifications      Notification[]
+
+  @@index([customerId, status])
+  @@index([serviceTypeId, moveDate])
+  @@index([status, moveDate])
+}
+
+model DesignatedRequest {
+  id            Int      @id @default(autoincrement())
+  moveRequestId Int
+  moverId       Int
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  @@unique([moveRequestId, moverId])
+  @@index([moverId])
+}
+
+model Quote {
+  id            Int         @id @default(autoincrement())
+  moveRequestId Int
+  moverId       Int
+  price         Int?
+  comment       String?     @db.Text
+  status        QuoteStatus @default(PROPOSED)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  notifications Notification[]
+
+  @@unique([moveRequestId, moverId])
+  @@index([moveRequestId, status])
+  @@index([moverId, status])
+  @@index([status, createdAt])
+}
+
+model Review {
+  id            Int      @id @default(autoincrement())
+  customerId    Int
+  moveRequestId Int      @unique
+  moverId       Int
+  rating        Int
+  content       String   @db.Text
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([moverId, createdAt])
+}
+
+model Favorite {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  moverId    Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, moverId])
+  @@index([moverId])
+}
+
+model Notification {
+  id            Int              @id @default(autoincrement())
+  userId        Int
+  moveRequestId Int?
+  quoteId       Int?
+  type          NotificationType
+  title         String           @db.VarChar(100)
+  content       String           @db.Text
+  readAt        DateTime?        @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  moveRequest MoveRequest? @relation(fields: [moveRequestId], references: [id], onDelete: SetNull)
+  quote       Quote?       @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt, createdAt])
+  @@index([moveRequestId])
+  @@index([quoteId])
+}
