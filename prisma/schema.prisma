@@ -11,3 +11,68 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum UserRole {
+  CUSTOMER
+  MOVER
+}
+
+// 인증 도메인 최소 모델. 프로필 상세/이사 도메인은 해당 담당 기능에서 확장합니다.
+model User {
+  id               String @id @default(uuid())
+  email            String? @unique
+  name             String
+  phone            String?
+  passwordHash     String?
+  role             UserRole
+  profileCompleted Boolean @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  sessions         Session[]
+  oauthAccounts    OAuthAccount[]
+}
+
+model Session {
+  id               String @id @default(uuid())
+  userId           String
+  user             User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessTokenHash  String @unique
+  refreshTokenHash String @unique
+  accessExpiresAt  DateTime
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  previousTokens   SessionToken[]
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// 회전 전 토큰은 로그인에는 사용할 수 없고 동일 세션 로그아웃 식별에만 사용합니다.
+model SessionToken {
+  hash      String @id
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  @@index([sessionId])
+}
+
+model OAuthAccount {
+  id         String @id @default(uuid())
+  provider   String
+  providerId String
+  userId     String
+  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerId])
+  @@index([userId])
+}
+
+// 브라우저 바인딩과 일회용 콜백 검증. 공급자의 access token은 저장하지 않습니다.
+model OAuthState {
+  id          String @id
+  browserHash String
+  provider    String
+  role        UserRole
+  redirect    String
+  verifier    String
+  expiresAt   DateTime
+  @@index([expiresAt])
+}

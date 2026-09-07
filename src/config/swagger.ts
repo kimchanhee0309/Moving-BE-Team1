@@ -5,6 +5,7 @@ import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
 
 import { env } from "./env";
+import { authPaths } from "../modules/auth/auth.openapi";
 
 const apiDocumentPaths =
   env.NODE_ENV === "production"
@@ -20,6 +21,7 @@ const apiDocumentPaths =
 const swaggerSpecification = swaggerJsdoc({
   definition: {
     openapi: "3.0.3",
+    paths: authPaths,
 
     info: {
       title: "Moving API",

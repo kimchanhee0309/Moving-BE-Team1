@@ -4,6 +4,7 @@
   "description": "",
   "main": "dist/server.js",
   "scripts": {
+    "test": "tsx --test tests/*.test.ts",
     "start": "node --enable-source-maps dist/server.js",
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",

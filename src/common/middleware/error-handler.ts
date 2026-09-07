@@ -86,7 +86,9 @@ export const errorHandler: ErrorRequestHandler = (
   }
 
   if (env.NODE_ENV !== "production") {
-    console.error(`[$(request.method)] ${request.originalUrl}`, error);
+    // 인증 요청의 query/code, 계정 입력값이 예외 객체에 포함될 수 있어 원문을 남기지 않습니다.
+    if (request.path.startsWith("/auth")) console.error(`[${request.method}] ${request.path}: 인증 처리 오류`);
+    else console.error(`[${request.method}] ${request.path}`, error);
   }
 
   const responseBody: ApiErrorResponse = {
