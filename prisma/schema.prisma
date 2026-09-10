@@ -14,7 +14,7 @@ datasource db {
 
 enum UserRole {
   CUSTOMER
-  MOVEr
+  MOVER
 }
 
 enum SocialProvider {
