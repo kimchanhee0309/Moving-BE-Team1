@@ -1,0 +1,909 @@
+import { randomBytes, scrypt } from "node:crypto";
+
+import {
+  MoveRequestStatus,
+  NotificationType,
+  QuoteStatus,
+  UserRole,
+} from "../src/generated/prisma/client";
+import { prisma } from "../src/lib/prisma";
+
+const SEED_EMAIL_DOMAIN = "@seed.moving.local";
+const SEED_PASSWORD = "Moving1234!";
+
+const SCRYPT_KEY_LENGTH = 64;
+const SCRYPT_COST = 2 ** 14;
+const SCRYPT_BLOCK_SIZE = 8;
+const SCRYPT_PARALLELIZATION = 1;
+const SCRYPT_MAX_MEMORY = 64 * 1024 * 1024;
+
+const SERVICE_TYPE_NAMES = ["SMALL", "HOME", "OFFICE"] as const;
+
+type ServiceTypeName = (typeof SERVICE_TYPE_NAMES)[number];
+
+const REGION_NAMES = [
+  "SEOUL",
+  "BUSAN",
+  "DAEGU",
+  "INCHEON",
+  "GWANGJU",
+  "DAEJEON",
+  "ULSAN",
+  "SEJONG",
+  "GYEONGGI",
+  "GANGWON",
+  "CHUNGBUK",
+  "CHUNGNAM",
+  "JEONBUK",
+  "JEONNAM",
+  "GYEONGBUK",
+  "GYEONGNAM",
+  "JEJU",
+] as const;
+
+type RegionName = (typeof REGION_NAMES)[number];
+
+interface CustomerSeed {
+  name: string;
+  email: string;
+  phone: string;
+  region: RegionName;
+  serviceTypes: ServiceTypeName[];
+}
+
+interface MoverSeed {
+  name: string;
+  email: string;
+  phone: string;
+  nickname: string;
+  careerYears: number;
+  shortIntroduction: string;
+  description: string;
+  regions: RegionName[];
+  serviceTypes: ServiceTypeName[];
+}
+
+interface CreatedCustomer {
+  userId: string;
+  customerId: string;
+  name: string;
+}
+
+interface CreatedMover {
+  userId: string;
+  moverId: string;
+  name: string;
+  nickname: string;
+}
+
+interface CreatedMoveRequest {
+  moveRequestId: string;
+  customerId: string;
+  customerUserId: string;
+  customerName: string;
+  status: MoveRequestStatus;
+  selectedMoverIndex: number;
+  moveDate: Date;
+}
+
+const CUSTOMER_SEEDS: CustomerSeed[] = [
+  {
+    name: "김민서",
+    email: `customer01${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0001",
+    region: "SEOUL",
+    serviceTypes: ["SMALL", "HOME"],
+  },
+  {
+    name: "이서준",
+    email: `customer02${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0002",
+    region: "GYEONGGI",
+    serviceTypes: ["HOME"],
+  },
+  {
+    name: "박지우",
+    email: `customer03${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0003",
+    region: "INCHEON",
+    serviceTypes: ["SMALL", "OFFICE"],
+  },
+  {
+    name: "최유진",
+    email: `customer04${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0004",
+    region: "BUSAN",
+    serviceTypes: ["HOME", "OFFICE"],
+  },
+  {
+    name: "정도윤",
+    email: `customer05${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0005",
+    region: "DAEGU",
+    serviceTypes: ["SMALL"],
+  },
+  {
+    name: "한수아",
+    email: `customer06${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0006",
+    region: "DAEJEON",
+    serviceTypes: ["HOME"],
+  },
+  {
+    name: "오지호",
+    email: `customer07${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0007",
+    region: "GWANGJU",
+    serviceTypes: ["SMALL", "HOME"],
+  },
+  {
+    name: "윤서연",
+    email: `customer08${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0008",
+    region: "ULSAN",
+    serviceTypes: ["OFFICE"],
+  },
+  {
+    name: "강하준",
+    email: `customer09${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0009",
+    region: "SEJONG",
+    serviceTypes: ["SMALL", "OFFICE"],
+  },
+  {
+    name: "임채원",
+    email: `customer10${SEED_EMAIL_DOMAIN}`,
+    phone: "010-1000-0010",
+    region: "JEJU",
+    serviceTypes: ["HOME", "OFFICE"],
+  },
+];
+
+const MOVER_SEEDS: MoverSeed[] = [
+  {
+    name: "김동우",
+    email: `mover01${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0001",
+    nickname: "김코드",
+    careerYears: 8,
+    shortIntroduction: "꼼꼼하고 안전한 이사를 도와드립니다.",
+    description:
+      "서울과 경기 지역을 중심으로 소형이사, 가정이사, 사무실이사를 진행합니다.",
+    regions: ["SEOUL", "GYEONGGI", "INCHEON"],
+    serviceTypes: ["SMALL", "HOME", "OFFICE"],
+  },
+  {
+    name: "박준형",
+    email: `mover02${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0002",
+    nickname: "안전이사",
+    careerYears: 5,
+    shortIntroduction: "고객님의 짐을 내 물건처럼 운반합니다.",
+    description: "서울과 인천 지역의 원룸 및 가정이사를 전문으로 합니다.",
+    regions: ["SEOUL", "INCHEON"],
+    serviceTypes: ["SMALL", "HOME"],
+  },
+  {
+    name: "이현우",
+    email: `mover03${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0003",
+    nickname: "빠른손",
+    careerYears: 7,
+    shortIntroduction: "빠르고 정확한 이사 서비스를 제공합니다.",
+    description: "경기 남부 지역을 중심으로 다양한 이사를 진행하고 있습니다.",
+    regions: ["GYEONGGI", "SEOUL"],
+    serviceTypes: ["SMALL", "HOME", "OFFICE"],
+  },
+  {
+    name: "최동민",
+    email: `mover04${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0004",
+    nickname: "부산무빙",
+    careerYears: 10,
+    shortIntroduction: "부산 지역 이사는 믿고 맡겨주세요.",
+    description: "부산과 경남 지역에서 10년 동안 이사 서비스를 제공했습니다.",
+    regions: ["BUSAN", "GYEONGNAM", "ULSAN"],
+    serviceTypes: ["HOME", "OFFICE"],
+  },
+  {
+    name: "정성훈",
+    email: `mover05${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0005",
+    nickname: "대구이사왕",
+    careerYears: 6,
+    shortIntroduction: "합리적인 가격으로 안전하게 모십니다.",
+    description: "대구와 경북 지역의 소형 및 가정이사를 담당합니다.",
+    regions: ["DAEGU", "GYEONGBUK"],
+    serviceTypes: ["SMALL", "HOME"],
+  },
+  {
+    name: "한재민",
+    email: `mover06${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0006",
+    nickname: "정직한이사",
+    careerYears: 4,
+    shortIntroduction: "정직한 견적과 친절한 서비스를 약속드립니다.",
+    description: "대전, 세종, 충남 지역 이사를 전문적으로 진행합니다.",
+    regions: ["DAEJEON", "SEJONG", "CHUNGNAM"],
+    serviceTypes: ["SMALL", "HOME"],
+  },
+  {
+    name: "오태양",
+    email: `mover07${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0007",
+    nickname: "광주익스프레스",
+    careerYears: 9,
+    shortIntroduction: "숙련된 팀이 신속하게 작업합니다.",
+    description: "광주와 전남 지역의 가정 및 사무실이사를 진행합니다.",
+    regions: ["GWANGJU", "JEONNAM"],
+    serviceTypes: ["HOME", "OFFICE"],
+  },
+  {
+    name: "윤도현",
+    email: `mover08${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0008",
+    nickname: "울산베테랑",
+    careerYears: 12,
+    shortIntroduction: "오랜 경력으로 안전한 이사를 제공합니다.",
+    description: "울산과 부산 지역에서 가정이사와 사무실이사를 담당합니다.",
+    regions: ["ULSAN", "BUSAN"],
+    serviceTypes: ["HOME", "OFFICE"],
+  },
+  {
+    name: "강민혁",
+    email: `mover09${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0009",
+    nickname: "세종무빙",
+    careerYears: 3,
+    shortIntroduction: "젊고 활기찬 이사팀입니다.",
+    description: "세종과 대전 지역의 소형 및 가정이사를 진행합니다.",
+    regions: ["SEJONG", "DAEJEON"],
+    serviceTypes: ["SMALL", "HOME"],
+  },
+  {
+    name: "임재혁",
+    email: `mover10${SEED_EMAIL_DOMAIN}`,
+    phone: "010-2000-0010",
+    nickname: "제주이사꾼",
+    careerYears: 11,
+    shortIntroduction: "제주 지역 이사는 편안하게 맡겨주세요.",
+    description: "제주 전 지역의 가정이사와 사무실이사를 담당합니다.",
+    regions: ["JEJU"],
+    serviceTypes: ["SMALL", "HOME", "OFFICE"],
+  },
+];
+
+const MOVE_REQUEST_SEEDS = [
+  {
+    serviceType: "SMALL",
+    moveDateOffset: 5,
+    fromAddress: "서울특별시 중구 세종대로 110",
+    toAddress: "경기도 수원시 팔달구 효원로 241",
+    status: MoveRequestStatus.WAITING,
+  },
+  {
+    serviceType: "HOME",
+    moveDateOffset: 8,
+    fromAddress: "서울특별시 마포구 월드컵로 212",
+    toAddress: "인천광역시 남동구 정각로 29",
+    status: MoveRequestStatus.WAITING,
+  },
+  {
+    serviceType: "OFFICE",
+    moveDateOffset: 10,
+    fromAddress: "인천광역시 연수구 센트럴로 123",
+    toAddress: "서울특별시 강남구 테헤란로 152",
+    status: MoveRequestStatus.WAITING,
+  },
+  {
+    serviceType: "HOME",
+    moveDateOffset: 12,
+    fromAddress: "부산광역시 해운대구 센텀중앙로 55",
+    toAddress: "부산광역시 수영구 광안해변로 219",
+    status: MoveRequestStatus.WAITING,
+  },
+  {
+    serviceType: "SMALL",
+    moveDateOffset: 15,
+    fromAddress: "대구광역시 중구 공평로 88",
+    toAddress: "대구광역시 수성구 달구벌대로 2450",
+    status: MoveRequestStatus.WAITING,
+  },
+  {
+    serviceType: "HOME",
+    moveDateOffset: 18,
+    fromAddress: "대전광역시 서구 둔산로 100",
+    toAddress: "세종특별자치시 한누리대로 2130",
+    status: MoveRequestStatus.CONFIRMED,
+  },
+  {
+    serviceType: "HOME",
+    moveDateOffset: 20,
+    fromAddress: "광주광역시 서구 내방로 111",
+    toAddress: "전라남도 나주시 빛가람로 625",
+    status: MoveRequestStatus.CONFIRMED,
+  },
+  {
+    serviceType: "OFFICE",
+    moveDateOffset: 25,
+    fromAddress: "울산광역시 남구 중앙로 201",
+    toAddress: "부산광역시 동구 중앙대로 206",
+    status: MoveRequestStatus.CONFIRMED,
+  },
+  {
+    serviceType: "SMALL",
+    moveDateOffset: -7,
+    fromAddress: "세종특별자치시 도움6로 42",
+    toAddress: "대전광역시 유성구 대학로 99",
+    status: MoveRequestStatus.COMPLETED,
+  },
+  {
+    serviceType: "HOME",
+    moveDateOffset: -14,
+    fromAddress: "제주특별자치도 제주시 문연로 6",
+    toAddress: "제주특별자치도 서귀포시 중앙로 105",
+    status: MoveRequestStatus.COMPLETED,
+  },
+] satisfies {
+  serviceType: ServiceTypeName;
+  moveDateOffset: number;
+  fromAddress: string;
+  toAddress: string;
+  status: MoveRequestStatus;
+}[];
+
+function getRequiredId(
+  idMap: ReadonlyMap<string, string>,
+  key: string,
+): string {
+  const id = idMap.get(key);
+
+  if (!id) {
+    throw new Error(`${key}에 해당하는 seed 데이터를 찾을 수 없습니다.`);
+  }
+
+  return id;
+}
+
+function createDateFromNow(days: number, hour = 10): Date {
+  const date = new Date();
+
+  date.setDate(date.getDate() + days);
+  date.setHours(hour, 0, 0, 0);
+
+  return date;
+}
+
+function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+
+  return new Promise((resolve, reject) => {
+    scrypt(
+      password,
+      salt,
+      SCRYPT_KEY_LENGTH,
+      {
+        N: SCRYPT_COST,
+        r: SCRYPT_BLOCK_SIZE,
+        p: SCRYPT_PARALLELIZATION,
+        maxmem: SCRYPT_MAX_MEMORY,
+      },
+      (error, derivedKey) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(
+          [
+            "scrypt",
+            SCRYPT_COST,
+            SCRYPT_BLOCK_SIZE,
+            SCRYPT_PARALLELIZATION,
+            salt.toString("base64"),
+            derivedKey.toString("base64"),
+          ].join("$"),
+        );
+      },
+    );
+  });
+}
+
+function getSelectedMoverIndex(
+  requestIndex: number,
+  status: MoveRequestStatus,
+): number {
+  if (status === MoveRequestStatus.WAITING) {
+    return requestIndex;
+  }
+
+  // mover01 계정에서 확정·완료·반려 상태를 모두 확인할 수 있게 구성합니다.
+  if (requestIndex === 5 || requestIndex === 8) {
+    return 0;
+  }
+
+  return requestIndex;
+}
+
+async function createReferenceData(): Promise<{
+  serviceTypeIdMap: Map<string, string>;
+  regionIdMap: Map<string, string>;
+}> {
+  const serviceTypes = await Promise.all(
+    SERVICE_TYPE_NAMES.map((name) =>
+      prisma.serviceType.upsert({
+        where: {
+          name,
+        },
+        update: {},
+        create: {
+          name,
+        },
+      }),
+    ),
+  );
+
+  const regions = await Promise.all(
+    REGION_NAMES.map((name) =>
+      prisma.region.upsert({
+        where: {
+          name,
+        },
+        update: {},
+        create: {
+          name,
+        },
+      }),
+    ),
+  );
+
+  return {
+    serviceTypeIdMap: new Map(
+      serviceTypes.map((serviceType) => [serviceType.name, serviceType.id]),
+    ),
+    regionIdMap: new Map(regions.map((region) => [region.name, region.id])),
+  };
+}
+
+async function removePreviousSeedData(): Promise<void> {
+  await prisma.user.deleteMany({
+    where: {
+      email: {
+        endsWith: SEED_EMAIL_DOMAIN,
+      },
+    },
+  });
+}
+
+async function createCustomers(
+  passwordHashes: string[],
+  serviceTypeIdMap: ReadonlyMap<string, string>,
+  regionIdMap: ReadonlyMap<string, string>,
+): Promise<CreatedCustomer[]> {
+  const customers: CreatedCustomer[] = [];
+
+  for (const [index, seed] of CUSTOMER_SEEDS.entries()) {
+    const user = await prisma.user.create({
+      data: {
+        role: UserRole.CUSTOMER,
+        name: seed.name,
+        email: seed.email,
+        phone: seed.phone,
+        passwordHash: passwordHashes[index],
+        customer: {
+          create: {
+            regionId: getRequiredId(regionIdMap, seed.region),
+            serviceTypes: {
+              create: seed.serviceTypes.map((serviceType) => ({
+                serviceTypeId: getRequiredId(serviceTypeIdMap, serviceType),
+              })),
+            },
+          },
+        },
+      },
+      include: {
+        customer: true,
+      },
+    });
+
+    if (!user.customer) {
+      throw new Error(`${seed.email}의 일반 유저 프로필 생성에 실패했습니다.`);
+    }
+
+    customers.push({
+      userId: user.id,
+      customerId: user.customer.id,
+      name: user.name,
+    });
+  }
+
+  return customers;
+}
+
+async function createMovers(
+  passwordHashes: string[],
+  serviceTypeIdMap: ReadonlyMap<string, string>,
+  regionIdMap: ReadonlyMap<string, string>,
+): Promise<CreatedMover[]> {
+  const movers: CreatedMover[] = [];
+
+  for (const [index, seed] of MOVER_SEEDS.entries()) {
+    const user = await prisma.user.create({
+      data: {
+        role: UserRole.MOVER,
+        name: seed.name,
+        email: seed.email,
+        phone: seed.phone,
+        passwordHash: passwordHashes[index],
+        mover: {
+          create: {
+            nickname: seed.nickname,
+            careerYears: seed.careerYears,
+            shortIntroduction: seed.shortIntroduction,
+            description: seed.description,
+            serviceTypes: {
+              create: seed.serviceTypes.map((serviceType) => ({
+                serviceTypeId: getRequiredId(serviceTypeIdMap, serviceType),
+              })),
+            },
+            regions: {
+              create: seed.regions.map((region) => ({
+                regionId: getRequiredId(regionIdMap, region),
+              })),
+            },
+          },
+        },
+      },
+      include: {
+        mover: true,
+      },
+    });
+
+    if (!user.mover) {
+      throw new Error(`${seed.email}의 기사님 프로필 생성에 실패했습니다.`);
+    }
+
+    movers.push({
+      userId: user.id,
+      moverId: user.mover.id,
+      name: user.name,
+      nickname: user.mover.nickname,
+    });
+  }
+
+  return movers;
+}
+
+async function createMoveRequests(
+  customers: CreatedCustomer[],
+  movers: CreatedMover[],
+  serviceTypeIdMap: ReadonlyMap<string, string>,
+): Promise<CreatedMoveRequest[]> {
+  const moveRequests: CreatedMoveRequest[] = [];
+
+  for (const [index, seed] of MOVE_REQUEST_SEEDS.entries()) {
+    const customer = customers[index];
+    const selectedMoverIndex = getSelectedMoverIndex(index, seed.status);
+    const selectedMover = movers[selectedMoverIndex];
+
+    if (!customer || !selectedMover) {
+      throw new Error("요청 생성에 필요한 seed 사용자를 찾지 못했습니다.");
+    }
+
+    const moveDate = createDateFromNow(seed.moveDateOffset);
+    const moveRequest = await prisma.moveRequest.create({
+      data: {
+        customerId: customer.customerId,
+        serviceTypeId: getRequiredId(serviceTypeIdMap, seed.serviceType),
+        moveDate,
+        fromAddress: seed.fromAddress,
+        toAddress: seed.toAddress,
+        status: seed.status,
+        createdAt: createDateFromNow(-(10 - index), 9),
+      },
+    });
+
+    if (index % 2 === 0) {
+      await prisma.designatedRequest.create({
+        data: {
+          moveRequestId: moveRequest.id,
+          moverId: selectedMover.moverId,
+        },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: selectedMover.userId,
+          moveRequestId: moveRequest.id,
+          type: NotificationType.NEW_MOVE_REQUEST,
+          title: "새로운 지정 견적 요청이 도착했습니다.",
+          content: `${customer.name} 고객님이 지정 견적을 요청했습니다.`,
+        },
+      });
+    }
+
+    moveRequests.push({
+      moveRequestId: moveRequest.id,
+      customerId: customer.customerId,
+      customerUserId: customer.userId,
+      customerName: customer.name,
+      status: seed.status,
+      selectedMoverIndex,
+      moveDate,
+    });
+  }
+
+  return moveRequests;
+}
+
+async function createQuotesAndNotifications(
+  moveRequests: CreatedMoveRequest[],
+  movers: CreatedMover[],
+): Promise<number> {
+  let quoteCount = 0;
+
+  for (const [index, request] of moveRequests.entries()) {
+    const selectedMover = movers[request.selectedMoverIndex];
+
+    if (!selectedMover) {
+      throw new Error("견적 생성에 필요한 기사님을 찾지 못했습니다.");
+    }
+
+    const price = 120_000 + index * 20_000;
+
+    if (request.status === MoveRequestStatus.WAITING) {
+      const proposedQuote = await prisma.quote.create({
+        data: {
+          moveRequestId: request.moveRequestId,
+          moverId: selectedMover.moverId,
+          price,
+          comment: `${request.customerName} 고객님, 안전하고 꼼꼼하게 이사를 도와드리겠습니다.`,
+          status: QuoteStatus.PROPOSED,
+        },
+      });
+
+      quoteCount += 1;
+
+      await prisma.notification.create({
+        data: {
+          userId: request.customerUserId,
+          moveRequestId: request.moveRequestId,
+          quoteId: proposedQuote.id,
+          type: NotificationType.NEW_QUOTE,
+          title: "새로운 견적이 도착했습니다.",
+          content: `${selectedMover.nickname} 기사님이 견적을 보냈습니다.`,
+        },
+      });
+
+      if (index % 2 === 1) {
+        const rejectedMover = movers[(request.selectedMoverIndex + 1) % 10];
+
+        if (!rejectedMover) {
+          throw new Error("반려 견적 생성에 필요한 기사님을 찾지 못했습니다.");
+        }
+
+        await prisma.quote.create({
+          data: {
+            moveRequestId: request.moveRequestId,
+            moverId: rejectedMover.moverId,
+            price: null,
+            comment:
+              "해당 날짜에는 기존 일정이 있어 요청을 진행하기 어렵습니다.",
+            status: QuoteStatus.REJECTED,
+          },
+        });
+
+        quoteCount += 1;
+      }
+
+      continue;
+    }
+
+    const confirmedQuote = await prisma.quote.create({
+      data: {
+        moveRequestId: request.moveRequestId,
+        moverId: selectedMover.moverId,
+        price,
+        comment: `${request.customerName} 고객님, 선택해 주셔서 감사합니다. 안전하게 진행하겠습니다.`,
+        status: QuoteStatus.CONFIRMED,
+      },
+    });
+
+    quoteCount += 1;
+
+    const rejectedMoverIndex =
+      request.selectedMoverIndex === index
+        ? (index + 1) % movers.length
+        : index;
+
+    const rejectedMover = movers[rejectedMoverIndex];
+
+    if (!rejectedMover) {
+      throw new Error("반려 견적 생성에 필요한 기사님을 찾지 못했습니다.");
+    }
+
+    await prisma.quote.create({
+      data: {
+        moveRequestId: request.moveRequestId,
+        moverId: rejectedMover.moverId,
+        price: null,
+        comment: "다른 일정으로 인해 해당 요청을 진행하기 어렵습니다.",
+        status: QuoteStatus.REJECTED,
+      },
+    });
+
+    quoteCount += 1;
+
+    await prisma.notification.createMany({
+      data: [
+        {
+          userId: request.customerUserId,
+          moveRequestId: request.moveRequestId,
+          quoteId: confirmedQuote.id,
+          type: NotificationType.QUOTE_CONFIRMED,
+          title: "견적이 확정되었습니다.",
+          content: `${selectedMover.nickname} 기사님의 견적이 확정되었습니다.`,
+        },
+        {
+          userId: selectedMover.userId,
+          moveRequestId: request.moveRequestId,
+          quoteId: confirmedQuote.id,
+          type: NotificationType.QUOTE_CONFIRMED,
+          title: "고객님이 견적을 확정했습니다.",
+          content: `${request.customerName} 고객님이 견적을 확정했습니다.`,
+        },
+      ],
+    });
+
+    if (request.status === MoveRequestStatus.COMPLETED) {
+      await prisma.notification.createMany({
+        data: [
+          {
+            userId: request.customerUserId,
+            moveRequestId: request.moveRequestId,
+            quoteId: confirmedQuote.id,
+            type: NotificationType.MOVE_DAY,
+            title: "이사 완료 내역을 확인해 주세요.",
+            content:
+              "이사가 완료되었습니다. 기사님에 대한 리뷰를 작성해 주세요.",
+          },
+          {
+            userId: selectedMover.userId,
+            moveRequestId: request.moveRequestId,
+            quoteId: confirmedQuote.id,
+            type: NotificationType.MOVE_DAY,
+            title: "이사 일정이 완료되었습니다.",
+            content: `${request.customerName} 고객님의 이사 일정이 완료되었습니다.`,
+          },
+        ],
+      });
+    }
+  }
+
+  return quoteCount;
+}
+
+async function createFavorites(
+  customers: CreatedCustomer[],
+  movers: CreatedMover[],
+): Promise<number> {
+  let favoriteCount = 0;
+
+  for (const [index, customer] of customers.entries()) {
+    const favoriteMoverIndexes = new Set([0, (index + 2) % movers.length]);
+
+    for (const moverIndex of favoriteMoverIndexes) {
+      const mover = movers[moverIndex];
+
+      if (!mover) {
+        throw new Error("찜 생성에 필요한 기사님을 찾지 못했습니다.");
+      }
+
+      await prisma.favorite.create({
+        data: {
+          customerId: customer.customerId,
+          moverId: mover.moverId,
+        },
+      });
+
+      favoriteCount += 1;
+    }
+  }
+
+  return favoriteCount;
+}
+
+async function createReviews(
+  moveRequests: CreatedMoveRequest[],
+  movers: CreatedMover[],
+): Promise<number> {
+  let reviewCount = 0;
+
+  for (const request of moveRequests) {
+    if (request.status !== MoveRequestStatus.COMPLETED) {
+      continue;
+    }
+
+    const mover = movers[request.selectedMoverIndex];
+
+    if (!mover) {
+      throw new Error("리뷰 생성에 필요한 기사님을 찾지 못했습니다.");
+    }
+
+    await prisma.review.create({
+      data: {
+        customerId: request.customerId,
+        moveRequestId: request.moveRequestId,
+        moverId: mover.moverId,
+        rating: reviewCount === 0 ? 5 : 4,
+        content:
+          reviewCount === 0
+            ? "친절하고 꼼꼼하게 이사를 진행해 주셔서 만족했습니다."
+            : "시간 약속을 잘 지켜주셨고 짐도 안전하게 운반해 주셨습니다.",
+      },
+    });
+
+    reviewCount += 1;
+  }
+
+  return reviewCount;
+}
+
+async function main(): Promise<void> {
+  console.log("개발용 seed 데이터 생성을 시작합니다.");
+
+  await removePreviousSeedData();
+
+  const { serviceTypeIdMap, regionIdMap } = await createReferenceData();
+
+  const customerPasswordHashes = await Promise.all(
+    CUSTOMER_SEEDS.map(() => hashPassword(SEED_PASSWORD)),
+  );
+
+  const moverPasswordHashes = await Promise.all(
+    MOVER_SEEDS.map(() => hashPassword(SEED_PASSWORD)),
+  );
+
+  const customers = await createCustomers(
+    customerPasswordHashes,
+    serviceTypeIdMap,
+    regionIdMap,
+  );
+
+  const movers = await createMovers(
+    moverPasswordHashes,
+    serviceTypeIdMap,
+    regionIdMap,
+  );
+
+  const moveRequests = await createMoveRequests(
+    customers,
+    movers,
+    serviceTypeIdMap,
+  );
+
+  const quoteCount = await createQuotesAndNotifications(moveRequests, movers);
+
+  const favoriteCount = await createFavorites(customers, movers);
+  const reviewCount = await createReviews(moveRequests, movers);
+
+  console.log("개발용 seed 데이터 생성이 완료되었습니다.");
+  console.log({
+    users: customers.length + movers.length,
+    customers: customers.length,
+    movers: movers.length,
+    moveRequests: moveRequests.length,
+    quotes: quoteCount,
+    favorites: favoriteCount,
+    reviews: reviewCount,
+  });
+}
+
+main()
+  .catch((error: unknown) => {
+    console.error("개발용 seed 데이터 생성에 실패했습니다.", error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

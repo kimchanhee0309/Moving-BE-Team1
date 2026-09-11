@@ -43,7 +43,7 @@ enum NotificationType {
 }
 
 model User {
-  id             Int             @id @default(autoincrement())
+  id             String          @id @default(uuid()) @db.Uuid
   role           UserRole
   name           String          @db.VarChar(50)
   passwordHash   String?         @db.VarChar(255)
@@ -63,10 +63,10 @@ model User {
 }
 
 model Customer {
-  id              Int      @id @default(autoincrement())
-  userId          Int      @unique
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @db.Uuid
   profileImageUrl String?  @db.Text
-  regionId        Int
+  regionId        String   @db.Uuid
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @db.Timestamptz(3)
 
@@ -82,8 +82,8 @@ model Customer {
 }
 
 model Mover {
-  id                Int      @id @default(autoincrement())
-  userId            Int      @unique
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique @db.Uuid
   profileImageUrl   String?  @db.Text
   nickname          String   @unique @db.VarChar(50)
   careerYears       Int
@@ -105,7 +105,7 @@ model Mover {
 }
 
 model ServiceType {
-  id   Int    @id @default(autoincrement())
+  id   String @id @default(uuid()) @db.Uuid
   name String @unique @db.VarChar(30)
 
   customerServiceTypes CustomerServiceType[]
@@ -114,7 +114,7 @@ model ServiceType {
 }
 
 model Region {
-  id   Int    @id @default(autoincrement())
+  id   String @id @default(uuid()) @db.Uuid
   name String @unique @db.VarChar(30)
 
   customers    Customer[]
@@ -122,9 +122,9 @@ model Region {
 }
 
 model CustomerServiceType {
-  id            Int @id @default(autoincrement())
-  customerId    Int
-  serviceTypeId Int
+  id            String @id @default(uuid()) @db.Uuid
+  customerId    String @db.Uuid
+  serviceTypeId String @db.Uuid
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
@@ -135,9 +135,9 @@ model CustomerServiceType {
 }
 
 model MoverServiceType {
-  id            Int @id @default(autoincrement())
-  moverId       Int
-  serviceTypeId Int
+  id            String @id @default(uuid()) @db.Uuid
+  moverId       String @db.Uuid
+  serviceTypeId String @db.Uuid
 
   mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
 
@@ -148,9 +148,9 @@ model MoverServiceType {
 }
 
 model MoverRegion {
-  id       Int @id @default(autoincrement())
-  moverId  Int
-  regionId Int
+  id       String @id @default(uuid()) @db.Uuid
+  moverId  String @db.Uuid
+  regionId String @db.Uuid
 
   mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
 
@@ -161,9 +161,9 @@ model MoverRegion {
 }
 
 model MoveRequest {
-  id            Int               @id @default(autoincrement())
-  customerId    Int
-  serviceTypeId Int
+  id            String            @id @default(uuid()) @db.Uuid
+  customerId    String            @db.Uuid
+  serviceTypeId String            @db.Uuid
   moveDate      DateTime          @db.Timestamptz(3)
   fromAddress   String            @db.VarChar(255)
   toAddress     String            @db.VarChar(255)
@@ -186,9 +186,9 @@ model MoveRequest {
 }
 
 model DesignatedRequest {
-  id            Int      @id @default(autoincrement())
-  moveRequestId Int
-  moverId       Int
+  id            String   @id @default(uuid()) @db.Uuid
+  moveRequestId String   @db.Uuid
+  moverId       String   @db.Uuid
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @db.Timestamptz(3)
 
@@ -201,9 +201,9 @@ model DesignatedRequest {
 }
 
 model Quote {
-  id            Int         @id @default(autoincrement())
-  moveRequestId Int
-  moverId       Int
+  id            String      @id @default(uuid()) @db.Uuid
+  moveRequestId String      @db.Uuid
+  moverId       String      @db.Uuid
   price         Int?
   comment       String?     @db.Text
   status        QuoteStatus @default(PROPOSED)
@@ -223,10 +223,10 @@ model Quote {
 }
 
 model Review {
-  id            Int      @id @default(autoincrement())
-  customerId    Int
-  moveRequestId Int      @unique
-  moverId       Int
+  id            String   @id @default(uuid()) @db.Uuid
+  customerId    String   @db.Uuid
+  moveRequestId String   @unique @db.Uuid
+  moverId       String   @db.Uuid
   rating        Int
   content       String   @db.Text
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
@@ -243,9 +243,9 @@ model Review {
 }
 
 model Favorite {
-  id         Int      @id @default(autoincrement())
-  customerId Int
-  moverId    Int
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
+  moverId    String   @db.Uuid
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
   updatedAt  DateTime @updatedAt @db.Timestamptz(3)
 
@@ -258,10 +258,10 @@ model Favorite {
 }
 
 model Notification {
-  id            Int              @id @default(autoincrement())
-  userId        Int
-  moveRequestId Int?
-  quoteId       Int?
+  id            String           @id @default(uuid()) @db.Uuid
+  userId        String           @db.Uuid
+  moveRequestId String?          @db.Uuid
+  quoteId       String?          @db.Uuid
   type          NotificationType
   title         String           @db.VarChar(100)
   content       String           @db.Text
