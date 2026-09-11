@@ -18,7 +18,7 @@
 - 사용자가 현재 요청에서 명시적으로 허용하지 않으면 수정·이동·삭제·이름 변경하지 않는다.
 - `AGENTS.override.md`나 도구별 파일로 규칙을 우회하지 않는다.
 - 규칙 변경은 기능 코드와 분리하고 팀 리뷰를 받는다.
-- UTF-8 기준 16 KiB 이하를 목표로 하며 반드시 32 KiB 미만을 유지한다.
+- 모든 AI 도구가 안정적으로 읽도록 핵심 규칙 위주로 작성하고 UTF-8 기준 32 KiB 미만을 유지한다.
 
 ## 1. 프로젝트와 용어
 
@@ -215,7 +215,7 @@ Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 �
 
 현재 변수: `NODE_ENV`, `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `COOKIE_DOMAIN`, `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `ACCESS_TOKEN_MAX_AGE_MS`, `REFRESH_TOKEN_MAX_AGE_MS`, `TRUST_PROXY`, `SWAGGER_ENABLED`.
 
-## 12. 네이밍과 TypeScript
+## 12. 네이밍, TypeScript와 필수 주석
 
 - 변수·함수 `camelCase`, class·type·interface·enum `PascalCase`, 상수 `UPPER_SNAKE_CASE`.
 - boolean은 `is/has/can/should`, 함수는 동사로 시작한다.
@@ -223,9 +223,13 @@ Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 �
 - double quote, semicolon, trailing comma, `import type`을 유지한다.
 - `any`, `@ts-ignore`, 근거 없는 assertion과 non-null assertion을 사용하지 않는다.
 - 외부 입력은 `unknown`에서 검증하고 params·query 문자열 변환 실패를 처리한다.
-- debug log, 미사용 코드, 코드를 반복하는 주석을 남기지 않는다.
-- 권한·상태 전이·transaction·timezone·보안처럼 이유가 숨은 결정만 주석으로 설명한다.
-- `TODO`에는 확인할 계약과 제거 조건을 적고 임시 구현을 완료로 보고하지 않는다.
+- 생성하거나 수정한 모든 기능 파일에는 한국어 주석을 반드시 작성한다. 파일 상단에는 담당 기능, 계층의 책임, 주요 처리 흐름, 의존 대상과 담당하지 않는 범위를 설명한다.
+- export 함수·class·middleware에는 JSDoc으로 목적, parameter, 반환값, 발생 가능한 오류와 DB·cookie·token 같은 부수 효과를 구체적으로 적는다.
+- Router·Controller·Service·Repository에는 입력 검증 → 인증·인가 → 비즈니스 규칙·상태 전이 → DB 처리 → 응답의 해당 단계를 주석으로 구분한다.
+- 복잡한 조건, 예외, transaction, 동시성, 보안, Prisma query에는 무엇을 하는지뿐 아니라 왜 필요한지와 실패 시 동작을 가까운 위치에 설명한다.
+- DTO·enum·상수에는 API 필드의 의미, 허용값, 단위, nullable 여부와 제한을 적고, 테스트에는 시나리오·사전 조건·기대 결과를 적는다.
+- 코드 한 줄을 그대로 읽는 주석만 반복하는 것은 상세 주석으로 인정하지 않는다. 구현 변경 시 주석도 함께 갱신하고 낡은 주석은 제거한다.
+- `TODO`에는 미확정 계약, 확인 담당과 제거 조건을 적는다. 임시 구현을 완료로 보고하거나 주석에 비밀정보를 남기지 않는다.
 
 ## 13. 테스트와 검증
 
