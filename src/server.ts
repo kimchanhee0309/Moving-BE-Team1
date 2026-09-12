@@ -56,7 +56,7 @@ process.on("SIGINT", () => {
 process.on("uncaughtException", () => {
   console.error("처리되지 않은 예외가 발생했습니다.");
 
-  void shutdown("uncaughtExcption", 1);
+  void shutdown("uncaughtException", 1);
 });
 
 process.on("unhandledRejection", () => {
