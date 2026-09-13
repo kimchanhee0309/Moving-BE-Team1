@@ -1,5 +1,7 @@
-import { randomBytes, scrypt } from "node:crypto";
-
+/**
+ * 로컬 개발용 사용자와 도메인 예시 데이터를 생성합니다.
+ * Seed 계정도 실제 Auth와 같은 bcrypt 해시를 사용하며 실행 전 기존 seed 전용 데이터를 삭제합니다.
+ */
 import {
   MoveRequestStatus,
   NotificationType,
@@ -7,15 +9,10 @@ import {
   UserRole,
 } from "../src/generated/prisma/client";
 import { prisma } from "../src/lib/prisma";
+import { hashPassword } from "../src/modules/auth/password";
 
 const SEED_EMAIL_DOMAIN = "@seed.moving.local";
 const SEED_PASSWORD = "Moving1234!";
-
-const SCRYPT_KEY_LENGTH = 64;
-const SCRYPT_COST = 2 ** 14;
-const SCRYPT_BLOCK_SIZE = 8;
-const SCRYPT_PARALLELIZATION = 1;
-const SCRYPT_MAX_MEMORY = 64 * 1024 * 1024;
 
 const SERVICE_TYPE_NAMES = ["SMALL", "HOME", "OFFICE"] as const;
 
@@ -372,41 +369,6 @@ function createDateFromNow(days: number, hour = 10): Date {
   date.setHours(hour, 0, 0, 0);
 
   return date;
-}
-
-function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16);
-
-  return new Promise((resolve, reject) => {
-    scrypt(
-      password,
-      salt,
-      SCRYPT_KEY_LENGTH,
-      {
-        N: SCRYPT_COST,
-        r: SCRYPT_BLOCK_SIZE,
-        p: SCRYPT_PARALLELIZATION,
-        maxmem: SCRYPT_MAX_MEMORY,
-      },
-      (error, derivedKey) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve(
-          [
-            "scrypt",
-            SCRYPT_COST,
-            SCRYPT_BLOCK_SIZE,
-            SCRYPT_PARALLELIZATION,
-            salt.toString("base64"),
-            derivedKey.toString("base64"),
-          ].join("$"),
-        );
-      },
-    );
-  });
 }
 
 function getSelectedMoverIndex(
