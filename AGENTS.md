@@ -44,7 +44,7 @@ Moving은 이사 소비자와 이사 전문가를 연결하는 견적 매칭 서
 
 상위 자료가 하위 계약의 수정을 자동 허가하지는 않는다. 불일치를 발견하면 파일·필드·영향을 보고하고 팀 결정을 기다린다. 이미지나 과거 문서를 최신 계약으로 단정하지 않는다.
 
-현재 Swagger의 `QuoteStatus.PENDING`과 Prisma의 `QuoteStatus.PROPOSED`가 다르다. 관련 기능에서 임의 매핑하거나 한쪽을 수정하지 말고 팀에 기준값을 확인한다.
+현재 Swagger와 Prisma의 `QuoteStatus`는 `PROPOSED`, `CONFIRMED`, `REJECTED`를 사용한다. 공통 enum은 한쪽만 변경하지 않고 Schema·Swagger·테스트를 함께 갱신한다.
 
 ## 3. 작업 절차
 
@@ -82,9 +82,14 @@ npm start                빌드 결과 실행
 npm run prisma:generate  Prisma Client 생성
 npm run prisma:migrate   개발 migration
 npm run prisma:studio    Prisma Studio
+npm run lint             ESLint 검사
+npm test                 Jest 단위 테스트
+npm run test:watch       Jest watch 모드
+npm run test:coverage    Jest coverage
+npm run test:ci          직렬 실행과 coverage 검사
 ```
 
-현재 lint·test script는 없다. 빈 `test.ts`를 테스트로 보고하지 않는다. Prisma seed 명령은 `prisma.config.ts`의 `tsx prisma/seed.ts`이며 DB 데이터를 삭제·생성하므로 승인 없이 실행하지 않는다.
+Jest는 TypeScript 단위 테스트에 사용한다. Supertest 기반 통합·E2E 테스트는 MVP 이후 팀 승인 후 추가한다. 빈 placeholder를 테스트로 보고하지 않는다. Prisma seed 명령은 `prisma.config.ts`의 `tsx prisma/seed.ts`이며 DB 데이터를 삭제·생성하므로 승인 없이 실행하지 않는다.
 
 ## 5. 실제 구조와 책임
 
@@ -156,11 +161,15 @@ tests/                   통합·E2E 테스트
 ```json
 {
   "success": false,
-  "error": { "code": "ERROR_CODE", "message": "메시지", "details": {} }
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "메시지",
+    "details": [{ "field": "email", "reason": "이메일 형식 오류" }]
+  }
 }
 ```
 
-- 입력 오류는 필요한 경우 field별 `details`를 제공한다.
+- 입력 오류는 필요한 경우 `{ "field": string, "reason": string }[]` 형태의 `details`를 제공한다.
 - stack, SQL, Prisma 원문, token, cookie, 개인정보를 응답·로그에 노출하지 않는다.
 - 의미에 따라 201·204·400·401·403·404·409를 사용하되 확정 명세가 우선이다.
 - Prisma model을 응답 DTO로 그대로 노출하지 않고 password hash와 내부 필드를 제외한다.
@@ -179,7 +188,13 @@ tests/                   통합·E2E 테스트
 - CUSTOMER는 자신의 요청·견적·찜·리뷰만 변경할 수 있다.
 - MOVER는 자신의 profile과 허용된 요청·견적만 변경할 수 있다.
 
-Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 구현 전 팀 명세를 확인한다. 필요한 환경변수와 보안 정책을 함께 문서화한다.
+- 일반 이메일 비밀번호는 `bcrypt`로 해싱하며 평문과 hash를 로그·응답에 노출하지 않는다.
+- JWT는 HS256과 Access/Refresh 전용 Secret을 사용하고 Access Token은 30분, Refresh Token은 7일로 발급한다.
+- Refresh API는 Stateless 정책 안에서 Access/Refresh Token을 모두 회전한다. DB session·token 저장과 즉시 폐기는 MVP 범위에 포함하지 않는다.
+- `profileCompleted`는 `User` 필드를 추가하지 않고 역할에 해당하는 `Customer` 또는 `Mover` relation 존재 여부로 계산한다.
+- Google·Kakao·Naver OAuth와 OAuth State는 공급자 설정·callback·State 정책을 확정한 별도 작업에서 구현한다.
+
+Token 정책을 바꾸거나 DB 기반 refresh 폐기를 추가할 때는 팀 명세, 환경변수, Swagger, 테스트를 함께 갱신한다.
 
 ## 9. 사용자 흐름과 비즈니스 규칙
 
@@ -210,10 +225,10 @@ Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 �
 
 - 환경변수 접근과 검증은 `src/config/env.ts`를 통한다.
 - `.env`, DB URL, token·OAuth secret, 개인키를 commit·log·문서 예시에 넣지 않는다.
-- 새 변수에는 안전한 placeholder를 담은 추적 가능한 `.env.example`이 필요하다. 현재 `.gitignore`가 `.env.example`도 제외하므로 추가 전에 팀과 수정 범위를 확인한다.
+- 새 변수에는 실제 비밀값이 아닌 안전한 placeholder를 담은 추적 가능한 `.env.example`이 필요하다.
 - production에서 빈 CORS origin이나 `SameSite=None`과 insecure cookie 조합을 허용하지 않는다.
 
-현재 변수: `NODE_ENV`, `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `COOKIE_DOMAIN`, `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `ACCESS_TOKEN_MAX_AGE_MS`, `REFRESH_TOKEN_MAX_AGE_MS`, `TRUST_PROXY`, `SWAGGER_ENABLED`.
+현재 변수: `NODE_ENV`, `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`, `JWT_ISSUER`, `COOKIE_DOMAIN`, `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `ACCESS_TOKEN_MAX_AGE_MS`, `REFRESH_TOKEN_MAX_AGE_MS`, `TRUST_PROXY`, `SWAGGER_ENABLED`.
 
 ## 12. 네이밍, TypeScript와 필수 주석
 
@@ -233,14 +248,14 @@ Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 �
 
 ## 13. 테스트와 검증
 
-테스트 도구를 승인 없이 설치하지 않는다. 환경이 정해지면 정상 흐름 외에 다음을 검증한다.
+현재 단위 테스트 도구는 Jest와 ts-jest다. 새 테스트 도구와 Supertest는 승인 없이 설치하지 않는다. 정상 흐름 외에 다음을 검증한다.
 
 - DTO 실패, 401, role·소유권 403, 없음 404, 중복·상태 충돌 409
 - CUSTOMER/MOVER 경계와 다른 사용자의 resource 접근
 - transaction rollback, 동시 확정·중복 생성
 - pagination·filter·sort 경계와 민감정보 제외
 
-현재 최소 검증은 `npm run typecheck`, `npm run build`, `git diff --check`다. API 변경 시 Swagger와 실제 응답도 대조한다. DB 검증을 못 하면 필요한 환경과 미검증 범위를 보고한다.
+현재 최소 검증은 `npm run typecheck`, `npm run build`, `npm run lint`, `npm test`, `git diff --check`다. API 변경 시 Swagger와 실제 응답도 대조한다. DB 검증을 못 하면 필요한 환경과 미검증 범위를 보고한다.
 
 ## 14. Git과 PR
 
