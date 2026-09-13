@@ -1,8 +1,15 @@
 import { HTTP_STATUS } from "../constants/http-status";
 
-export interface ErrorDetails {
-  [field: string]: string | string[];
+/**
+ * API 명세가 정한 필드별 검증 오류 한 건입니다.
+ * 클라이언트는 field로 입력 항목을 찾고 reason을 사용자에게 표시합니다.
+ */
+export interface ErrorDetail {
+  field: string;
+  reason: string;
 }
+
+export type ErrorDetails = ErrorDetail[];
 
 interface AppErrorOptions {
   status: number;

@@ -135,19 +135,20 @@ const swaggerSpecification = swaggerJsdoc({
                 },
 
                 details: {
-                  type: "object",
-                  additionalProperties: {
-                    oneOf: [
-                      {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["field", "reason"],
+                    properties: {
+                      field: {
                         type: "string",
+                        example: "email",
                       },
-                      {
-                        type: "array",
-                        items: {
-                          type: "string",
-                        },
+                      reason: {
+                        type: "string",
+                        example: "올바른 이메일 형식이 아닙니다.",
                       },
-                    ],
+                    },
                   },
                 },
               },

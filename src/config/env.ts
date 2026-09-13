@@ -1,5 +1,10 @@
 import "dotenv/config";
 
+/**
+ * 서버 전역 환경변수를 한 곳에서 검증합니다.
+ * Secret 원문을 로그에 남기지 않으며 잘못된 보안 조합은 서버 시작 전에 차단합니다.
+ */
+
 type NodeEnvironment = "development" | "test" | "production";
 
 type CookieSameSite = "lax" | "strict" | "none";
@@ -12,6 +17,16 @@ function getRequiredEnvironmentVariable(name: string): string {
   }
 
   return value;
+}
+
+function getRequiredSecret(name: string): string {
+  const secret = getRequiredEnvironmentVariable(name);
+
+  if (secret.length < 32) {
+    throw new Error(`${name}은 32자 이상이어야 합니다.`);
+  }
+
+  return secret;
 }
 
 function parseNodeEnvironment(value: string | undefined): NodeEnvironment {
@@ -118,6 +133,12 @@ export const env = {
 
   DATABASE_URL: getRequiredEnvironmentVariable("DATABASE_URL"),
 
+  ACCESS_TOKEN_SECRET: getRequiredSecret("ACCESS_TOKEN_SECRET"),
+
+  REFRESH_TOKEN_SECRET: getRequiredSecret("REFRESH_TOKEN_SECRET"),
+
+  JWT_ISSUER: process.env.JWT_ISSUER?.trim() || "moving-api",
+
   CORS_ORIGINS: parseCorsOrigins(process.env.CORS_ORIGINS, nodeEnvironment),
 
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
@@ -128,7 +149,7 @@ export const env = {
 
   ACCESS_TOKEN_MAX_AGE_MS: parsePositiveInteger(
     process.env.ACCESS_TOKEN_MAX_AGE_MS,
-    15 * 60 * 1000,
+    30 * 60 * 1000,
     "ACCESS_TOKEN_MAX_AGE_MS",
   ),
 
