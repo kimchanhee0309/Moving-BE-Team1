@@ -100,6 +100,7 @@ model Mover {
   quotes             Quote[]
   reviews            Review[]
   favorites          Favorite[]
+  requestRejections  RequestRejection[]
 
   @@index([nickname])
 }
@@ -179,6 +180,7 @@ model MoveRequest {
   quotes             Quote[]
   review             Review?
   notifications      Notification[]
+  requestRejections  RequestRejection[]
 
   @@index([customerId, status])
   @@index([serviceTypeId, moveDate])
@@ -277,4 +279,18 @@ model Notification {
   @@index([userId, readAt, createdAt])
   @@index([moveRequestId])
   @@index([quoteId])
+}
+
+model RequestRejection {
+  id            String   @id @default(uuid())
+  moveRequestId String
+  moverId       String
+  reason        String
+  createdAt     DateTime @default(now())
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id])
+  mover       Mover       @relation(fields: [moverId], references: [id])
+
+  @@unique([moveRequestId, moverId])
+  @@index([moverId, createdAt])
 }

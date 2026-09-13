@@ -103,7 +103,7 @@ const swaggerSpecification = swaggerJsdoc({
 
         QuoteStatus: {
           type: "string",
-          enum: ["PENDING", "CONFIRMED", "REJECTED"],
+          enum: ["PROPOSED", "CONFIRMED", "REJECTED"],
         },
 
         MoveRequestStatus: {
