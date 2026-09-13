@@ -70,7 +70,7 @@ export const errorHandler: ErrorRequestHandler = (
       return;
     }
 
-    if (error.code == "P2025") {
+    if (error.code === "P2025") {
       const responseBody: ApiErrorResponse = {
         success: false,
         error: {
@@ -86,7 +86,7 @@ export const errorHandler: ErrorRequestHandler = (
   }
 
   if (env.NODE_ENV !== "production") {
-    console.error(`[$(request.method)] ${request.originalUrl}`, error);
+    console.error(`[${request.method}] ${request.originalUrl}`, error);
   }
 
   const responseBody: ApiErrorResponse = {
