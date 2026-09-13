@@ -8,7 +8,7 @@ import {
   getAccessTokenFromCookie,
   getRefreshTokenFromCookie,
   setAuthCookies,
-} from "../src/common/cookies/auth-cookie";
+} from "../../src/common/cookies/auth-cookie";
 
 function createResponseMock(): Pick<Response, "cookie" | "clearCookie"> {
   return {

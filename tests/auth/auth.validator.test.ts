@@ -1,11 +1,11 @@
 /**
  * Auth 요청 DTO가 정상 입력을 정규화하고 잘못된 필드를 배열형 오류로 반환하는지 검증합니다.
  */
-import { BadRequestError } from "../src/common/errors/app-error";
+import { BadRequestError } from "../../src/common/errors/app-error";
 import {
   parseLoginInput,
   parseSignUpInput,
-} from "../src/modules/auth/auth.validator";
+} from "../../src/modules/auth/auth.validator";
 
 describe("Auth validator", () => {
   test("회원가입 입력의 이메일과 전화번호를 정규화한다", () => {

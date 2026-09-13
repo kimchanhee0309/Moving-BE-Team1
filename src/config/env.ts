@@ -113,6 +113,59 @@ function parseCorsOrigins(
   return origins;
 }
 
+function parseTrustProxy(
+  value: string | undefined,
+  nodeEnvironment: NodeEnvironment,
+): false | number {
+  if (value === undefined) {
+    return nodeEnvironment === "production" ? 1 : false;
+  }
+
+  if (value === "false") {
+    return false;
+  }
+
+  const proxyHops = Number(value);
+  if (Number.isInteger(proxyHops) && proxyHops > 0) {
+    return proxyHops;
+  }
+
+  // true는 임의 X-Forwarded-For를 신뢰해 IP 요청 제한을 우회할 수 있으므로 허용하지 않습니다.
+  throw new Error("TRUST_PROXY는 false 또는 신뢰할 proxy hop 수여야 합니다.");
+}
+
+function parseHttpOrigin(
+  value: string,
+  name: string,
+  nodeEnvironment: NodeEnvironment,
+): string {
+  let url: URL;
+
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name}은 올바른 URL이어야 합니다.`);
+  }
+
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`${name}에는 origin만 설정해야 합니다.`);
+  }
+
+  if (nodeEnvironment === "production" && url.protocol !== "https:") {
+    throw new Error(`production 환경의 ${name}은 HTTPS여야 합니다.`);
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${name}은 HTTP 또는 HTTPS URL이어야 합니다.`);
+  }
+
+  return url.origin;
+}
+
+function getOptionalEnvironmentVariable(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
+}
+
 const nodeEnvironment = parseNodeEnvironment(process.env.NODE_ENV);
 
 const cookieSecure = parseBoolean(
@@ -122,8 +175,26 @@ const cookieSecure = parseBoolean(
 
 const cookieSameSite = parseCookieSameSite(process.env.COOKIE_SAME_SITE);
 
+const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS, nodeEnvironment);
+
+const frontendUrl = parseHttpOrigin(
+  process.env.FRONTEND_URL?.trim() || "http://localhost:3000",
+  "FRONTEND_URL",
+  nodeEnvironment,
+);
+
+const oauthCallbackBaseUrl = parseHttpOrigin(
+  process.env.OAUTH_CALLBACK_BASE_URL?.trim() || "http://localhost:4000",
+  "OAUTH_CALLBACK_BASE_URL",
+  nodeEnvironment,
+);
+
 if (cookieSameSite === "none" && !cookieSecure) {
   throw new Error("SameSite=None 쿠키는 COOKIE_SECURE=true가 필요합니다.");
+}
+
+if (!corsOrigins.includes(frontendUrl)) {
+  throw new Error("FRONTEND_URL은 CORS_ORIGINS에 포함되어야 합니다.");
 }
 
 export const env = {
@@ -139,7 +210,23 @@ export const env = {
 
   JWT_ISSUER: process.env.JWT_ISSUER?.trim() || "moving-api",
 
-  CORS_ORIGINS: parseCorsOrigins(process.env.CORS_ORIGINS, nodeEnvironment),
+  CORS_ORIGINS: corsOrigins,
+
+  FRONTEND_URL: frontendUrl,
+
+  OAUTH_CALLBACK_BASE_URL: oauthCallbackBaseUrl,
+
+  GOOGLE_CLIENT_ID: getOptionalEnvironmentVariable("GOOGLE_CLIENT_ID"),
+
+  GOOGLE_CLIENT_SECRET: getOptionalEnvironmentVariable("GOOGLE_CLIENT_SECRET"),
+
+  KAKAO_CLIENT_ID: getOptionalEnvironmentVariable("KAKAO_CLIENT_ID"),
+
+  KAKAO_CLIENT_SECRET: getOptionalEnvironmentVariable("KAKAO_CLIENT_SECRET"),
+
+  NAVER_CLIENT_ID: getOptionalEnvironmentVariable("NAVER_CLIENT_ID"),
+
+  NAVER_CLIENT_SECRET: getOptionalEnvironmentVariable("NAVER_CLIENT_SECRET"),
 
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
 
@@ -159,9 +246,9 @@ export const env = {
     "REFRESH_TOKEN_MAX_AGE_MS",
   ),
 
-  TRUST_PROXY: parseBoolean(
+  TRUST_PROXY: parseTrustProxy(
     process.env.TRUST_PROXY,
-    nodeEnvironment === "production",
+    nodeEnvironment,
   ),
 
   SWAGGER_ENABLED: parseBoolean(

@@ -1,5 +1,5 @@
 /**
- * 이메일 회원가입·로그인·현재 사용자 조회·토큰 회전 규칙을 처리합니다.
+ * 이메일 회원가입·로그인·현재 사용자 조회·토큰 발급·회전 규칙을 처리합니다.
  * HTTP 객체와 cookie는 다루지 않고, 민감정보를 제거한 DTO와 토큰만 Controller에 반환합니다.
  */
 import { ConflictError, UnauthorizedError } from "../../common/errors/app-error";
@@ -14,7 +14,8 @@ import {
 } from "./auth.repository";
 import { hashPassword, verifyPassword } from "./password";
 
-function toAuthUserDto(user: AuthUserRecord): AuthUserDto {
+/** Repository User에서 인증 비밀 필드를 제거하고 역할별 profile 상태를 계산합니다. */
+export function toAuthUserDto(user: AuthUserRecord): AuthUserDto {
   const profileCompleted =
     user.role === "CUSTOMER" ? user.customer !== null : user.mover !== null;
 
@@ -28,8 +29,8 @@ function toAuthUserDto(user: AuthUserRecord): AuthUserDto {
   };
 }
 
-/** 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 계정을 생성합니다. */
-export async function signUp(input: SignUpInput): Promise<AuthUserDto> {
+/** 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다. */
+export async function signUp(input: SignUpInput): Promise<AuthResult> {
   const [emailUser, phoneUser] = await Promise.all([
     findUserByEmail(input.email),
     findUserByPhone(input.phone),
@@ -52,7 +53,10 @@ export async function signUp(input: SignUpInput): Promise<AuthUserDto> {
     role: input.role,
   });
 
-  return toAuthUserDto(user);
+  return {
+    user: toAuthUserDto(user),
+    tokens: createAuthTokens(user.id, user.role),
+  };
 }
 
 /** 계정 존재·비밀번호·역할 실패를 하나의 오류로 처리하고 인증 토큰을 발급합니다. */

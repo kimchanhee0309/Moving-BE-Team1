@@ -2,17 +2,8 @@ import type { ErrorRequestHandler } from "express";
 
 import { HTTP_STATUS } from "../constants/http-status";
 import { AppError } from "../errors/app-error";
+import type { ApiErrorResponse } from "../response/api-response";
 import { env } from "../../config/env";
-import type { ErrorDetails } from "../errors/app-error";
-
-interface ApiErrorResponse {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-    details?: ErrorDetails;
-  };
-}
 
 interface PrismaError {
   code: string;

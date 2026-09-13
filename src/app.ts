@@ -5,6 +5,7 @@ import express from "express";
 import { csrfOriginGuard } from "./common/middleware/csrf-origin-guard";
 import { errorHandler } from "./common/middleware/error-handler";
 import { notFoundHandler } from "./common/middleware/not-found-handler";
+import { requireHttps } from "./common/middleware/require-https";
 import { env } from "./config/env";
 import { apiRouter } from "./routes";
 import { corsOptions } from "./config/cors";
@@ -16,6 +17,7 @@ app.disable("x-powered-by");
 
 app.set("trust proxy", env.TRUST_PROXY);
 
+app.use(requireHttps);
 app.use(cors(corsOptions));
 app.use(
   express.json({

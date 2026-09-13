@@ -1,12 +1,12 @@
 /**
  * JWT의 서명, 사용자 payload, Access/Refresh 용도 분리와 만료 오류를 검증합니다.
  */
-import { UnauthorizedError } from "../src/common/errors/app-error";
+import { UnauthorizedError } from "../../src/common/errors/app-error";
 import {
   createAuthTokens,
   createToken,
   verifyToken,
-} from "../src/common/utils/auth-token";
+} from "../../src/common/utils/auth-token";
 
 describe("Auth token", () => {
   afterEach(() => {

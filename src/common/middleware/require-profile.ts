@@ -26,15 +26,29 @@ export const requireProfile: RequestHandler = async (
       return;
     }
 
-    const hasProfile =
-      request.auth.role === "CUSTOMER"
-        ? user.customer !== null
-        : user.mover !== null;
+    // DB 역할이 바뀌었거나 오래된 Token이면 반대 역할 profile을 통과시키지 않습니다.
+    if (user.role !== request.auth.role) {
+      next(
+        new UnauthorizedError(
+          "인증 정보가 최신 상태가 아닙니다.",
+          "ACCESS_TOKEN_INVALID",
+        ),
+      );
+      return;
+    }
 
-    if (!hasProfile) {
+    const profile =
+      request.auth.role === "CUSTOMER"
+        ? user.customer
+        : user.mover;
+
+    if (!profile) {
       next(new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED"));
       return;
     }
+
+    // 후속 Controller는 역할별 table을 다시 조회하지 않고 검증된 profile ID를 사용할 수 있습니다.
+    request.auth.profileId = profile.id;
 
     next();
   } catch (error: unknown) {

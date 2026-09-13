@@ -5,7 +5,7 @@
 import {
   hashPassword,
   verifyPassword,
-} from "../src/modules/auth/password";
+} from "../../src/modules/auth/password";
 
 describe("Password", () => {
   test("비밀번호를 hash하고 올바른 원문만 일치시킨다", async () => {

@@ -2,38 +2,38 @@
  * 실제 DB를 사용하지 않고 Auth Service의 회원가입·로그인·profile 상태·Refresh 회전을 검증합니다.
  * Repository, bcrypt, JWT 경계는 mock으로 분리하여 비즈니스 분기만 확인합니다.
  */
-jest.mock("../src/modules/auth/auth.repository", () => ({
+jest.mock("../../src/modules/auth/auth.repository", () => ({
   createEmailUser: jest.fn(),
   findUserByEmail: jest.fn(),
   findUserById: jest.fn(),
   findUserByPhone: jest.fn(),
 }));
 
-jest.mock("../src/modules/auth/password", () => ({
+jest.mock("../../src/modules/auth/password", () => ({
   hashPassword: jest.fn(),
   verifyPassword: jest.fn(),
 }));
 
-jest.mock("../src/common/utils/auth-token", () => ({
+jest.mock("../../src/common/utils/auth-token", () => ({
   createAuthTokens: jest.fn(),
   verifyToken: jest.fn(),
 }));
 
-import { createAuthTokens, verifyToken } from "../src/common/utils/auth-token";
+import { createAuthTokens, verifyToken } from "../../src/common/utils/auth-token";
 import {
   createEmailUser,
   findUserByEmail,
   findUserById,
   findUserByPhone,
   type AuthUserRecord,
-} from "../src/modules/auth/auth.repository";
+} from "../../src/modules/auth/auth.repository";
 import {
   getCurrentUser,
   login,
   refreshAuth,
   signUp,
-} from "../src/modules/auth/auth.service";
-import { hashPassword, verifyPassword } from "../src/modules/auth/password";
+} from "../../src/modules/auth/auth.service";
+import { hashPassword, verifyPassword } from "../../src/modules/auth/password";
 
 const customerWithoutProfile: AuthUserRecord = {
   id: "customer-user-id",
@@ -79,14 +79,19 @@ describe("Auth service", () => {
         password: "Password1!",
         role: "CUSTOMER",
       }),
-    ).resolves.toEqual(
-      expect.objectContaining({
+    ).resolves.toEqual({
+      user: expect.objectContaining({
         id: "customer-user-id",
         profileCompleted: false,
       }),
-    );
+      tokens,
+    });
     expect(createEmailUser).toHaveBeenCalledWith(
       expect.objectContaining({ passwordHash: "bcrypt-hash" }),
+    );
+    expect(createAuthTokens).toHaveBeenCalledWith(
+      "customer-user-id",
+      "CUSTOMER",
     );
   });
 

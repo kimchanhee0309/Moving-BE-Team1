@@ -5,6 +5,14 @@
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/moving_test";
 process.env.CORS_ORIGINS = "http://localhost:3000";
+process.env.FRONTEND_URL = "http://localhost:3000";
+process.env.OAUTH_CALLBACK_BASE_URL = "http://localhost:4000";
+process.env.GOOGLE_CLIENT_ID = "test-google-client-id";
+process.env.GOOGLE_CLIENT_SECRET = "test-google-client-secret";
+process.env.KAKAO_CLIENT_ID = "test-kakao-client-id";
+process.env.KAKAO_CLIENT_SECRET = "test-kakao-client-secret";
+process.env.NAVER_CLIENT_ID = "test-naver-client-id";
+process.env.NAVER_CLIENT_SECRET = "test-naver-client-secret";
 process.env.ACCESS_TOKEN_SECRET = "test-access-token-secret-at-least-32-characters";
 process.env.REFRESH_TOKEN_SECRET = "test-refresh-token-secret-at-least-32-characters";
 process.env.ACCESS_TOKEN_MAX_AGE_MS = "1800000";

@@ -246,6 +246,39 @@ const swaggerSpecification = swaggerJsdoc({
           },
         },
 
+        TooManyRequests: {
+          description: "요청 제한 초과",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ErrorResponse",
+              },
+            },
+          },
+        },
+
+        BadGateway: {
+          description: "외부 OAuth 공급자 오류",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ErrorResponse",
+              },
+            },
+          },
+        },
+
+        ServiceUnavailable: {
+          description: "OAuth 환경변수 미설정",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ErrorResponse",
+              },
+            },
+          },
+        },
+
         InternalServerError: {
           description: "서버 내부 오류",
           content: {

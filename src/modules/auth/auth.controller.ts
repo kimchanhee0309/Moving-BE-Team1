@@ -23,12 +23,14 @@ function getAuthenticatedUserId(request: Request): string {
   return request.auth.userId;
 }
 
-/** 회원가입 요청을 검증하고 profile 미등록 상태의 사용자를 생성해 201로 반환합니다. */
+/** 회원가입 요청을 검증하고 사용자를 생성한 뒤 인증 쿠키와 data.user를 201로 반환합니다. */
 export const signUpController: RequestHandler = async (request, response) => {
   const input = parseSignUpInput(request.body);
-  const user = await signUp(input);
+  const result = await signUp(input);
 
-  return sendSuccess(response, HTTP_STATUS.CREATED, user);
+  setAuthCookies(response, result.tokens);
+
+  return sendSuccess(response, HTTP_STATUS.CREATED, { user: result.user });
 };
 
 /** 자격 증명을 검증하고 Access/Refresh Token을 HttpOnly 쿠키로 발급합니다. */
@@ -38,17 +40,17 @@ export const loginController: RequestHandler = async (request, response) => {
 
   setAuthCookies(response, result.tokens);
 
-  return sendSuccess(response, HTTP_STATUS.OK, result.user);
+  return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
 };
 
 /** Access Token으로 식별된 사용자의 최신 정보와 profileCompleted를 반환합니다. */
 export const meController: RequestHandler = async (request, response) => {
   const user = await getCurrentUser(getAuthenticatedUserId(request));
 
-  return sendSuccess(response, HTTP_STATUS.OK, user);
+  return sendSuccess(response, HTTP_STATUS.OK, { user });
 };
 
-/** Refresh Token을 검증해 Access/Refresh Token을 모두 회전하고 민감값은 Body에 담지 않습니다. */
+/** Refresh Token을 검증해 두 쿠키를 회전하고 최신 사용자를 data.user로 반환합니다. */
 export const refreshController: RequestHandler = async (request, response) => {
   const refreshToken = getRefreshTokenFromCookie(request);
 
@@ -63,7 +65,7 @@ export const refreshController: RequestHandler = async (request, response) => {
 
   setAuthCookies(response, result.tokens);
 
-  return sendSuccess(response, HTTP_STATUS.OK, null);
+  return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
 };
 
 /** Stateless 로그아웃으로 두 쿠키를 만료시키며 이미 만료된 토큰도 동일하게 처리합니다. */
