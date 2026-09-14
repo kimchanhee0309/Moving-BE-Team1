@@ -21,3 +21,6 @@ yarn-error.log*
 .DS_Store
 .vscode/
 .idea/
+
+# AI agent config (개인 로컬 전용, .claude/skills는 팀 공용이라 제외)
+.claude/agents/
