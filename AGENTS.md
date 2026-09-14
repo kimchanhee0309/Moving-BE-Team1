@@ -192,6 +192,7 @@ tests/                   통합·E2E 테스트
 - client가 보낸 user ID나 role을 신뢰하지 않고 인증 주체와 DB 관계에서 결정한다.
 - middleware는 인증·role 진입을, Service는 profile·resource 소유권·상태를 검증한다.
 - 도메인 Router는 Cookie·JWT를 다시 해석하지 않고 `requireAuthenticated`, `requireCustomer`, `requireMover`, `requireProfiledCustomer`, `requireProfiledMover`, `requireProfiledUser` 중 목적에 맞는 공통 guard를 펼쳐 사용한다.
+- `requireProfiledUser`는 제3의 역할이나 비회원용이 아니라 CUSTOMER와 MOVER가 함께 사용하는 API에서 각 역할의 profile 등록까지 확인하는 guard다.
 - profile 최초 생성에는 역할 guard만 사용하고 `requireProfile` 또는 profiled guard를 적용하지 않는다. profile 등록 이후 개인 기능에는 역할별 profiled guard를 사용한다.
 - Controller는 `request.auth`를 강제 단언하지 않고 `getAuthContext(request)` 또는 `getProfileAuthContext(request)`를 사용한다. `profileId`는 `requireProfile` 통과 이후에만 사용한다.
 - CUSTOMER는 자신의 요청·견적·찜·리뷰만 변경할 수 있다.

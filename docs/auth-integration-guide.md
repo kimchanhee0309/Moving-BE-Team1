@@ -48,7 +48,7 @@ router.post(
 | 기사 프로필 최초 생성 | `requireMover` | 생성 전에는 profile이 없으므로 `requireProfile` 금지 |
 | 고객 요청·견적·찜·리뷰·마이페이지 | `requireProfiledCustomer` | CUSTOMER 역할과 Customer 존재를 모두 확인 |
 | 기사 요청·견적·반려·마이페이지 | `requireProfiledMover` | MOVER 역할과 Mover 존재를 모두 확인 |
-| 양 역할의 개인 알림 조회·읽음 | `requireProfiledUser` | 역할과 무관하게 등록 완료 사용자만 허용 |
+| CUSTOMER/MOVER 공통 개인 알림 조회·읽음 | `requireProfiledUser` | 로그인하고 자기 역할의 profile 등록을 완료한 두 역할 모두 허용하며 비회원은 차단 |
 | OAuth callback·refresh·logout | Auth Router 전용 | 각 endpoint가 State 또는 전용 Cookie를 직접 검증 |
 
 guard의 순서는 항상 `authenticate → authorize → requireProfile`입니다. `requireProfile`을 통과하면 DB의 현재 역할도 Token 역할과 일치하며 `request.auth.profileId`가 설정됩니다.
