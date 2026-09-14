@@ -9,14 +9,15 @@ import { sendSuccess } from "../common/response/api-response";
 import { authRouter } from "../modules/auth/auth.router";
 import { customerProfileRouter } from "../modules/customer-profile/customer-profile.router";
 import { customerQuoteRouter } from "../modules/customer-quote/customer-quote.router";
+import { favoriteRouter } from "../modules/favorite/favorite.router";
+import { moveRequestRouter } from "../modules/move-request/move-request.router";
+import { moverQuoteRouter } from "../modules/mover-quote/mover-quote.router";
+import { moverRequestRouter } from "../modules/mover-request/mover-request.router";
 import {
   customerReviewRouter,
   moverReviewRouter,
   reviewRouter,
 } from "../modules/review/review.router";
-import { moveRequestRouter } from "../modules/move-request/move-request.router";
-import { favoriteRouter } from "../modules/favorite/favorite.router";
-import { moverQuoteRouter } from "../modules/mover-quote/mover-quote-router";
 
 /** 앱이 `/`에 연결하는 최상위 API Router입니다. */
 export const apiRouter = Router();
@@ -31,6 +32,7 @@ apiRouter.use("/reviews", reviewRouter);
 apiRouter.use("/customers/me/move-requests", moveRequestRouter);
 apiRouter.use("/favorites", favoriteRouter);
 apiRouter.use("/movers/me", moverQuoteRouter);
+apiRouter.use("/movers/me", moverRequestRouter);
 
 apiRouter.get("/health", (_request, response) => {
   return sendSuccess(response, HTTP_STATUS.OK, {
