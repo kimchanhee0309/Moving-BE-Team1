@@ -182,11 +182,12 @@ CREATE TABLE "Notification" (
 
 -- CreateTable
 CREATE TABLE "RequestRejection" (
-    "id" TEXT NOT NULL,
-    "moveRequestId" TEXT NOT NULL,
-    "moverId" TEXT NOT NULL,
+    -- 참조 대상 PK와 자료형을 일치시켜 PostgreSQL FK 생성 실패를 방지합니다.
+    "id" UUID NOT NULL,
+    "moveRequestId" UUID NOT NULL,
+    "moverId" UUID NOT NULL,
     "reason" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "RequestRejection_pkey" PRIMARY KEY ("id")
 );

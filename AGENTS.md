@@ -44,7 +44,7 @@ Moving은 이사 소비자와 이사 전문가를 연결하는 견적 매칭 서
 
 상위 자료가 하위 계약의 수정을 자동 허가하지는 않는다. 불일치를 발견하면 파일·필드·영향을 보고하고 팀 결정을 기다린다. 이미지나 과거 문서를 최신 계약으로 단정하지 않는다.
 
-현재 Swagger의 `QuoteStatus.PENDING`과 Prisma의 `QuoteStatus.PROPOSED`가 다르다. 관련 기능에서 임의 매핑하거나 한쪽을 수정하지 말고 팀에 기준값을 확인한다.
+현재 Swagger와 Prisma의 `QuoteStatus`는 `PROPOSED`, `CONFIRMED`, `REJECTED`를 사용한다. 공통 enum은 한쪽만 변경하지 않고 Schema·Swagger·테스트를 함께 갱신한다.
 
 ## 3. 작업 절차
 
@@ -82,9 +82,14 @@ npm start                빌드 결과 실행
 npm run prisma:generate  Prisma Client 생성
 npm run prisma:migrate   개발 migration
 npm run prisma:studio    Prisma Studio
+npm run lint             ESLint 검사
+npm test                 Jest 단위 테스트
+npm run test:watch       Jest watch 모드
+npm run test:coverage    Jest coverage
+npm run test:ci          직렬 실행과 coverage 검사
 ```
 
-현재 lint·test script는 없다. 빈 `test.ts`를 테스트로 보고하지 않는다. Prisma seed 명령은 `prisma.config.ts`의 `tsx prisma/seed.ts`이며 DB 데이터를 삭제·생성하므로 승인 없이 실행하지 않는다.
+Jest는 TypeScript 단위 테스트에 사용한다. Supertest 기반 통합·E2E 테스트는 MVP 이후 팀 승인 후 추가한다. 빈 placeholder를 테스트로 보고하지 않는다. Prisma seed 명령은 `prisma.config.ts`의 `tsx prisma/seed.ts`이며 DB 데이터를 삭제·생성하므로 승인 없이 실행하지 않는다.
 
 ## 5. 실제 구조와 책임
 
@@ -141,6 +146,8 @@ tests/                   통합·E2E 테스트
 
 - 최신 승인 명세의 URI, Method, params/query/body, DTO, 상태 코드, 오류 코드를 그대로 지킨다.
 - 명세가 없거나 충돌하면 endpoint·field·enum을 추측하지 않는다.
+- endpoint 이름만 있고 인증·역할·profile 필요 여부, DTO, 성공 응답, 오류 code, resource 소유권, 중복·상태 전이, 목록 조건이 확정되지 않았다면 구현하지 않고 팀 결정을 요청한다.
+- 미완성 Notion·Swagger 문서를 확정된 Auth Cookie·응답·middleware 계약보다 우선하거나 빈 항목을 AI가 임의로 보완하지 않는다.
 - API 변경 시 같은 작업에서 Swagger JSDoc을 갱신한다.
 - Swagger UI는 `/api-docs`, JSON은 `/api-docs.json`이며 `SWAGGER_ENABLED`를 따른다.
 - pagination·sort·filter의 기본값과 최대값은 validator와 Swagger에 같이 기록한다.
@@ -151,16 +158,24 @@ tests/                   통합·E2E 테스트
 { "success": true, "data": {} }
 ```
 
+- Auth의 회원가입·로그인·현재 사용자·토큰 갱신만 `data.user`를 사용한다.
+- 다른 도메인은 `data.quote`, `data.moveRequest`, `data.items`처럼 확정 명세의 의미 있는 key를 사용하며 모든 응답을 `data.user`로 만들지 않는다.
+- Controller가 성공·오류 JSON을 직접 조립하지 않고 공통 response helper와 전역 error handler를 사용한다.
+
 예상 오류는 `AppError` 계열로 전달하여 전역 error handler가 다음 형태로 응답하게 한다.
 
 ```json
 {
   "success": false,
-  "error": { "code": "ERROR_CODE", "message": "메시지", "details": {} }
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "메시지",
+    "details": [{ "field": "email", "reason": "이메일 형식 오류" }]
+  }
 }
 ```
 
-- 입력 오류는 필요한 경우 field별 `details`를 제공한다.
+- 입력 오류는 필요한 경우 `{ "field": string, "reason": string }[]` 형태의 `details`를 제공한다.
 - stack, SQL, Prisma 원문, token, cookie, 개인정보를 응답·로그에 노출하지 않는다.
 - 의미에 따라 201·204·400·401·403·404·409를 사용하되 확정 명세가 우선이다.
 - Prisma model을 응답 DTO로 그대로 노출하지 않고 password hash와 내부 필드를 제외한다.
@@ -176,10 +191,29 @@ tests/                   통합·E2E 테스트
 - 비밀번호는 평문 저장·로그·응답을 금지하고 검증된 hash만 저장한다.
 - client가 보낸 user ID나 role을 신뢰하지 않고 인증 주체와 DB 관계에서 결정한다.
 - middleware는 인증·role 진입을, Service는 profile·resource 소유권·상태를 검증한다.
+- 도메인 Router는 Cookie·JWT를 다시 해석하지 않고 `requireAuthenticated`, `requireCustomer`, `requireMover`, `requireProfiledCustomer`, `requireProfiledMover`, `requireProfiledUser` 중 목적에 맞는 공통 guard를 펼쳐 사용한다.
+- profile 최초 생성에는 역할 guard만 사용하고 `requireProfile` 또는 profiled guard를 적용하지 않는다. profile 등록 이후 개인 기능에는 역할별 profiled guard를 사용한다.
+- Controller는 `request.auth`를 강제 단언하지 않고 `getAuthContext(request)` 또는 `getProfileAuthContext(request)`를 사용한다. `profileId`는 `requireProfile` 통과 이후에만 사용한다.
 - CUSTOMER는 자신의 요청·견적·찜·리뷰만 변경할 수 있다.
 - MOVER는 자신의 profile과 허용된 요청·견적만 변경할 수 있다.
 
-Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 구현 전 팀 명세를 확인한다. 필요한 환경변수와 보안 정책을 함께 문서화한다.
+- 일반 이메일 비밀번호는 `bcrypt`로 해싱하며 평문과 hash를 로그·응답에 노출하지 않는다.
+- 이메일 회원가입 성공 시 Access/Refresh Token을 HttpOnly Cookie로 발급하고 모든 사용자 응답은 `data.user` 형식을 사용한다.
+- JWT는 HS256과 Access/Refresh 전용 Secret을 사용하고 Access Token은 30분, Refresh Token은 7일로 발급한다.
+- Refresh API는 Stateless 정책 안에서 Access/Refresh Token을 모두 회전한다. DB session·token 저장과 즉시 폐기는 MVP 범위에 포함하지 않는다.
+- `profileCompleted`는 `User` 필드를 추가하지 않고 역할에 해당하는 `Customer` 또는 `Mover` relation 존재 여부로 계산한다.
+- Google·Kakao·Naver OAuth는 공급자별 callback과 공통 State 정책을 유지하며 새 공급자는 같은 보안 경계를 따른다.
+
+OAuth 가입·로그인은 다음 정책을 함께 지킨다.
+
+- 고객 가입 화면은 `CUSTOMER`, 기사 가입 화면은 `MOVER`로 시작하며 서버가 두 역할 외 값을 거절한다.
+- OAuth State는 짧은 만료시간, 위변조 검증, callback 일치 확인, 소비 후 쿠키 삭제를 모두 적용한다.
+- 공급자가 이메일을 주지 않은 신규 사용자는 만들지 않고, 같은 이메일 계정을 자동 병합하지 않으며 `OAUTH_ACCOUNT_CONFLICT`로 종료한다.
+- callback 최초 가입에서는 `User`만 만들고 `Customer`/`Mover`는 역할별 프로필 등록 API가 생성한다. 프로필 등록 API에는 `requireProfile`을 적용하지 않는다.
+- OAuth Client Secret과 공급자 Token을 commit·응답·로그에 넣지 않으며 공급자 Token을 DB에 영구 저장하지 않는다.
+- 요청 제한 store와 소비된 OAuth State nonce 기록은 현재 단일 Node 프로세스 메모리용이다. 다중 인스턴스 배포 전에 팀이 승인한 Redis 등 공유 store로 교체하며, 교체 전에는 전역 제한·일회성을 완전히 보장한다고 보고하지 않는다.
+
+Token 정책을 바꾸거나 DB 기반 refresh 폐기를 추가할 때는 팀 명세, 환경변수, Swagger, 테스트를 함께 갱신한다.
 
 ## 9. 사용자 흐름과 비즈니스 규칙
 
@@ -210,10 +244,10 @@ Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 �
 
 - 환경변수 접근과 검증은 `src/config/env.ts`를 통한다.
 - `.env`, DB URL, token·OAuth secret, 개인키를 commit·log·문서 예시에 넣지 않는다.
-- 새 변수에는 안전한 placeholder를 담은 추적 가능한 `.env.example`이 필요하다. 현재 `.gitignore`가 `.env.example`도 제외하므로 추가 전에 팀과 수정 범위를 확인한다.
+- 새 변수에는 실제 비밀값이 아닌 안전한 placeholder를 담은 추적 가능한 `.env.example`이 필요하다.
 - production에서 빈 CORS origin이나 `SameSite=None`과 insecure cookie 조합을 허용하지 않는다.
 
-현재 변수: `NODE_ENV`, `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `COOKIE_DOMAIN`, `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `ACCESS_TOKEN_MAX_AGE_MS`, `REFRESH_TOKEN_MAX_AGE_MS`, `TRUST_PROXY`, `SWAGGER_ENABLED`.
+현재 변수: `NODE_ENV`, `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `FRONTEND_URL`, `OAUTH_CALLBACK_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET`, `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`, `JWT_ISSUER`, `COOKIE_DOMAIN`, `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `ACCESS_TOKEN_MAX_AGE_MS`, `REFRESH_TOKEN_MAX_AGE_MS`, `TRUST_PROXY`, `SWAGGER_ENABLED`.
 
 ## 12. 네이밍, TypeScript와 필수 주석
 
@@ -233,14 +267,16 @@ Token 알고리즘·secret, refresh rotation·폐기, OAuth callback 계약은 �
 
 ## 13. 테스트와 검증
 
-테스트 도구를 승인 없이 설치하지 않는다. 환경이 정해지면 정상 흐름 외에 다음을 검증한다.
+현재 단위 테스트 도구는 Jest와 ts-jest다. 새 테스트 도구와 Supertest는 승인 없이 설치하지 않는다. 정상 흐름 외에 다음을 검증한다.
+
+- 도메인 테스트는 `tests/<domain>/`에 배치하고 Auth는 `tests/auth/`를 사용한다. `tests/setup-env.ts`는 루트에 유지하며 실제 OAuth Secret·Token·개인정보 대신 공급자 통신 경계를 mock한다.
 
 - DTO 실패, 401, role·소유권 403, 없음 404, 중복·상태 충돌 409
 - CUSTOMER/MOVER 경계와 다른 사용자의 resource 접근
 - transaction rollback, 동시 확정·중복 생성
 - pagination·filter·sort 경계와 민감정보 제외
 
-현재 최소 검증은 `npm run typecheck`, `npm run build`, `git diff --check`다. API 변경 시 Swagger와 실제 응답도 대조한다. DB 검증을 못 하면 필요한 환경과 미검증 범위를 보고한다.
+현재 최소 검증은 `npm run typecheck`, `npm run build`, `npm run lint`, `npm test`, `git diff --check`다. API 변경 시 Swagger와 실제 응답도 대조한다. DB 검증을 못 하면 필요한 환경과 미검증 범위를 보고한다.
 
 ## 14. Git과 PR
 

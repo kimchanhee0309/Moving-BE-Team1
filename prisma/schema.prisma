@@ -281,12 +281,13 @@ model Notification {
   @@index([quoteId])
 }
 
+/// 기사님이 견적 요청을 반려한 기록이며 모든 관계 식별자는 참조 대상과 같은 PostgreSQL UUID를 사용한다.
 model RequestRejection {
-  id            String   @id @default(uuid())
-  moveRequestId String
-  moverId       String
+  id            String   @id @default(uuid()) @db.Uuid
+  moveRequestId String   @db.Uuid
+  moverId       String   @db.Uuid
   reason        String
-  createdAt     DateTime @default(now())
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
   moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id])
   mover       Mover       @relation(fields: [moverId], references: [id])

@@ -6,15 +6,20 @@ import swaggerUi from "swagger-ui-express";
 
 import { env } from "./env";
 
+/** Windows에서도 swagger-jsdoc의 glob이 동작하도록 절대 경로 구분자를 통일합니다. */
+function resolveApiDocumentPath(relativePath: string): string {
+  return path.resolve(process.cwd(), relativePath).replaceAll(path.sep, "/");
+}
+
 const apiDocumentPaths =
   env.NODE_ENV === "production"
     ? [
-        path.resolve(process.cwd(), "dist/routes/**/*.js"),
-        path.resolve(process.cwd(), "dist/modules/**/*.js"),
+        resolveApiDocumentPath("dist/routes/**/*.js"),
+        resolveApiDocumentPath("dist/modules/**/*.js"),
       ]
     : [
-        path.resolve(process.cwd(), "src/routes/**/*.ts"),
-        path.resolve(process.cwd(), "src/modules/**/*.ts"),
+        resolveApiDocumentPath("src/routes/**/*.ts"),
+        resolveApiDocumentPath("src/modules/**/*.ts"),
       ];
 
 const swaggerSpecification = swaggerJsdoc({
@@ -135,19 +140,20 @@ const swaggerSpecification = swaggerJsdoc({
                 },
 
                 details: {
-                  type: "object",
-                  additionalProperties: {
-                    oneOf: [
-                      {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["field", "reason"],
+                    properties: {
+                      field: {
                         type: "string",
+                        example: "email",
                       },
-                      {
-                        type: "array",
-                        items: {
-                          type: "string",
-                        },
+                      reason: {
+                        type: "string",
+                        example: "올바른 이메일 형식이 아닙니다.",
                       },
-                    ],
+                    },
                   },
                 },
               },
@@ -231,6 +237,39 @@ const swaggerSpecification = swaggerJsdoc({
 
         Conflict: {
           description: "현재 상태와 충돌하는 요청",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ErrorResponse",
+              },
+            },
+          },
+        },
+
+        TooManyRequests: {
+          description: "요청 제한 초과",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ErrorResponse",
+              },
+            },
+          },
+        },
+
+        BadGateway: {
+          description: "외부 OAuth 공급자 오류",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ErrorResponse",
+              },
+            },
+          },
+        },
+
+        ServiceUnavailable: {
+          description: "OAuth 환경변수 미설정",
           content: {
             "application/json": {
               schema: {

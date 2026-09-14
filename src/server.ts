@@ -12,6 +12,7 @@ async function startServer(): Promise<void> {
 
   server = app.listen(env.PORT, () => {
     console.log(`서버가 ${env.PORT}번 포트에서 실행 중입니다.`);
+    console.log(`Swagger 문서: http://localhost:${env.PORT}/api-docs`);
   });
 }
 
