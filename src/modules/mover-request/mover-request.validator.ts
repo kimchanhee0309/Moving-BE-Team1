@@ -21,6 +21,16 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const MAX_KEYWORD_LENGTH = 50;
 
+/** 문자열이 지원하는 서비스 유형인지 확인하고 타입을 좁힙니다. */
+function isServiceTypeCode(value: string): value is ServiceTypeCode {
+  return SERVICE_TYPE_LIST.some((serviceType) => serviceType === value);
+}
+
+/** 문자열이 지원하는 받은 요청 정렬 방식인지 확인하고 타입을 좁힙니다. */
+function isMoverRequestSort(value: string): value is MoverRequestSort {
+  return MOVER_REQUEST_SORT_LIST.some((sort) => sort === value);
+}
+
 function getQueryRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new BadRequestError(
@@ -66,11 +76,7 @@ function parseServiceType(
     return undefined;
   }
 
-  if (
-    SERVICE_TYPE_LIST.some(
-      (serviceType): serviceType is ServiceTypeCode => serviceType === value,
-    )
-  ) {
+  if (isServiceTypeCode(value)) {
     return value;
   }
 
@@ -90,11 +96,7 @@ function parseSort(
     return "REQUESTED_AT_DESC";
   }
 
-  if (
-    MOVER_REQUEST_SORT_LIST.some(
-      (sort): sort is MoverRequestSort => sort === value,
-    )
-  ) {
+  if (isMoverRequestSort(value)) {
     return value;
   }
 
@@ -197,23 +199,28 @@ export function parseGetReceivedRequestsQuery(
   const details: ErrorDetails = [];
 
   const keyword = getOptionalQueryString(query, "keyword", details);
+
   const serviceType = parseServiceType(
     getOptionalQueryString(query, "serviceType", details),
     details,
   );
+
   const isDesignated = parseOptionalBoolean(
     getOptionalQueryString(query, "isDesignated", details),
     "isDesignated",
     details,
   );
+
   const sort = parseSort(
     getOptionalQueryString(query, "sort", details),
     details,
   );
+
   const cursor = parseCursor(
     getOptionalQueryString(query, "cursor", details),
     details,
   );
+
   const limit = parseLimit(
     getOptionalQueryString(query, "limit", details),
     details,
@@ -238,7 +245,10 @@ export function parseGetReceivedRequestsQuery(
   };
 }
 
-/** 받은 요청 상세 Path Parameter의 requestId를 UUID로 검증합니다. */
+/**
+ * 받은 요청의 requestId를 UUID로 검증합니다.
+ * 견적 전송과 요청 반려 API에서도 공통으로 사용할 수 있습니다.
+ */
 export function parseReceivedRequestId(value: unknown): string {
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
     throw new BadRequestError(
