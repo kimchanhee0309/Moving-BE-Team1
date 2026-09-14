@@ -2,8 +2,8 @@
  * 기사님이 조회 가능한 MoveRequest를 Prisma로 조회합니다.
  * HTTP 응답과 비즈니스 오류는 처리하지 않고 필요한 column과 relation만 반환합니다.
  */
-import type { MoveRequestStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
+import type { MoveRequestStatus } from "../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
 import type {
   GetReceivedRequestsQuery,
@@ -18,14 +18,17 @@ export interface ReceivedRequestRecord {
   toAddress: string;
   status: MoveRequestStatus;
   createdAt: Date;
+
   customer: {
     user: {
       name: string;
     };
   };
+
   serviceType: {
     name: string;
   };
+
   designatedRequests: Array<{
     id: string;
   }>;
@@ -42,9 +45,13 @@ export interface FindReceivedRequestByIdInput {
   now: Date;
 }
 
-function createReceivedRequestSelect(
-  moverId: string,
-): Prisma.MoveRequestSelect {
+/**
+ * 반환 타입을 Prisma.MoveRequestSelect로 직접 지정하면 select 리터럴이 넓어져
+ * Prisma가 중첩 relation의 반환 타입을 정확하게 추론하지 못합니다.
+ *
+ * satisfies를 사용해 Prisma select 구조를 검사하면서 리터럴 타입을 유지합니다.
+ */
+function createReceivedRequestSelect(moverId: string) {
   return {
     id: true,
     moveDate: true,
@@ -69,7 +76,7 @@ function createReceivedRequestSelect(
       },
     },
 
-    // 지정 요청 여부는 전체 지정 건수가 아니라 현재 기사님 지정 여부로 계산합니다.
+    // 전체 지정 요청이 아니라 현재 기사님에 대한 지정 요청 여부만 조회합니다.
     designatedRequests: {
       where: {
         moverId,
@@ -79,7 +86,7 @@ function createReceivedRequestSelect(
       },
       take: 1,
     },
-  };
+  } satisfies Prisma.MoveRequestSelect;
 }
 
 function createReceivedRequestWhere(
@@ -107,12 +114,12 @@ function createReceivedRequestWhere(
   return {
     status: "WAITING",
 
-    // 이미 이사일이 지난 요청은 새 견적 대상에서 제외합니다.
+    // 이사일이 지난 요청은 새로운 견적 대상에서 제외합니다.
     moveDate: {
       gte: input.now,
     },
 
-    // 현재 기사님이 제공하는 서비스 종류만 조회합니다.
+    // 현재 기사님이 제공하는 서비스 유형만 조회합니다.
     serviceType: {
       moverServiceTypes: {
         some: {
@@ -127,13 +134,14 @@ function createReceivedRequestWhere(
         : {}),
     },
 
-    // 현재 기사님이 이미 견적을 보냈거나 반려한 요청은 목록에서 제외합니다.
+    // 현재 기사님이 이미 견적을 보낸 요청은 제외합니다.
     quotes: {
       none: {
         moverId: input.moverId,
       },
     },
 
+    // 현재 기사님이 이미 반려한 요청은 제외합니다.
     requestRejections: {
       none: {
         moverId: input.moverId,
@@ -187,8 +195,8 @@ export async function findReceivedRequests(
 }
 
 /**
- * 현재 기사님이 아직 처리할 수 있는 받은 요청 한 건을 조회합니다.
- * 존재하지만 서비스 조건이 맞지 않거나 이미 처리한 요청도 null을 반환합니다.
+ * 현재 기사님이 아직 처리할 수 있는 요청 한 건을 조회합니다.
+ * 견적 전송 및 요청 반려 Service에서 대상 요청 검증에 사용할 수 있습니다.
  */
 export async function findReceivedRequestById(
   input: FindReceivedRequestByIdInput,
