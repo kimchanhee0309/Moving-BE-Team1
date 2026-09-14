@@ -35,7 +35,7 @@ export const requireProfiledMover = [
   requireProfile,
 ] satisfies RequestHandler[];
 
-/** 역할과 무관하게 등록 완료 사용자만 사용하는 알림 같은 endpoint용 조합입니다. */
+/** CUSTOMER와 MOVER가 함께 쓰되 각 역할의 profile 등록이 필요한 알림 endpoint용 조합입니다. */
 export const requireProfiledUser = [
   authenticate,
   requireProfile,
