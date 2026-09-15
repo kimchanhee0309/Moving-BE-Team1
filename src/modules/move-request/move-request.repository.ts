@@ -92,6 +92,26 @@ export function findMoveRequestById(
   return client.moveRequest.findUnique({ where: { id }, select: moveRequestSelect });
 }
 
+/**
+ * MoveRequest row를 `FOR UPDATE`로 잠근 뒤 조회합니다. 같은 row를 대상으로 한 동시 지정 요청(소유권·
+ * 상태 재확인, 인원 수 카운트, insert)을 여기서 직렬화하므로 반드시 `$transaction` 콜백의 `tx`로만
+ * 호출해야 합니다(기본 prisma client로 호출하면 잠금이 이 쿼리 하나로 끝나버려 의미가 없습니다).
+ */
+export async function findMoveRequestByIdForUpdate(
+  id: string,
+  client: Prisma.TransactionClient,
+): Promise<MoveRequestRecord | null> {
+  const locked = await client.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "MoveRequest" WHERE id = ${id} FOR UPDATE
+  `;
+
+  if (locked.length === 0) {
+    return null;
+  }
+
+  return findMoveRequestById(id, client);
+}
+
 export function findMoverById(
   id: string,
   client: PrismaClientOrTx = prisma,

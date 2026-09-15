@@ -18,7 +18,7 @@ jest.mock("../../src/modules/move-request/move-request.repository", () => ({
   createMoveRequest: jest.fn(),
   findActiveMoveRequestByCustomerId: jest.fn(),
   findDesignatedRequestByMoveRequestAndMover: jest.fn(),
-  findMoveRequestById: jest.fn(),
+  findMoveRequestByIdForUpdate: jest.fn(),
   findMoverById: jest.fn(),
   findServiceTypeIdByName: jest.fn(),
 }));
@@ -31,7 +31,7 @@ import {
   createMoveRequest,
   findActiveMoveRequestByCustomerId,
   findDesignatedRequestByMoveRequestAndMover,
-  findMoveRequestById,
+  findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
   type MoveRequestRecord,
@@ -187,7 +187,7 @@ describe("Move request service", () => {
     const validInput = { moverId: MOVER_ID };
 
     test("MoveRequest가 없으면 MOVE_REQUEST_NOT_FOUND로 거절한다", async () => {
-      jest.mocked(findMoveRequestById).mockResolvedValue(null);
+      jest.mocked(findMoveRequestByIdForUpdate).mockResolvedValue(null);
 
       await expect(
         createDesignatedRequestForCustomer(CUSTOMER_ID, MOVE_REQUEST_ID, validInput),
@@ -198,7 +198,7 @@ describe("Move request service", () => {
 
     test("본인 소유가 아니면 MOVE_REQUEST_FORBIDDEN으로 거절한다", async () => {
       jest
-        .mocked(findMoveRequestById)
+        .mocked(findMoveRequestByIdForUpdate)
         .mockResolvedValue(createMoveRequestRecord({ customerId: "other-customer" }));
 
       await expect(
@@ -209,7 +209,7 @@ describe("Move request service", () => {
     });
 
     test("WAITING 상태가 아니면 MOVE_REQUEST_ALREADY_CONFIRMED로 거절한다", async () => {
-      jest.mocked(findMoveRequestById).mockResolvedValue(
+      jest.mocked(findMoveRequestByIdForUpdate).mockResolvedValue(
         createMoveRequestRecord({ status: "CONFIRMED" }),
       );
 
@@ -221,7 +221,7 @@ describe("Move request service", () => {
     });
 
     test("mover가 없으면 MOVER_NOT_FOUND로 거절한다", async () => {
-      jest.mocked(findMoveRequestById).mockResolvedValue(createMoveRequestRecord());
+      jest.mocked(findMoveRequestByIdForUpdate).mockResolvedValue(createMoveRequestRecord());
       jest.mocked(findMoverById).mockResolvedValue(null);
 
       await expect(
@@ -230,11 +230,11 @@ describe("Move request service", () => {
         new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND"),
       );
 
-      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(createDesignatedRequest).not.toHaveBeenCalled();
     });
 
     test("이미 같은 mover에게 지정 요청을 보냈으면 DESIGNATED_REQUEST_ALREADY_EXISTS로 거절한다", async () => {
-      jest.mocked(findMoveRequestById).mockResolvedValue(createMoveRequestRecord());
+      jest.mocked(findMoveRequestByIdForUpdate).mockResolvedValue(createMoveRequestRecord());
       jest.mocked(findMoverById).mockResolvedValue({ id: MOVER_ID });
       jest
         .mocked(findDesignatedRequestByMoveRequestAndMover)
@@ -248,7 +248,7 @@ describe("Move request service", () => {
     });
 
     test("지정 요청이 이미 3명이면 DESIGNATED_REQUEST_LIMIT_EXCEEDED로 거절한다", async () => {
-      jest.mocked(findMoveRequestById).mockResolvedValue(createMoveRequestRecord());
+      jest.mocked(findMoveRequestByIdForUpdate).mockResolvedValue(createMoveRequestRecord());
       jest.mocked(findMoverById).mockResolvedValue({ id: MOVER_ID });
       jest.mocked(findDesignatedRequestByMoveRequestAndMover).mockResolvedValue(null);
       jest.mocked(countDesignatedRequestsByMoveRequestId).mockResolvedValue(3);
@@ -261,7 +261,7 @@ describe("Move request service", () => {
     });
 
     test("모든 검증을 통과하면 DesignatedRequest를 생성하고 DTO로 반환한다", async () => {
-      jest.mocked(findMoveRequestById).mockResolvedValue(createMoveRequestRecord());
+      jest.mocked(findMoveRequestByIdForUpdate).mockResolvedValue(createMoveRequestRecord());
       jest.mocked(findMoverById).mockResolvedValue({ id: MOVER_ID });
       jest.mocked(findDesignatedRequestByMoveRequestAndMover).mockResolvedValue(null);
       jest.mocked(countDesignatedRequestsByMoveRequestId).mockResolvedValue(2);

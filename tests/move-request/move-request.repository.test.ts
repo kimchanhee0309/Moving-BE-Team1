@@ -35,6 +35,7 @@ import {
   findActiveMoveRequestByCustomerId,
   findDesignatedRequestByMoveRequestAndMover,
   findMoveRequestById,
+  findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
 } from "../../src/modules/move-request/move-request.repository";
@@ -108,6 +109,30 @@ describe("Move request repository", () => {
     expect(mockMoveRequestFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: MOVE_REQUEST_ID } }),
     );
+  });
+
+  test("findMoveRequestByIdForUpdate는 FOR UPDATE로 잠근 뒤 존재하면 findMoveRequestById로 재조회한다", async () => {
+    const txQueryRaw = jest.fn().mockResolvedValue([{ id: MOVE_REQUEST_ID }]);
+    const txFindUnique = jest.fn().mockResolvedValue({ id: MOVE_REQUEST_ID, status: "WAITING" });
+    const tx = { $queryRaw: txQueryRaw, moveRequest: { findUnique: txFindUnique } } as never;
+
+    const result = await findMoveRequestByIdForUpdate(MOVE_REQUEST_ID, tx);
+
+    expect(txQueryRaw).toHaveBeenCalledTimes(1);
+    expect(txFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: MOVE_REQUEST_ID } }),
+    );
+    expect(result).toEqual({ id: MOVE_REQUEST_ID, status: "WAITING" });
+  });
+
+  test("findMoveRequestByIdForUpdate는 잠글 row가 없으면 null을 반환하고 추가 조회하지 않는다", async () => {
+    const txQueryRaw = jest.fn().mockResolvedValue([]);
+    const txFindUnique = jest.fn();
+    const tx = { $queryRaw: txQueryRaw, moveRequest: { findUnique: txFindUnique } } as never;
+
+    await expect(findMoveRequestByIdForUpdate(MOVE_REQUEST_ID, tx)).resolves.toBeNull();
+
+    expect(txFindUnique).not.toHaveBeenCalled();
   });
 
   test("findMoverById는 id만 select해서 존재 여부를 확인한다", async () => {

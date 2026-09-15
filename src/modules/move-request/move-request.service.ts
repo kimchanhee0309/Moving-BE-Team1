@@ -23,7 +23,7 @@ import {
   createMoveRequest,
   findActiveMoveRequestByCustomerId,
   findDesignatedRequestByMoveRequestAndMover,
-  findMoveRequestById,
+  findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
   type DesignatedRequestRecord,
@@ -129,42 +129,44 @@ export async function getActiveMoveRequestForCustomer(
 }
 
 // 검증 순서(문서의 오류 표 기준): 존재 확인 → 소유권 → 상태 → mover 존재 → 중복 → 인원 초과.
+// 확인과 insert 사이에 다른 요청이 끼어들지 못하게, MoveRequest row를 FOR UPDATE로 잠근 채로
+// 전부 같은 트랜잭션 안에서 재확인한다(상태 재확인 경쟁 + 인원 수 경쟁을 함께 막는다).
 export async function createDesignatedRequestForCustomer(
   customerId: string,
   moveRequestId: string,
   input: CreateDesignatedRequestInput,
 ): Promise<DesignatedRequestDto> {
-  const moveRequest = await findMoveRequestById(moveRequestId);
-
-  if (!moveRequest) {
-    throw new NotFoundError(
-      "이사 견적 요청을 찾을 수 없습니다.",
-      "MOVE_REQUEST_NOT_FOUND",
-    );
-  }
-
-  // client가 보낸 값이 아니라 인증된 customerId와 DB의 소유 관계로만 소유권을 판단합니다.
-  if (moveRequest.customerId !== customerId) {
-    throw new ForbiddenError(
-      "본인의 이사 견적 요청이 아닙니다.",
-      "MOVE_REQUEST_FORBIDDEN",
-    );
-  }
-
-  if (moveRequest.status !== "WAITING") {
-    throw new ConflictError(
-      "이미 확정되었거나 완료된 이사 견적 요청입니다.",
-      "MOVE_REQUEST_ALREADY_CONFIRMED",
-    );
-  }
-
-  const mover = await findMoverById(input.moverId);
-
-  if (!mover) {
-    throw new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND");
-  }
-
   const created = await prisma.$transaction(async (tx) => {
+    const moveRequest = await findMoveRequestByIdForUpdate(moveRequestId, tx);
+
+    if (!moveRequest) {
+      throw new NotFoundError(
+        "이사 견적 요청을 찾을 수 없습니다.",
+        "MOVE_REQUEST_NOT_FOUND",
+      );
+    }
+
+    // client가 보낸 값이 아니라 인증된 customerId와 DB의 소유 관계로만 소유권을 판단합니다.
+    if (moveRequest.customerId !== customerId) {
+      throw new ForbiddenError(
+        "본인의 이사 견적 요청이 아닙니다.",
+        "MOVE_REQUEST_FORBIDDEN",
+      );
+    }
+
+    if (moveRequest.status !== "WAITING") {
+      throw new ConflictError(
+        "이미 확정되었거나 완료된 이사 견적 요청입니다.",
+        "MOVE_REQUEST_ALREADY_CONFIRMED",
+      );
+    }
+
+    const mover = await findMoverById(input.moverId, tx);
+
+    if (!mover) {
+      throw new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND");
+    }
+
     // unique 제약(P2002)에 기대지 않고 명시적으로 먼저 조회해 문서가 요구하는
     // DESIGNATED_REQUEST_ALREADY_EXISTS 코드를 그대로 던집니다.
     const existingDesignatedRequest = await findDesignatedRequestByMoveRequestAndMover(
