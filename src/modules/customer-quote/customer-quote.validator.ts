@@ -1,6 +1,6 @@
 /**
- * 받은 견적 목록 query를 런타임에 검증하고 기본값을 채웁니다.
- * HTTP query 형식만 책임지며 소유권·상태 필터는 Service와 Repository에 위임합니다.
+ * 받은 견적 목록 query와 상세 path를 런타임에 검증합니다.
+ * HTTP 입력 형식만 책임지며 소유권·상태 필터는 Service와 Repository에 위임합니다.
  */
 import { BadRequestError, type ErrorDetails } from "../../common/errors/app-error";
 import { decodeReceivedQuoteCursor } from "./customer-quote.cursor";
@@ -13,6 +13,9 @@ import {
   type ReceivedQuotesQuery,
   type ServiceTypeName,
 } from "./customer-quote.dto";
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
@@ -216,4 +219,39 @@ export function parseReceivedQuotesQuery(value: unknown): ReceivedQuotesQuery {
     cursor,
     limit,
   };
+}
+
+/**
+ * 견적 상세 path의 quoteId를 UUID로 검증합니다.
+ * @param value request.params
+ * @returns 정규화된 quoteId
+ * @throws BadRequestError UUID가 아니면 VALIDATION_ERROR
+ */
+export function parseQuoteIdParams(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new BadRequestError(
+      "요청값이 올바르지 않습니다.",
+      "VALIDATION_ERROR",
+      [{ field: "quoteId", reason: "UUID 형식이어야 합니다." }],
+    );
+  }
+
+  const details: ErrorDetails = [];
+  const quoteId = getOptionalSingleString(
+    value as Record<string, unknown>,
+    "quoteId",
+    details,
+  );
+
+  throwIfInvalid(details);
+
+  if (quoteId === undefined || !UUID_PATTERN.test(quoteId)) {
+    throw new BadRequestError(
+      "요청값이 올바르지 않습니다.",
+      "VALIDATION_ERROR",
+      [{ field: "quoteId", reason: "UUID 형식이어야 합니다." }],
+    );
+  }
+
+  return quoteId;
 }

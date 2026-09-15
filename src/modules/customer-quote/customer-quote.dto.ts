@@ -1,6 +1,6 @@
 /**
- * 고객이 받은 대기 견적 목록 API의 입력·응답 DTO를 정의합니다.
- * Prisma 원문, password hash, token은 포함하지 않으며 단건 상세·확정 API는 담당하지 않습니다.
+ * 고객이 받은 대기 견적 목록·상세 API의 입력·응답 DTO를 정의합니다.
+ * Prisma 원문, password hash, token은 포함하지 않으며 확정·과거 견적 API는 담당하지 않습니다.
  */
 import type { MoveRequestStatus, QuoteStatus } from "../../generated/prisma/enums";
 
@@ -99,4 +99,28 @@ export interface CursorPaginationDto {
 export interface ReceivedQuotesResult {
   items: QuoteListItemDto[];
   pagination: CursorPaginationDto;
+}
+
+/** 상세에서만 추가로 내려주는 기사님 소개와 가능 유형·지역입니다. */
+export interface QuoteDetailMoverDto extends QuoteListMoverDto {
+  description: string;
+  serviceTypes: string[];
+  regions: string[];
+}
+
+/** 대기 견적 상세입니다. 목록 필드에 updatedAt과 기사 상세를 더합니다. */
+export interface QuoteDetailDto {
+  id: string;
+  price: number | null;
+  comment: string | null;
+  status: QuoteStatus;
+  isDesignated: boolean;
+  createdAt: string;
+  updatedAt: string;
+  mover: QuoteDetailMoverDto;
+  moveRequest: QuoteListMoveRequestDto;
+}
+
+export interface ReceivedQuoteDetailResult {
+  quote: QuoteDetailDto;
 }

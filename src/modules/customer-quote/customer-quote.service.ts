@@ -1,19 +1,24 @@
 /**
- * 고객이 받은 대기 견적 목록의 조회 범위와 응답 매핑을 담당합니다.
- * 다른 고객 견적, 반려·확정 견적, 과거 요청 견적은 목록에 넣지 않습니다.
+ * 고객이 받은 대기 견적 목록·상세의 조회 범위와 응답 매핑을 담당합니다.
+ * 다른 고객 견적, 반려·확정 견적, 과거 요청 견적은 이 API 범위에 넣지 않습니다.
  */
+import { NotFoundError } from "../../common/errors/app-error";
 import { encodeReceivedQuoteCursor } from "./customer-quote.cursor";
 import type {
+  QuoteDetailDto,
   QuoteListItemDto,
   ReceivedQuoteCursorPayload,
+  ReceivedQuoteDetailResult,
   ReceivedQuoteSort,
   ReceivedQuotesQuery,
   ReceivedQuotesResult,
 } from "./customer-quote.dto";
 import {
   findMoverReviewAverages,
+  findReceivedQuoteDetail,
   findReceivedQuotes,
   type MoverReviewAverage,
+  type ReceivedQuoteDetailRecord,
   type ReceivedQuoteRecord,
 } from "./customer-quote.repository";
 
@@ -118,5 +123,54 @@ export async function listReceivedQuotes(
           : null,
       hasNext,
     },
+  };
+}
+
+function toQuoteDetail(
+  record: ReceivedQuoteDetailRecord,
+  averages: Map<string, number | null>,
+): QuoteDetailDto {
+  const item = toQuoteListItem(record, averages);
+
+  return {
+    ...item,
+    updatedAt: record.updatedAt.toISOString(),
+    mover: {
+      ...item.mover,
+      description: record.mover.description,
+      serviceTypes: record.mover.serviceTypes.map(
+        (entry) => entry.serviceType.name,
+      ),
+      regions: record.mover.regions.map((entry) => entry.region.name),
+    },
+  };
+}
+
+/**
+ * 인증된 고객의 대기 견적 상세를 반환합니다.
+ * 다른 고객 견적과 과거 견적은 존재 여부를 구분하지 않고 같은 404를 사용합니다.
+ * @param customerId Customer profile ID
+ * @param quoteId 검증된 Quote UUID
+ * @returns data.quote
+ * @throws NotFoundError 없거나 대기 견적이 아닌 경우 QUOTE_NOT_FOUND
+ */
+export async function getReceivedQuoteDetail(
+  customerId: string,
+  quoteId: string,
+): Promise<ReceivedQuoteDetailResult> {
+  const record = await findReceivedQuoteDetail(customerId, quoteId);
+
+  if (!record) {
+    throw new NotFoundError("견적을 찾을 수 없습니다.", "QUOTE_NOT_FOUND");
+  }
+
+  const averages = new Map<string, number | null>(
+    (await findMoverReviewAverages([record.mover.id])).map(
+      (row: MoverReviewAverage) => [row.moverId, row.averageRating],
+    ),
+  );
+
+  return {
+    quote: toQuoteDetail(record, averages),
   };
 }

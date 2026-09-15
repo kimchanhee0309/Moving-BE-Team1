@@ -1,6 +1,6 @@
 /**
- * 고객 소유 대기 견적 목록을 Prisma로 조회합니다.
- * HTTP·cookie는 다루지 않고 목록 카드에 필요한 column과 집계만 선택합니다.
+ * 고객 소유 대기 견적 목록과 상세를 Prisma로 조회합니다.
+ * HTTP·cookie는 다루지 않고 응답에 필요한 column과 집계만 선택합니다.
  */
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
@@ -54,6 +54,37 @@ function createReceivedQuoteSelect(customerId: string) {
 
 export type ReceivedQuoteRecord = Prisma.QuoteGetPayload<{
   select: ReturnType<typeof createReceivedQuoteSelect>;
+}>;
+
+function createReceivedQuoteDetailSelect(customerId: string) {
+  return {
+    ...createReceivedQuoteSelect(customerId),
+    updatedAt: true,
+    mover: {
+      select: {
+        ...createReceivedQuoteSelect(customerId).mover.select,
+        description: true,
+        serviceTypes: {
+          select: {
+            serviceType: {
+              select: { name: true },
+            },
+          },
+        },
+        regions: {
+          select: {
+            region: {
+              select: { name: true },
+            },
+          },
+        },
+      },
+    },
+  } satisfies Prisma.QuoteSelect;
+}
+
+export type ReceivedQuoteDetailRecord = Prisma.QuoteGetPayload<{
+  select: ReturnType<typeof createReceivedQuoteDetailSelect>;
 }>;
 
 export interface MoverReviewAverage {
@@ -230,6 +261,29 @@ export async function findReceivedQuotes(
     orderBy: createOrderBy(query.sort),
     take: query.limit + 1,
     select: createReceivedQuoteSelect(customerId),
+  });
+}
+
+/**
+ * 내 활성 요청의 대기 견적 1건을 조회합니다.
+ * 없거나 소유하지 않거나 PROPOSED/WAITING이 아니면 null을 반환해 존재 여부를 구분하지 않습니다.
+ * @param customerId requireProfile이 보장한 Customer.id
+ * @param quoteId 검증된 Quote UUID
+ */
+export function findReceivedQuoteDetail(
+  customerId: string,
+  quoteId: string,
+): Promise<ReceivedQuoteDetailRecord | null> {
+  return prisma.quote.findFirst({
+    where: {
+      id: quoteId,
+      status: "PROPOSED",
+      moveRequest: {
+        customerId,
+        status: "WAITING",
+      },
+    },
+    select: createReceivedQuoteDetailSelect(customerId),
   });
 }
 

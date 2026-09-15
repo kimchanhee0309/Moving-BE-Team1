@@ -1,11 +1,14 @@
 /**
- * 고객이 받은 견적 목록 endpoint와 guard 순서를 선언합니다.
- * history·상세 경로를 추가할 때는 /history를 /:quoteId보다 먼저 등록해야 합니다.
+ * 고객이 받은 대기 견적 목록·상세 endpoint와 guard 순서를 선언합니다.
+ * history 경로를 추가할 때는 /history를 /:quoteId보다 먼저 등록해야 합니다.
  */
 import { Router } from "express";
 
 import { requireProfiledCustomer } from "../../common/middleware/auth-guards";
-import { listReceivedQuotesController } from "./customer-quote.controller";
+import {
+  getReceivedQuoteDetailController,
+  listReceivedQuotesController,
+} from "./customer-quote.controller";
 
 export const customerQuoteRouter = Router();
 
@@ -66,6 +69,44 @@ export const customerQuoteRouter = Router();
  *               properties:
  *                 nextCursor: { type: string, nullable: true, description: "다음 페이지 cursor. 없으면 null" }
  *                 hasNext: { type: boolean, example: false }
+ *     QuoteDetailMover:
+ *       allOf:
+ *         - $ref: "#/components/schemas/QuoteListMover"
+ *         - type: object
+ *           required: [description, serviceTypes, regions]
+ *           properties:
+ *             description: { type: string, example: "소형·가정이사 전문입니다." }
+ *             serviceTypes:
+ *               type: array
+ *               items: { $ref: "#/components/schemas/ServiceType" }
+ *               example: ["SMALL", "HOME"]
+ *             regions:
+ *               type: array
+ *               items: { type: string }
+ *               example: ["서울", "경기"]
+ *     QuoteDetail:
+ *       type: object
+ *       required: [id, price, comment, status, isDesignated, createdAt, updatedAt, mover, moveRequest]
+ *       properties:
+ *         id: { type: string, format: uuid }
+ *         price: { type: integer, nullable: true, example: 150000 }
+ *         comment: { type: string, nullable: true, example: "안전하게 이사를 도와드리겠습니다." }
+ *         status: { $ref: "#/components/schemas/QuoteStatus" }
+ *         isDesignated: { type: boolean, example: true }
+ *         createdAt: { type: string, format: date-time, example: "2026-09-11T03:00:00.000Z" }
+ *         updatedAt: { type: string, format: date-time, example: "2026-09-11T03:00:00.000Z" }
+ *         mover: { $ref: "#/components/schemas/QuoteDetailMover" }
+ *         moveRequest: { $ref: "#/components/schemas/QuoteListMoveRequest" }
+ *     ReceivedQuoteDetailResponse:
+ *       type: object
+ *       required: [success, data]
+ *       properties:
+ *         success: { type: boolean, example: true }
+ *         data:
+ *           type: object
+ *           required: [quote]
+ *           properties:
+ *             quote: { $ref: "#/components/schemas/QuoteDetail" }
  */
 
 /**
@@ -115,4 +156,35 @@ customerQuoteRouter.get(
   "/",
   ...requireProfiledCustomer,
   listReceivedQuotesController,
+);
+
+/**
+ * @openapi
+ * /customers/me/quotes/{quoteId}:
+ *   get:
+ *     tags: [Quotes]
+ *     summary: Get Received Quote Details
+ *     description: 로그인한 고객 소유 요청의 대기(PROPOSED) 견적 상세를 조회합니다. 다른 고객 견적과 과거 견적은 QUOTE_NOT_FOUND로 응답합니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: quoteId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *         description: 조회할 견적 ID
+ *     responses:
+ *       200:
+ *         description: 대기 견적 상세
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ReceivedQuoteDetailResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       403: { $ref: "#/components/responses/Forbidden" }
+ *       404: { $ref: "#/components/responses/NotFound" }
+ */
+customerQuoteRouter.get(
+  "/:quoteId",
+  ...requireProfiledCustomer,
+  getReceivedQuoteDetailController,
 );

@@ -4,16 +4,25 @@
  */
 jest.mock("../../src/modules/customer-quote/customer-quote.repository", () => ({
   findMoverReviewAverages: jest.fn(),
+  findReceivedQuoteDetail: jest.fn(),
   findReceivedQuotes: jest.fn(),
 }));
 
 import { decodeReceivedQuoteCursor } from "../../src/modules/customer-quote/customer-quote.cursor";
-import type { ReceivedQuoteRecord } from "../../src/modules/customer-quote/customer-quote.repository";
+import { NotFoundError } from "../../src/common/errors/app-error";
+import type {
+  ReceivedQuoteDetailRecord,
+  ReceivedQuoteRecord,
+} from "../../src/modules/customer-quote/customer-quote.repository";
 import {
   findMoverReviewAverages,
+  findReceivedQuoteDetail,
   findReceivedQuotes,
 } from "../../src/modules/customer-quote/customer-quote.repository";
-import { listReceivedQuotes } from "../../src/modules/customer-quote/customer-quote.service";
+import {
+  getReceivedQuoteDetail,
+  listReceivedQuotes,
+} from "../../src/modules/customer-quote/customer-quote.service";
 
 const customerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherCustomerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -189,5 +198,80 @@ describe("listReceivedQuotes", () => {
       pagination: { nextCursor: null, hasNext: false },
     });
     expect(findMoverReviewAverages).toHaveBeenCalledWith([]);
+  });
+});
+
+function createDetailRecord(): ReceivedQuoteDetailRecord {
+  const listRecord = createRecord();
+
+  return {
+    ...listRecord,
+    updatedAt: new Date("2026-09-11T03:00:00.000Z"),
+    mover: {
+      ...listRecord.mover,
+      description: "소형·가정이사 전문입니다.",
+      serviceTypes: [
+        { serviceType: { name: "SMALL" } },
+        { serviceType: { name: "HOME" } },
+      ],
+      regions: [{ region: { name: "서울" } }, { region: { name: "경기" } }],
+    },
+  };
+}
+
+describe("getReceivedQuoteDetail", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("대기 견적 상세를 data.quote로 매핑한다", async () => {
+    const record = createDetailRecord();
+    jest.mocked(findReceivedQuoteDetail).mockResolvedValue(record);
+    jest.mocked(findMoverReviewAverages).mockResolvedValue([
+      { moverId: record.mover.id, averageRating: 4.8 },
+    ]);
+
+    const result = await getReceivedQuoteDetail(customerId, record.id);
+
+    expect(findReceivedQuoteDetail).toHaveBeenCalledWith(customerId, record.id);
+    expect(result.quote).toMatchObject({
+      id: record.id,
+      status: "PROPOSED",
+      updatedAt: "2026-09-11T03:00:00.000Z",
+      mover: {
+        description: "소형·가정이사 전문입니다.",
+        serviceTypes: ["SMALL", "HOME"],
+        regions: ["서울", "경기"],
+        averageRating: 4.8,
+      },
+    });
+  });
+
+  test("없거나 내 대기 견적이 아니면 QUOTE_NOT_FOUND를 던진다", async () => {
+    jest.mocked(findReceivedQuoteDetail).mockResolvedValue(null);
+
+    await expect(
+      getReceivedQuoteDetail(customerId, "11111111-1111-4111-8111-111111111111"),
+    ).rejects.toMatchObject({
+      name: "AppError",
+      code: "QUOTE_NOT_FOUND",
+    });
+    expect(findMoverReviewAverages).not.toHaveBeenCalled();
+  });
+
+  test("다른 고객 ID로는 조회하지 않는다", async () => {
+    jest.mocked(findReceivedQuoteDetail).mockResolvedValue(null);
+
+    await expect(
+      getReceivedQuoteDetail(
+        otherCustomerId,
+        "11111111-1111-4111-8111-111111111111",
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(findReceivedQuoteDetail).toHaveBeenCalledWith(
+      otherCustomerId,
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 });

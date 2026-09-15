@@ -3,7 +3,10 @@
  */
 import { BadRequestError } from "../../src/common/errors/app-error";
 import { encodeReceivedQuoteCursor } from "../../src/modules/customer-quote/customer-quote.cursor";
-import { parseReceivedQuotesQuery } from "../../src/modules/customer-quote/customer-quote.validator";
+import {
+  parseQuoteIdParams,
+  parseReceivedQuotesQuery,
+} from "../../src/modules/customer-quote/customer-quote.validator";
 
 describe("Received quotes query validator", () => {
   test("비어 있는 query는 최신순과 limit 10을 사용한다", () => {
@@ -109,5 +112,29 @@ describe("Received quotes query validator", () => {
     expect(() =>
       parseReceivedQuotesQuery({ keyword: "가".repeat(51) }),
     ).toThrow(BadRequestError);
+  });
+});
+
+describe("Quote id params validator", () => {
+  test("UUID quoteId를 통과시킨다", () => {
+    expect(
+      parseQuoteIdParams({ quoteId: "11111111-1111-4111-8111-111111111111" }),
+    ).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  test("UUID가 아니면 VALIDATION_ERROR를 반환한다", () => {
+    expect.assertions(2);
+
+    try {
+      parseQuoteIdParams({ quoteId: "history" });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.details).toEqual([
+          { field: "quoteId", reason: "UUID 형식이어야 합니다." },
+        ]);
+      }
+    }
   });
 });
