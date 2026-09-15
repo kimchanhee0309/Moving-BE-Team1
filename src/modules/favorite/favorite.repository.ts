@@ -195,6 +195,7 @@ export async function createFavorite(
 /**
  * 고객의 찜을 최신순으로 페이지 조회합니다.
  * skip/take로 한 페이지 분량만 읽고, 리뷰는 mover별 COUNT/AVG만 추가로 집계합니다.
+ * createdAt만 정렬하면 같은 밀리초에 여러 건이 있을 때 페이지 경계가 흔들릴 수 있어 id를 보조 기준으로 둡니다.
  */
 export async function findFavoritesByCustomer(
   customerId: string,
@@ -203,7 +204,7 @@ export async function findFavoritesByCustomer(
 ): Promise<FavoriteRecord[]> {
   const rows = await prisma.favorite.findMany({
     where: { customerId },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     skip,
     take,
     select: favoriteSelect,

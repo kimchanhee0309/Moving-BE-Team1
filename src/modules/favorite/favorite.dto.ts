@@ -16,7 +16,8 @@ export interface FavoriteMoverIdParams {
 
 /**
  * 찜 목록 Query입니다.
- * page는 1부터 시작하는 페이지 번호, pageSize는 한 페이지 개수이며 단위는 건입니다.
+ * page는 1부터 시작하는 페이지 번호(최대 2147483647), pageSize는 한 페이지 개수(최대 50건)입니다.
+ * (page - 1) * pageSize는 Prisma skip/PostgreSQL OFFSET INT4 상한 2147483647을 넘을 수 없습니다.
  */
 export interface ListFavoritesQuery {
   page: number;
