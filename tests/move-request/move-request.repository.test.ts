@@ -59,8 +59,10 @@ describe("Move request repository", () => {
     });
   });
 
-  test("findActiveMoveRequestByCustomerId는 WAITING이거나 CONFIRMED+미래 moveDate를 OR로 조회한다", async () => {
-    const now = new Date("2026-09-15T00:00:00.000Z");
+  test("findActiveMoveRequestByCustomerId는 WAITING이거나 CONFIRMED+오늘(UTC) 이후 moveDate를 OR로 조회한다", async () => {
+    // now가 자정이 아니어도 오늘 UTC 자정으로 truncate해서 비교해야 한다.
+    const now = new Date("2026-09-15T13:45:00.000Z");
+    const todayUtcMidnight = new Date("2026-09-15T00:00:00.000Z");
     mockMoveRequestFindFirst.mockResolvedValue(null);
 
     await findActiveMoveRequestByCustomerId(CUSTOMER_ID, now);
@@ -68,7 +70,10 @@ describe("Move request repository", () => {
     expect(mockMoveRequestFindFirst).toHaveBeenCalledWith({
       where: {
         customerId: CUSTOMER_ID,
-        OR: [{ status: "WAITING" }, { status: "CONFIRMED", moveDate: { gt: now } }],
+        OR: [
+          { status: "WAITING" },
+          { status: "CONFIRMED", moveDate: { gte: todayUtcMidnight } },
+        ],
       },
       select: expect.objectContaining({
         id: true,

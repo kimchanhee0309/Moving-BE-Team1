@@ -52,10 +52,18 @@ export function findActiveMoveRequestByCustomerId(
   now: Date,
   client: PrismaClientOrTx = prisma,
 ): Promise<MoveRequestRecord | null> {
+  // moveDate는 이사일의 UTC 자정 instant로 저장되므로 now와 그대로 비교하면 이사 당일
+  // UTC 00:00이 지나는 순간 바로 비활성으로 취급된다. 오늘 UTC 자정과 비교해 이사 당일
+  // 하루 전체는 활성으로 유지한다.
+  const todayUtcMidnight = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+
   return client.moveRequest.findFirst({
     where: {
       customerId,
-      OR: [{ status: "WAITING" }, { status: "CONFIRMED", moveDate: { gt: now } }],
+      OR: [
+        { status: "WAITING" },
+        { status: "CONFIRMED", moveDate: { gte: todayUtcMidnight } },
+      ],
     },
     select: moveRequestSelect,
   });
