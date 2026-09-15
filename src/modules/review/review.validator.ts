@@ -19,10 +19,22 @@ import type {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Query 정수는 선행 부호·소수·지수가 없는 십진 숫자만 받습니다. */
+const POSITIVE_INTEGER_PATTERN = /^\d+$/;
+
 /** Favorite와 같은 Page 기본값: 첫 페이지, 10건, 최대 50건. */
 export const REVIEW_LIST_DEFAULT_PAGE = 1;
 export const REVIEW_LIST_DEFAULT_PAGE_SIZE = 10;
 export const REVIEW_LIST_MAX_PAGE_SIZE = 50;
+
+/**
+ * Prisma `skip`과 PostgreSQL INT4 OFFSET이 받을 수 있는 최댓값입니다.
+ * 이보다 큰 skip은 DB 호출 전에 VALIDATION_ERROR로 거절합니다.
+ */
+export const REVIEW_LIST_MAX_SKIP = 2_147_483_647;
+
+/** page 자체도 같은 정수 상한을 적용합니다. skip은 pageSize와 곱한 뒤 한 번 더 검사합니다. */
+export const REVIEW_LIST_MAX_PAGE = REVIEW_LIST_MAX_SKIP;
 
 /** 평점은 Prisma Int이며 화면의 별점 1~5만 허용합니다. */
 export const REVIEW_MIN_RATING = 1;
@@ -45,7 +57,8 @@ const moverIdParamsSchema = z
   .strip();
 
 /**
- * Express query 문자열을 양의 정수로 바꿉니다.
+ * Express query 문자열을 안전한 양의 정수로 바꿉니다.
+ * Number()만 쓰면 큰 값이 반올림된 채 통과하므로 십진 문자열과 Number.isSafeInteger를 함께 봅니다.
  * 배열·소수·범위 초과는 VALIDATION_ERROR details로 남기고, 생략은 schema default가 채웁니다.
  */
 function queryPositiveInteger(max?: number) {
@@ -58,7 +71,31 @@ function queryPositiveInteger(max?: number) {
       return z.NEVER;
     }
 
-    if (typeof value !== "string" && typeof value !== "number") {
+    let parsed: number;
+
+    if (typeof value === "number") {
+      parsed = value;
+    } else if (typeof value === "string") {
+      const trimmed = value.trim();
+
+      if (!POSITIVE_INTEGER_PATTERN.test(trimmed)) {
+        context.addIssue({
+          code: "custom",
+          message: "1 이상의 정수여야 합니다.",
+        });
+        return z.NEVER;
+      }
+
+      parsed = Number(trimmed);
+
+      if (String(parsed) !== trimmed) {
+        context.addIssue({
+          code: "custom",
+          message: "허용된 정수 범위를 벗어났습니다.",
+        });
+        return z.NEVER;
+      }
+    } else {
       context.addIssue({
         code: "custom",
         message: "1 이상의 정수여야 합니다.",
@@ -66,12 +103,13 @@ function queryPositiveInteger(max?: number) {
       return z.NEVER;
     }
 
-    const parsed = typeof value === "number" ? value : Number(value);
-
-    if (!Number.isInteger(parsed) || parsed < 1) {
+    if (!Number.isSafeInteger(parsed) || parsed < 1) {
       context.addIssue({
         code: "custom",
-        message: "1 이상의 정수여야 합니다.",
+        message:
+          parsed < 1
+            ? "1 이상의 정수여야 합니다."
+            : "허용된 정수 범위를 벗어났습니다.",
       });
       return z.NEVER;
     }
@@ -88,14 +126,37 @@ function queryPositiveInteger(max?: number) {
   });
 }
 
-const listReviewsQuerySchema = z
+const listReviewsPageSchema = z
   .object({
-    page: queryPositiveInteger().optional().default(REVIEW_LIST_DEFAULT_PAGE),
+    page: queryPositiveInteger(REVIEW_LIST_MAX_PAGE)
+      .optional()
+      .default(REVIEW_LIST_DEFAULT_PAGE),
     pageSize: queryPositiveInteger(REVIEW_LIST_MAX_PAGE_SIZE)
       .optional()
       .default(REVIEW_LIST_DEFAULT_PAGE_SIZE),
   })
   .strip();
+
+/**
+ * pageSize가 1보다 크면 page 상한만으로는 skip이 INT4를 넘을 수 있어 곱한 값을 한 번 더 검사합니다.
+ */
+function refineListSkip<T extends { page: number; pageSize: number }>(
+  schema: z.ZodType<T>,
+) {
+  return schema.superRefine((query, context) => {
+    const skip = (query.page - 1) * query.pageSize;
+
+    if (!Number.isSafeInteger(skip) || skip > REVIEW_LIST_MAX_SKIP) {
+      context.addIssue({
+        code: "custom",
+        path: ["page"],
+        message: "조회 위치가 허용 범위를 넘습니다.",
+      });
+    }
+  });
+}
+
+const listReviewsQuerySchema = refineListSkip(listReviewsPageSchema);
 
 const customerReviewTypeSchema = z.unknown().transform((value, context) => {
   if (Array.isArray(value)) {
@@ -127,9 +188,11 @@ const customerReviewTypeSchema = z.unknown().transform((value, context) => {
   return normalized;
 });
 
-const listCustomerReviewsQuerySchema = listReviewsQuerySchema.extend({
-  type: customerReviewTypeSchema,
-});
+const listCustomerReviewsQuerySchema = refineListSkip(
+  listReviewsPageSchema.extend({
+    type: customerReviewTypeSchema,
+  }),
+);
 
 const createReviewBodySchema = z
   .object({
@@ -177,7 +240,8 @@ export function parseMoverIdParam(value: unknown): ReviewMoverIdParams {
 
 /**
  * 기사님 받은 리뷰 목록의 page·pageSize를 검증합니다.
- * 기본값은 page=1, pageSize=10이며 pageSize는 50을 넘을 수 없습니다.
+ * 기본값은 page=1, pageSize=10이며 pageSize는 50, page는 2147483647을 넘을 수 없습니다.
+ * (page - 1) * pageSize가 Prisma skip 상한을 넘으면 DB 호출 전에 거절합니다.
  *
  * @param value Express `request.query`
  * @returns 정규화된 목록 Query

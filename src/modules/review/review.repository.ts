@@ -80,7 +80,7 @@ const receivedReviewSelect = {
 const confirmedQuoteOrderBy = [
   { createdAt: "desc" },
   { id: "desc" },
-] as const satisfies Prisma.QuoteOrderByWithRelationInput[];
+] satisfies Prisma.QuoteOrderByWithRelationInput[];
 
 /** 작성 가능 목록은 Review가 없으므로 완료 요청과 확정 견적의 기사님만 가져옵니다. */
 const writableMoveRequestSelect = {
@@ -212,6 +212,7 @@ export function createReviewRecord(input: {
 /**
  * 고객이 이미 쓴 리뷰를 최신순으로 페이지 조회합니다.
  * 다른 고객 리뷰는 where.customerId로 제외합니다.
+ * createdAt만 정렬하면 같은 시각 리뷰의 페이지 경계가 흔들릴 수 있어 id를 보조 기준으로 둡니다.
  */
 export function findWrittenReviewsByCustomer(
   customerId: string,
@@ -220,7 +221,7 @@ export function findWrittenReviewsByCustomer(
 ): Promise<WrittenReviewRecord[]> {
   return prisma.review.findMany({
     where: { customerId },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     skip,
     take,
     select: writtenReviewSelect,
@@ -240,6 +241,7 @@ export function countWrittenReviewsByCustomer(customerId: string): Promise<numbe
 /**
  * 완료됐지만 아직 리뷰가 없는 본인 요청만 조회합니다.
  * 확정 견적이 있어야 대상 기사님을 알 수 있어 CONFIRMED Quote를 함께 가져옵니다.
+ * moveDate·createdAt 동률에서 페이지가 흔들리지 않도록 id를 보조 정렬합니다.
  */
 export function findWritableMoveRequestsByCustomer(
   customerId: string,
@@ -248,7 +250,7 @@ export function findWritableMoveRequestsByCustomer(
 ): Promise<WritableMoveRequestRecord[]> {
   return prisma.moveRequest.findMany({
     where: writableMoveRequestWhere(customerId),
-    orderBy: [{ moveDate: "desc" }, { createdAt: "desc" }],
+    orderBy: [{ moveDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     skip,
     take,
     select: writableMoveRequestSelect,
@@ -270,6 +272,7 @@ export function countWritableMoveRequestsByCustomer(
 /**
  * 특정 기사님이 받은 리뷰를 최신순으로 페이지 조회합니다.
  * 고객 주소는 공개 목록에 넣지 않도록 select에서 제외합니다.
+ * createdAt 동률에서 페이지가 흔들리지 않도록 id를 보조 정렬합니다.
  */
 export function findReceivedReviewsByMover(
   moverId: string,
@@ -278,7 +281,7 @@ export function findReceivedReviewsByMover(
 ): Promise<ReceivedReviewRecord[]> {
   return prisma.review.findMany({
     where: { moverId },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     skip,
     take,
     select: receivedReviewSelect,

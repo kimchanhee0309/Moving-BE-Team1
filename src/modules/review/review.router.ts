@@ -196,7 +196,7 @@ reviewRouter.post("/", ...requireProfiledCustomer, createReviewController);
  *   get:
  *     tags: [Reviews]
  *     summary: Get Customer Reviews
- *     description: 로그인한 CUSTOMER의 작성 가능(WRITABLE) 또는 작성 완료(WRITTEN) 리뷰 목록입니다. page 기본값 1, pageSize 기본값 10, 최대 50입니다.
+ *     description: 로그인한 CUSTOMER의 작성 가능(WRITABLE) 또는 작성 완료(WRITTEN) 리뷰 목록입니다. page 기본값 1·최대 2147483647, pageSize 기본값 10·최대 50입니다. (page - 1) * pageSize가 2147483647을 넘으면 400입니다.
  *     security: [{ accessTokenCookie: [] }]
  *     parameters:
  *       - in: query
@@ -206,9 +206,11 @@ reviewRouter.post("/", ...requireProfiledCustomer, createReviewController);
  *         description: WRITABLE은 완료됐지만 리뷰가 없는 요청, WRITTEN은 이미 작성한 리뷰
  *       - in: query
  *         name: page
- *         schema: { type: integer, minimum: 1, default: 1 }
+ *         description: 1부터 시작하는 페이지 번호입니다. pageSize와 곱한 skip이 2147483647을 넘으면 VALIDATION_ERROR입니다.
+ *         schema: { type: integer, minimum: 1, maximum: 2147483647, default: 1 }
  *       - in: query
  *         name: pageSize
+ *         description: 한 페이지 건수입니다.
  *         schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
  *     responses:
  *       200:
@@ -235,14 +237,16 @@ customerReviewRouter.get(
  *   get:
  *     tags: [Reviews]
  *     summary: Get My Received Reviews
- *     description: 로그인한 MOVER가 받은 리뷰를 최신순으로 조회합니다. page 기본값 1, pageSize 기본값 10, 최대 50입니다.
+ *     description: 로그인한 MOVER가 받은 리뷰를 최신순으로 조회합니다. page 기본값 1·최대 2147483647, pageSize 기본값 10·최대 50입니다. (page - 1) * pageSize가 2147483647을 넘으면 400입니다.
  *     security: [{ accessTokenCookie: [] }]
  *     parameters:
  *       - in: query
  *         name: page
- *         schema: { type: integer, minimum: 1, default: 1 }
+ *         description: 1부터 시작하는 페이지 번호입니다. pageSize와 곱한 skip이 2147483647을 넘으면 VALIDATION_ERROR입니다.
+ *         schema: { type: integer, minimum: 1, maximum: 2147483647, default: 1 }
  *       - in: query
  *         name: pageSize
+ *         description: 한 페이지 건수입니다.
  *         schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
  *     responses:
  *       200:
@@ -266,7 +270,7 @@ moverReviewRouter.get(
  *   get:
  *     tags: [Reviews]
  *     summary: Get Mover Reviews
- *     description: 특정 기사님이 받은 리뷰를 공개 조회합니다. 고객 주소·이메일은 포함하지 않습니다. page 기본값 1, pageSize 기본값 10, 최대 50입니다.
+ *     description: 특정 기사님이 받은 리뷰를 공개 조회합니다. 고객 주소·이메일은 포함하지 않습니다. page 기본값 1·최대 2147483647, pageSize 기본값 10·최대 50입니다. (page - 1) * pageSize가 2147483647을 넘으면 400입니다.
  *     parameters:
  *       - in: path
  *         name: moverId
@@ -275,9 +279,11 @@ moverReviewRouter.get(
  *         description: Prisma Mover.id. User.id가 아닙니다.
  *       - in: query
  *         name: page
- *         schema: { type: integer, minimum: 1, default: 1 }
+ *         description: 1부터 시작하는 페이지 번호입니다. pageSize와 곱한 skip이 2147483647을 넘으면 VALIDATION_ERROR입니다.
+ *         schema: { type: integer, minimum: 1, maximum: 2147483647, default: 1 }
  *       - in: query
  *         name: pageSize
+ *         description: 한 페이지 건수입니다.
  *         schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
  *     responses:
  *       200:

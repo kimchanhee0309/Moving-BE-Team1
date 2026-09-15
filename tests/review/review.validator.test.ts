@@ -2,13 +2,16 @@
  * Review Validator가 UUID·평점·본문·목록 Query 범위를 검사하는지 검증합니다.
  *
  * 사전 조건: HTTP·DB 없이 순수 입력만 전달한다.
- * 시나리오: 정상 UUID/기본값, 잘못된 type, pageSize 초과, rating 범위, content 길이.
+ * 시나리오: 정상 UUID/기본값, 잘못된 type, pageSize 초과, page 상한, skip 상한, 큰 정수·정밀도 손실, rating 범위, content 길이.
  * 기대 결과: 정규화된 DTO 또는 VALIDATION_ERROR details.
  */
 import { BadRequestError } from "../../src/common/errors/app-error";
 import {
   REVIEW_LIST_DEFAULT_PAGE,
   REVIEW_LIST_DEFAULT_PAGE_SIZE,
+  REVIEW_LIST_MAX_PAGE,
+  REVIEW_LIST_MAX_PAGE_SIZE,
+  REVIEW_LIST_MAX_SKIP,
   parseCreateReviewInput,
   parseListCustomerReviewsQuery,
   parseListReviewsQuery,
@@ -60,6 +63,100 @@ describe("Review validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
           { field: "pageSize", reason: "50 이하여야 합니다." },
+        ]);
+      }
+    }
+  });
+
+  test("page 최댓값과 pageSize 1은 허용한다", () => {
+    expect(
+      parseListReviewsQuery({
+        page: String(REVIEW_LIST_MAX_PAGE),
+        pageSize: "1",
+      }),
+    ).toEqual({
+      page: REVIEW_LIST_MAX_PAGE,
+      pageSize: 1,
+    });
+  });
+
+  test("page가 최댓값을 넘으면 VALIDATION_ERROR를 던진다", () => {
+    expect.assertions(2);
+
+    try {
+      parseListReviewsQuery({
+        page: String(REVIEW_LIST_MAX_PAGE + 1),
+        pageSize: "1",
+      });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.details).toEqual([
+          { field: "page", reason: `${REVIEW_LIST_MAX_PAGE} 이하여야 합니다.` },
+        ]);
+      }
+    }
+  });
+
+  test("계산된 skip이 상한을 넘으면 VALIDATION_ERROR를 던진다", () => {
+    expect.assertions(3);
+
+    const overflowingPage =
+      Math.floor(REVIEW_LIST_MAX_SKIP / REVIEW_LIST_MAX_PAGE_SIZE) + 2;
+
+    try {
+      parseListReviewsQuery({
+        page: String(overflowingPage),
+        pageSize: String(REVIEW_LIST_MAX_PAGE_SIZE),
+      });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.code).toBe("VALIDATION_ERROR");
+        expect(error.details).toEqual([
+          { field: "page", reason: "조회 위치가 허용 범위를 넘습니다." },
+        ]);
+      }
+    }
+  });
+
+  test("JS 정밀도를 넘는 page는 VALIDATION_ERROR를 던진다", () => {
+    expect.assertions(3);
+
+    try {
+      parseListReviewsQuery({ page: "9007199254740993" });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.code).toBe("VALIDATION_ERROR");
+        expect(error.details).toEqual([
+          { field: "page", reason: "허용된 정수 범위를 벗어났습니다." },
+        ]);
+      }
+    }
+  });
+
+  test("고객 목록의 skip 상한 초과도 VALIDATION_ERROR를 던진다", () => {
+    expect.assertions(2);
+
+    const overflowingPage =
+      Math.floor(REVIEW_LIST_MAX_SKIP / REVIEW_LIST_MAX_PAGE_SIZE) + 2;
+
+    try {
+      parseListCustomerReviewsQuery({
+        type: "WRITTEN",
+        page: String(overflowingPage),
+        pageSize: String(REVIEW_LIST_MAX_PAGE_SIZE),
+      });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.details).toEqual([
+          { field: "page", reason: "조회 위치가 허용 범위를 넘습니다." },
         ]);
       }
     }
