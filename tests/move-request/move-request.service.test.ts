@@ -126,10 +126,11 @@ describe("Move request service", () => {
     });
 
     test("형식은 맞지만 실존하지 않는 날짜(2월 30일)를 거절한다", async () => {
+      // 과거 날짜 검증만으로도 거절되지 않도록 미래 연도를 써서 캘린더 유효성 검사 자체를 검증한다.
       await expect(
         createMoveRequestForCustomer(CUSTOMER_ID, {
           ...validCreateInput,
-          moveDate: "2026-02-30",
+          moveDate: "2099-02-30",
         }),
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 400 });
 
