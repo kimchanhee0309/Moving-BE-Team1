@@ -1,5 +1,5 @@
 /**
- * 기사님 받은 요청 API의 Path Parameter와 Query Parameter를 검증합니다.
+ * 기사님 받은 요청 API의 Path Parameter, Query Parameter, Body를 검증합니다.
  * 문자열 변환과 기본값 적용만 담당하고 DB 조회와 권한 검사는 Service에 위임합니다.
  */
 import {
@@ -11,6 +11,8 @@ import {
   SERVICE_TYPE_LIST,
   type GetReceivedRequestsQuery,
   type MoverRequestSort,
+  type RejectReceivedRequestInput,
+  type SendQuoteInput,
   type ServiceTypeCode,
 } from "./mover-request.dto";
 
@@ -20,23 +22,26 @@ const UUID_PATTERN =
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const MAX_KEYWORD_LENGTH = 50;
+const MIN_COMMENT_LENGTH = 10;
+const MAX_DATABASE_INT = 2_147_483_647;
 
-/** 문자열이 지원하는 서비스 유형인지 확인하고 타입을 좁힙니다. */
 function isServiceTypeCode(value: string): value is ServiceTypeCode {
   return SERVICE_TYPE_LIST.some((serviceType) => serviceType === value);
 }
 
-/** 문자열이 지원하는 받은 요청 정렬 방식인지 확인하고 타입을 좁힙니다. */
 function isMoverRequestSort(value: string): value is MoverRequestSort {
   return MOVER_REQUEST_SORT_LIST.some((sort) => sort === value);
 }
 
-function getQueryRecord(value: unknown): Record<string, unknown> {
+function getRecord(
+  value: unknown,
+  field: "query" | "body",
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new BadRequestError(
-      "Query Parameter가 올바르지 않습니다.",
+      `${field === "query" ? "Query Parameter" : "요청 Body"}가 올바르지 않습니다.`,
       "VALIDATION_ERROR",
-      [{ field: "query", reason: "객체 형식이어야 합니다." }],
+      [{ field, reason: "객체 형식이어야 합니다." }],
     );
   }
 
@@ -181,6 +186,34 @@ function parseCursor(
   return value;
 }
 
+function parseRequiredText(
+  body: Record<string, unknown>,
+  field: string,
+  details: ErrorDetails,
+): string {
+  const value = body[field];
+
+  if (typeof value !== "string") {
+    details.push({
+      field,
+      reason: "문자열 값이 필요합니다.",
+    });
+
+    return "";
+  }
+
+  const trimmedValue = value.trim();
+
+  if (trimmedValue.length < MIN_COMMENT_LENGTH) {
+    details.push({
+      field,
+      reason: `최소 ${MIN_COMMENT_LENGTH}자 이상 입력해야 합니다.`,
+    });
+  }
+
+  return trimmedValue;
+}
+
 function throwIfInvalid(details: ErrorDetails): void {
   if (details.length > 0) {
     throw new BadRequestError(
@@ -191,11 +224,10 @@ function throwIfInvalid(details: ErrorDetails): void {
   }
 }
 
-/** 받은 요청 목록의 검색, 필터, 정렬, pagination 값을 검증합니다. */
 export function parseGetReceivedRequestsQuery(
   value: unknown,
 ): GetReceivedRequestsQuery {
-  const query = getQueryRecord(value);
+  const query = getRecord(value, "query");
   const details: ErrorDetails = [];
 
   const keyword = getOptionalQueryString(query, "keyword", details);
@@ -245,10 +277,6 @@ export function parseGetReceivedRequestsQuery(
   };
 }
 
-/**
- * 받은 요청의 requestId를 UUID로 검증합니다.
- * 견적 전송과 요청 반려 API에서도 공통으로 사용할 수 있습니다.
- */
 export function parseReceivedRequestId(value: unknown): string {
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
     throw new BadRequestError(
@@ -259,4 +287,49 @@ export function parseReceivedRequestId(value: unknown): string {
   }
 
   return value;
+}
+
+export function parseSendQuoteInput(value: unknown): SendQuoteInput {
+  const body = getRecord(value, "body");
+  const details: ErrorDetails = [];
+  const rawPrice = body.price;
+
+  let price = 0;
+
+  if (
+    typeof rawPrice !== "number" ||
+    !Number.isSafeInteger(rawPrice) ||
+    rawPrice <= 0 ||
+    rawPrice > MAX_DATABASE_INT
+  ) {
+    details.push({
+      field: "price",
+      reason: `1 이상 ${MAX_DATABASE_INT} 이하의 정수여야 합니다.`,
+    });
+  } else {
+    price = rawPrice;
+  }
+
+  const comment = parseRequiredText(body, "comment", details);
+
+  throwIfInvalid(details);
+
+  return {
+    price,
+    comment,
+  };
+}
+
+export function parseRejectReceivedRequestInput(
+  value: unknown,
+): RejectReceivedRequestInput {
+  const body = getRecord(value, "body");
+  const details: ErrorDetails = [];
+  const reason = parseRequiredText(body, "reason", details);
+
+  throwIfInvalid(details);
+
+  return {
+    reason,
+  };
 }
