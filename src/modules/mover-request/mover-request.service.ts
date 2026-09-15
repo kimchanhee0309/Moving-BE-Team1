@@ -1,19 +1,34 @@
 /**
- * 기사님의 받은 요청 조회 권한과 목록 pagination을 처리
- * Express 객체에 의존하지 않고 Repository 결과를 외부 API DTO로 변환
+ * 기사님의 받은 요청 목록, 견적 전송 및 요청 반려 규칙을 처리합니다.
  */
-import { NotFoundError } from "../../common/errors/app-error";
+import { ConflictError, NotFoundError } from "../../common/errors/app-error";
+import { prisma } from "../../lib/prisma";
 import type {
+  CreatedQuoteDto,
+  CreatedRequestRejectionDto,
   GetReceivedRequestsQuery,
-  ReceivedRequestDetailDto,
   ReceivedRequestItemDto,
   ReceivedRequestListDto,
+  RejectReceivedRequestInput,
+  SendQuoteInput,
 } from "./mover-request.dto";
 import {
-  findReceivedRequestById,
+  createNewQuoteNotification,
+  createQuote,
+  createRequestRejection,
+  findReceivedRequestForAction,
   findReceivedRequests,
+  type ReceivedRequestActionRecord,
   type ReceivedRequestRecord,
 } from "./mover-request.repository";
+
+function isPrismaActionConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+
+  return error.code === "P2002" || error.code === "P2034";
+}
 
 function toReceivedRequestItemDto(
   record: ReceivedRequestRecord,
@@ -30,16 +45,43 @@ function toReceivedRequestItemDto(
   };
 }
 
-function toReceivedRequestDetailDto(
-  record: ReceivedRequestRecord,
-): ReceivedRequestDetailDto {
-  return {
-    ...toReceivedRequestItemDto(record),
-    status: record.status,
-  };
+function assertRequestCanBeHandled(
+  record: ReceivedRequestActionRecord | null,
+  now: Date,
+): asserts record is ReceivedRequestActionRecord {
+  if (!record || record.serviceType.moverServiceTypes.length === 0) {
+    throw new NotFoundError(
+      "처리할 수 있는 받은 요청을 찾을 수 없습니다.",
+      "REQUEST_NOT_FOUND",
+    );
+  }
+
+  if (record.status !== "WAITING" || record.moveDate < now) {
+    throw new ConflictError(
+      "현재 처리할 수 없는 요청입니다.",
+      "REQUEST_NOT_AVAILABLE",
+    );
+  }
+
+  if (record.quotes.length > 0 || record.requestRejections.length > 0) {
+    throw new ConflictError(
+      "이미 견적을 보내거나 반려한 요청입니다.",
+      "REQUEST_ALREADY_HANDLED",
+    );
+  }
 }
 
-/** 기사님이 아직 처리하지 않은 요청 목록과 cursor 정보를 반환 */
+function throwActionConflict(error: unknown): never {
+  if (isPrismaActionConflict(error)) {
+    throw new ConflictError(
+      "요청이 이미 처리되었거나 다른 요청과 충돌했습니다.",
+      "REQUEST_ALREADY_HANDLED",
+    );
+  }
+
+  throw error;
+}
+
 export async function getReceivedRequests(
   moverId: string,
   query: GetReceivedRequestsQuery,
@@ -65,27 +107,91 @@ export async function getReceivedRequests(
   };
 }
 
-/**
- * 현재 기사님이 조회하고 처리할 수 있는 요청 상세를 반환
- * 대상이 없거나 이미 처리했거나 서비스 조건이 맞지 않으면 동일한 404로 숨김
- */
-export async function getReceivedRequestDetail(
+export async function sendQuoteToReceivedRequest(
   moverId: string,
   requestId: string,
+  input: SendQuoteInput,
   now = new Date(),
-): Promise<ReceivedRequestDetailDto> {
-  const record = await findReceivedRequestById({
-    moverId,
-    requestId,
-    now,
-  });
+): Promise<CreatedQuoteDto> {
+  try {
+    return await prisma.$transaction(
+      async (transaction) => {
+        const request = await findReceivedRequestForAction(transaction, {
+          moverId,
+          requestId,
+        });
 
-  if (!record) {
-    throw new NotFoundError(
-      "받은 요청을 찾을 수 없습니다.",
-      "REQUEST_NOT_FOUND",
+        assertRequestCanBeHandled(request, now);
+
+        const quote = await createQuote(transaction, {
+          moverId,
+          requestId,
+          price: input.price,
+          comment: input.comment,
+        });
+
+        await createNewQuoteNotification(transaction, {
+          customerUserId: request.customer.userId,
+          requestId,
+          quoteId: quote.id,
+        });
+
+        if (quote.price === null || quote.comment === null) {
+          throw new Error("생성된 견적의 필수값을 확인할 수 없습니다.");
+        }
+
+        return {
+          quoteId: quote.id,
+          requestId: quote.moveRequestId,
+          price: quote.price,
+          comment: quote.comment,
+          status: "PROPOSED",
+          createdAt: quote.createdAt.toISOString(),
+        };
+      },
+      {
+        isolationLevel: "Serializable",
+      },
     );
+  } catch (error: unknown) {
+    return throwActionConflict(error);
   }
+}
 
-  return toReceivedRequestDetailDto(record);
+export async function rejectReceivedRequest(
+  moverId: string,
+  requestId: string,
+  input: RejectReceivedRequestInput,
+  now = new Date(),
+): Promise<CreatedRequestRejectionDto> {
+  try {
+    return await prisma.$transaction(
+      async (transaction) => {
+        const request = await findReceivedRequestForAction(transaction, {
+          moverId,
+          requestId,
+        });
+
+        assertRequestCanBeHandled(request, now);
+
+        const rejection = await createRequestRejection(transaction, {
+          moverId,
+          requestId,
+          reason: input.reason,
+        });
+
+        return {
+          rejectionId: rejection.id,
+          requestId: rejection.moveRequestId,
+          reason: rejection.reason,
+          rejectedAt: rejection.createdAt.toISOString(),
+        };
+      },
+      {
+        isolationLevel: "Serializable",
+      },
+    );
+  } catch (error: unknown) {
+    return throwActionConflict(error);
+  }
 }

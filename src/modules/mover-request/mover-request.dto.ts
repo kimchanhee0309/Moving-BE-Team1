@@ -1,8 +1,7 @@
 /**
- * 기사님이 받은 요청 목록과 상세 조회 API의 입출력 계약을 정의
- * HTTP 및 Prisma 객체에 의존하지 않으며 Controller와 Service 사이에서 사용
+ * 기사님이 받은 요청 조회·견적 전송·반려 API의 입출력 계약을 정의합니다.
+ * HTTP 및 Prisma 객체에 의존하지 않습니다.
  */
-import type { MoveRequestStatus } from "../../generated/prisma/enums";
 
 /** API에서 사용하는 이사 서비스 코드 */
 export const SERVICE_TYPE_LIST = ["SMALL", "HOME", "OFFICE"] as const;
@@ -51,7 +50,31 @@ export interface ReceivedRequestListDto {
   pagination: CursorPaginationDto;
 }
 
-/** 받은 요청 상세 API의 이사 요청 정보 */
-export interface ReceivedRequestDetailDto extends ReceivedRequestItemDto {
-  status: MoveRequestStatus;
+/** 견적 보내기 요청 body */
+export interface SendQuoteInput {
+  price: number;
+  comment: string;
+}
+
+/** 요청 반려 body */
+export interface RejectReceivedRequestInput {
+  reason: string;
+}
+
+/** 생성된 견적 응답 */
+export interface CreatedQuoteDto {
+  quoteId: string;
+  requestId: string;
+  price: number;
+  comment: string;
+  status: "PROPOSED";
+  createdAt: string;
+}
+
+/** 생성된 요청 반려 응답 */
+export interface CreatedRequestRejectionDto {
+  rejectionId: string;
+  requestId: string;
+  reason: string;
+  rejectedAt: string;
 }
