@@ -5,6 +5,7 @@ import { BadRequestError } from "../../src/common/errors/app-error";
 import { encodeReceivedQuoteCursor } from "../../src/modules/customer-quote/customer-quote.cursor";
 import {
   parseQuoteIdParams,
+  parseReceivedQuoteHistoryQuery,
   parseReceivedQuotesQuery,
 } from "../../src/modules/customer-quote/customer-quote.validator";
 
@@ -136,5 +137,41 @@ describe("Quote id params validator", () => {
         ]);
       }
     }
+  });
+});
+
+describe("Received quotes history query validator", () => {
+  test("비어 있는 query는 확정 시각 최신순과 limit 10을 사용한다", () => {
+    expect(parseReceivedQuoteHistoryQuery({})).toEqual({
+      keyword: undefined,
+      serviceType: undefined,
+      moveRequestStatus: undefined,
+      sort: "UPDATED_AT_DESC",
+      cursor: undefined,
+      limit: 10,
+    });
+  });
+
+  test("요청 상태와 정렬을 파싱한다", () => {
+    expect(
+      parseReceivedQuoteHistoryQuery({
+        moveRequestStatus: "COMPLETED",
+        sort: "MOVE_DATE_DESC",
+        limit: "5",
+      }),
+    ).toEqual({
+      keyword: undefined,
+      serviceType: undefined,
+      moveRequestStatus: "COMPLETED",
+      sort: "MOVE_DATE_DESC",
+      cursor: undefined,
+      limit: 5,
+    });
+  });
+
+  test("WAITING 요청 상태는 거절한다", () => {
+    expect(() =>
+      parseReceivedQuoteHistoryQuery({ moveRequestStatus: "WAITING" }),
+    ).toThrow(BadRequestError);
   });
 });

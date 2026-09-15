@@ -5,6 +5,8 @@
 jest.mock("../../src/modules/customer-quote/customer-quote.repository", () => ({
   findMoverReviewAverages: jest.fn(),
   findReceivedQuoteDetail: jest.fn(),
+  findReceivedQuoteHistory: jest.fn(),
+  findReceivedQuoteHistoryDetail: jest.fn(),
   findReceivedQuotes: jest.fn(),
 }));
 
@@ -17,10 +19,14 @@ import type {
 import {
   findMoverReviewAverages,
   findReceivedQuoteDetail,
+  findReceivedQuoteHistory,
+  findReceivedQuoteHistoryDetail,
   findReceivedQuotes,
 } from "../../src/modules/customer-quote/customer-quote.repository";
 import {
   getReceivedQuoteDetail,
+  getReceivedQuoteHistoryDetail,
+  listReceivedQuoteHistory,
   listReceivedQuotes,
 } from "../../src/modules/customer-quote/customer-quote.service";
 
@@ -36,6 +42,7 @@ function createRecord(
     comment: "안전하게 이사를 도와드리겠습니다.",
     status: "PROPOSED",
     createdAt: new Date("2026-09-11T03:00:00.000Z"),
+    updatedAt: new Date("2026-09-11T03:00:00.000Z"),
     moverId: "22222222-2222-4222-8222-222222222222",
     mover: {
       id: "22222222-2222-4222-8222-222222222222",
@@ -273,5 +280,58 @@ describe("getReceivedQuoteDetail", () => {
       otherCustomerId,
       "11111111-1111-4111-8111-111111111111",
     );
+  });
+});
+
+describe("listReceivedQuoteHistory", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("확정 견적만 고객 ID로 조회하고 목록으로 매핑한다", async () => {
+    const record = createRecord({
+      status: "CONFIRMED",
+      moveRequest: {
+        id: "55555555-5555-4555-8555-555555555555",
+        moveDate: new Date("2026-08-10T01:00:00.000Z"),
+        fromAddress: "서울시 강남구",
+        toAddress: "서울시 마포구",
+        status: "COMPLETED",
+        serviceType: { name: "HOME" },
+        designatedRequests: [],
+      },
+    });
+    jest.mocked(findReceivedQuoteHistory).mockResolvedValue([record]);
+    jest.mocked(findMoverReviewAverages).mockResolvedValue([]);
+
+    const query = {
+      sort: "UPDATED_AT_DESC" as const,
+      limit: 10,
+    };
+    const result = await listReceivedQuoteHistory(customerId, query);
+
+    expect(findReceivedQuoteHistory).toHaveBeenCalledWith(customerId, query);
+    expect(result.items[0]?.status).toBe("CONFIRMED");
+    expect(result.items[0]?.moveRequest.status).toBe("COMPLETED");
+    expect(result.pagination.hasNext).toBe(false);
+  });
+});
+
+describe("getReceivedQuoteHistoryDetail", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("대기 견적이 아니면 QUOTE_NOT_FOUND를 던진다", async () => {
+    jest.mocked(findReceivedQuoteHistoryDetail).mockResolvedValue(null);
+
+    await expect(
+      getReceivedQuoteHistoryDetail(
+        customerId,
+        "11111111-1111-4111-8111-111111111111",
+      ),
+    ).rejects.toMatchObject({
+      code: "QUOTE_NOT_FOUND",
+    });
   });
 });

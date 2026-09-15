@@ -1,14 +1,17 @@
 /**
- * 고객이 받은 대기 견적 목록·상세의 조회 범위와 응답 매핑을 담당합니다.
- * 다른 고객 견적, 반려·확정 견적, 과거 요청 견적은 이 API 범위에 넣지 않습니다.
+ * 고객이 받은 대기·과거 견적 목록·상세의 조회 범위와 응답 매핑을 담당합니다.
+ * 대기 API는 PROPOSED+WAITING만, 과거 API는 CONFIRMED 견적만 다룹니다.
  */
 import { NotFoundError } from "../../common/errors/app-error";
-import { encodeReceivedQuoteCursor } from "./customer-quote.cursor";
+import { encodeReceivedQuoteCursor, encodeReceivedQuoteHistoryCursor } from "./customer-quote.cursor";
 import type {
   QuoteDetailDto,
   QuoteListItemDto,
   ReceivedQuoteCursorPayload,
   ReceivedQuoteDetailResult,
+  ReceivedQuoteHistoryCursorPayload,
+  ReceivedQuoteHistoryQuery,
+  ReceivedQuoteHistorySort,
   ReceivedQuoteSort,
   ReceivedQuotesQuery,
   ReceivedQuotesResult,
@@ -16,6 +19,8 @@ import type {
 import {
   findMoverReviewAverages,
   findReceivedQuoteDetail,
+  findReceivedQuoteHistory,
+  findReceivedQuoteHistoryDetail,
   findReceivedQuotes,
   type MoverReviewAverage,
   type ReceivedQuoteDetailRecord,
@@ -103,27 +108,10 @@ export async function listReceivedQuotes(
   query: ReceivedQuotesQuery,
 ): Promise<ReceivedQuotesResult> {
   const records = await findReceivedQuotes(customerId, query);
-  const hasNext = records.length > query.limit;
-  const page = hasNext ? records.slice(0, query.limit) : records;
-  const lastItem = page[page.length - 1];
-  const moverIds = [...new Set(page.map((record) => record.mover.id))];
-  const averages = new Map<string, number | null>(
-    (await findMoverReviewAverages(moverIds)).map((row: MoverReviewAverage) => [
-      row.moverId,
-      row.averageRating,
-    ]),
-  );
 
-  return {
-    items: page.map((record) => toQuoteListItem(record, averages)),
-    pagination: {
-      nextCursor:
-        hasNext && lastItem
-          ? encodeReceivedQuoteCursor(toCursorPayload(query.sort, lastItem))
-          : null,
-      hasNext,
-    },
-  };
+  return toPagedQuoteItems(records, query.limit, (lastItem) =>
+    encodeReceivedQuoteCursor(toCursorPayload(query.sort, lastItem)),
+  );
 }
 
 function toQuoteDetail(
@@ -159,6 +147,95 @@ export async function getReceivedQuoteDetail(
   quoteId: string,
 ): Promise<ReceivedQuoteDetailResult> {
   const record = await findReceivedQuoteDetail(customerId, quoteId);
+
+  if (!record) {
+    throw new NotFoundError("견적을 찾을 수 없습니다.", "QUOTE_NOT_FOUND");
+  }
+
+  const averages = new Map<string, number | null>(
+    (await findMoverReviewAverages([record.mover.id])).map(
+      (row: MoverReviewAverage) => [row.moverId, row.averageRating],
+    ),
+  );
+
+  return {
+    quote: toQuoteDetail(record, averages),
+  };
+}
+
+function toHistoryCursorPayload(
+  sort: ReceivedQuoteHistorySort,
+  record: ReceivedQuoteRecord,
+): ReceivedQuoteHistoryCursorPayload {
+  if (sort === "MOVE_DATE_DESC") {
+    return {
+      sort,
+      id: record.id,
+      moveDate: record.moveRequest.moveDate.toISOString(),
+    };
+  }
+
+  return {
+    sort,
+    id: record.id,
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+async function toPagedQuoteItems(
+  records: ReceivedQuoteRecord[],
+  limit: number,
+  encodeNextCursor: (lastItem: ReceivedQuoteRecord) => string,
+): Promise<ReceivedQuotesResult> {
+  const hasNext = records.length > limit;
+  const page = hasNext ? records.slice(0, limit) : records;
+  const lastItem = page[page.length - 1];
+  const moverIds = [...new Set(page.map((record) => record.mover.id))];
+  const averages = new Map<string, number | null>(
+    (await findMoverReviewAverages(moverIds)).map((row: MoverReviewAverage) => [
+      row.moverId,
+      row.averageRating,
+    ]),
+  );
+
+  return {
+    items: page.map((record) => toQuoteListItem(record, averages)),
+    pagination: {
+      nextCursor:
+        hasNext && lastItem ? encodeNextCursor(lastItem) : null,
+      hasNext,
+    },
+  };
+}
+
+/**
+ * 내가 확정한 과거 견적 카드 목록과 다음 cursor를 반환합니다.
+ * @param customerId Customer profile ID
+ * @param query 검증된 과거 목록 조건
+ */
+export async function listReceivedQuoteHistory(
+  customerId: string,
+  query: ReceivedQuoteHistoryQuery,
+): Promise<ReceivedQuotesResult> {
+  const records = await findReceivedQuoteHistory(customerId, query);
+
+  return toPagedQuoteItems(records, query.limit, (lastItem) =>
+    encodeReceivedQuoteHistoryCursor(toHistoryCursorPayload(query.sort, lastItem)),
+  );
+}
+
+/**
+ * 내가 확정한 과거 견적 상세를 반환합니다.
+ * 대기 견적 ID를 이 API로 조회하면 QUOTE_NOT_FOUND입니다.
+ * @param customerId Customer profile ID
+ * @param quoteId 검증된 Quote UUID
+ * @throws NotFoundError 없거나 확정 견적이 아닌 경우 QUOTE_NOT_FOUND
+ */
+export async function getReceivedQuoteHistoryDetail(
+  customerId: string,
+  quoteId: string,
+): Promise<ReceivedQuoteDetailResult> {
+  const record = await findReceivedQuoteHistoryDetail(customerId, quoteId);
 
   if (!record) {
     throw new NotFoundError("견적을 찾을 수 없습니다.", "QUOTE_NOT_FOUND");

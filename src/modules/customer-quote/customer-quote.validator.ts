@@ -1,14 +1,17 @@
 /**
- * 받은 견적 목록 query와 상세 path를 Zod로 검증합니다.
+ * 받은 견적 대기·과거 목록 query와 상세 path를 Zod로 검증합니다.
  * HTTP 입력 형식만 책임지며 소유권·상태 필터는 Service와 Repository에 위임합니다.
  */
 import { z } from "zod";
 
 import { parseWithZod } from "../../common/validation/zod-parser";
-import { decodeReceivedQuoteCursor } from "./customer-quote.cursor";
+import { decodeReceivedQuoteCursor, decodeReceivedQuoteHistoryCursor } from "./customer-quote.cursor";
 import {
+  HISTORY_MOVE_REQUEST_STATUSES,
+  RECEIVED_QUOTE_HISTORY_SORTS,
   RECEIVED_QUOTE_SORTS,
   SERVICE_TYPE_NAMES,
+  type ReceivedQuoteHistoryQuery,
   type ReceivedQuotesQuery,
 } from "./customer-quote.dto";
 
@@ -160,6 +163,49 @@ const receivedQuotesQuerySchema = z.object({
   limit: limitSchema.optional().default(DEFAULT_LIMIT),
 });
 
+const historySortSchema = optionalQueryStringSchema.transform((value, ctx) => {
+  if (value === undefined || value === "") {
+    return "UPDATED_AT_DESC" as const;
+  }
+
+  if (value === "UPDATED_AT_DESC" || value === "MOVE_DATE_DESC") {
+    return value;
+  }
+
+  ctx.addIssue({
+    code: "custom",
+    message: `${RECEIVED_QUOTE_HISTORY_SORTS.join(", ")}만 사용할 수 있습니다.`,
+  });
+  return z.NEVER;
+});
+
+const moveRequestStatusSchema = optionalQueryStringSchema.transform(
+  (value, ctx) => {
+    if (value === undefined || value === "") {
+      return undefined;
+    }
+
+    if (value === "CONFIRMED" || value === "COMPLETED") {
+      return value;
+    }
+
+    ctx.addIssue({
+      code: "custom",
+      message: `${HISTORY_MOVE_REQUEST_STATUSES.join(", ")}만 사용할 수 있습니다.`,
+    });
+    return z.NEVER;
+  },
+);
+
+const receivedQuoteHistoryQuerySchema = z.object({
+  keyword: keywordSchema.optional(),
+  serviceType: serviceTypeSchema.optional(),
+  moveRequestStatus: moveRequestStatusSchema.optional(),
+  sort: historySortSchema.optional().default("UPDATED_AT_DESC"),
+  cursor: optionalQueryStringSchema.optional(),
+  limit: limitSchema.optional().default(DEFAULT_LIMIT),
+});
+
 const quoteIdParamsSchema = z.object({
   quoteId: z.unknown().transform((value, ctx) => {
     if (Array.isArray(value)) {
@@ -219,4 +265,31 @@ export function parseQuoteIdParams(value: unknown): string {
   });
 
   return params.quoteId;
+}
+
+/**
+ * Express query를 과거 확정 견적 목록 조회로 변환합니다.
+ * @param value request.query
+ * @returns 기본값이 채워진 과거 목록 조건
+ * @throws BadRequestError query 형식이 잘못된 경우 VALIDATION_ERROR
+ */
+export function parseReceivedQuoteHistoryQuery(
+  value: unknown,
+): ReceivedQuoteHistoryQuery {
+  const query = parseWithZod(receivedQuoteHistoryQuerySchema, value, {
+    fallbackField: "query",
+  });
+  const cursorValue = query.cursor?.trim();
+
+  return {
+    keyword: query.keyword,
+    serviceType: query.serviceType,
+    moveRequestStatus: query.moveRequestStatus,
+    sort: query.sort,
+    cursor:
+      cursorValue && cursorValue.length > 0
+        ? decodeReceivedQuoteHistoryCursor(cursorValue, query.sort)
+        : undefined,
+    limit: query.limit,
+  };
 }
