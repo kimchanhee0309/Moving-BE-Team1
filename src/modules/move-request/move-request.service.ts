@@ -76,8 +76,13 @@ export async function createMoveRequestForCustomer(
   // 가정). 실제 timezone 기준은 문서에도 미정으로 남아 있어 추후 팀 협의 필요.
   const moveDate = new Date(`${input.moveDate}T00:00:00.000Z`);
   const todayUtcMidnight = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  // "2026-02-30"처럼 형식은 맞지만 실존하지 않는 날짜는 Date가 조용히 다음 날짜로 넘겨버리므로,
+  // 파싱 결과를 다시 문자열로 되돌려 입력과 같은지 확인해야 롤오버를 걸러낼 수 있습니다.
+  const isInvalidCalendarDate =
+    Number.isNaN(moveDate.getTime()) ||
+    moveDate.toISOString().slice(0, 10) !== input.moveDate;
 
-  if (Number.isNaN(moveDate.getTime()) || moveDate.getTime() <= todayUtcMidnight.getTime()) {
+  if (isInvalidCalendarDate || moveDate.getTime() <= todayUtcMidnight.getTime()) {
     throw new BadRequestError("moveDate는 오늘(UTC 기준)보다 미래여야 합니다.", "VALIDATION_ERROR", [
       { field: "moveDate", reason: "오늘 이후의 유효한 날짜여야 합니다." },
     ]);

@@ -125,6 +125,17 @@ describe("Move request service", () => {
       expect(mockTransaction).not.toHaveBeenCalled();
     });
 
+    test("형식은 맞지만 실존하지 않는 날짜(2월 30일)를 거절한다", async () => {
+      await expect(
+        createMoveRequestForCustomer(CUSTOMER_ID, {
+          ...validCreateInput,
+          moveDate: "2026-02-30",
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 400 });
+
+      expect(findServiceTypeIdByName).not.toHaveBeenCalled();
+    });
+
     test("serviceType을 찾지 못하면 AppError가 아닌 일반 Error를 던진다", async () => {
       jest.mocked(findServiceTypeIdByName).mockResolvedValue(null);
 
