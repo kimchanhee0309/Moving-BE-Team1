@@ -38,6 +38,7 @@ import {
   findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
+  lockCustomerRow,
 } from "../../src/modules/move-request/move-request.repository";
 
 const CUSTOMER_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -58,6 +59,15 @@ describe("Move request repository", () => {
       where: { name: "SMALL" },
       select: { id: true },
     });
+  });
+
+  test("lockCustomerRow는 Customer id로 FOR UPDATE 잠금 쿼리를 실행한다", async () => {
+    const txQueryRaw = jest.fn().mockResolvedValue([]);
+    const tx = { $queryRaw: txQueryRaw } as never;
+
+    await lockCustomerRow(CUSTOMER_ID, tx);
+
+    expect(txQueryRaw).toHaveBeenCalledTimes(1);
   });
 
   test("findActiveMoveRequestByCustomerId는 WAITING이거나 CONFIRMED+오늘(UTC) 이후 moveDate를 OR로 조회한다", async () => {

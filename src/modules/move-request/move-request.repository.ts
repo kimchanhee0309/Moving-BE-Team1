@@ -46,6 +46,17 @@ export function findServiceTypeIdByName(
   });
 }
 
+/**
+ * Customer row를 `FOR UPDATE`로 잠급니다. 같은 고객이 동시에 활성 요청을 만들려는 경쟁을
+ * 활성 요청 확인 전에 막아야 하므로 반드시 `$transaction` 콜백의 `tx`로만 호출해야 합니다.
+ */
+export async function lockCustomerRow(
+  customerId: string,
+  client: Prisma.TransactionClient,
+): Promise<void> {
+  await client.$queryRaw`SELECT id FROM "Customer" WHERE id = ${customerId} FOR UPDATE`;
+}
+
 /** 활성 요청(대기 중이거나, 확정됐지만 이사일이 아직 지나지 않은 요청)을 조회합니다. */
 export function findActiveMoveRequestByCustomerId(
   customerId: string,

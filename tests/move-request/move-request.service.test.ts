@@ -21,6 +21,7 @@ jest.mock("../../src/modules/move-request/move-request.repository", () => ({
   findMoveRequestByIdForUpdate: jest.fn(),
   findMoverById: jest.fn(),
   findServiceTypeIdByName: jest.fn(),
+  lockCustomerRow: jest.fn(),
 }));
 
 import { ForbiddenError, NotFoundError } from "../../src/common/errors/app-error";
@@ -34,6 +35,7 @@ import {
   findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
+  lockCustomerRow,
   type MoveRequestRecord,
 } from "../../src/modules/move-request/move-request.repository";
 import {
@@ -101,6 +103,7 @@ describe("Move request service", () => {
       });
 
       expect(findServiceTypeIdByName).toHaveBeenCalledWith("SMALL");
+      expect(lockCustomerRow).toHaveBeenCalledWith(CUSTOMER_ID, {});
       expect(createMoveRequest).toHaveBeenCalledWith(
         {
           customerId: CUSTOMER_ID,
@@ -111,6 +114,12 @@ describe("Move request service", () => {
         },
         {},
       );
+
+      // Customer row 잠금이 활성 요청 확인보다 먼저 실행돼야 경쟁을 막는 의미가 있다.
+      const lockOrder = jest.mocked(lockCustomerRow).mock.invocationCallOrder[0];
+      const checkOrder = jest.mocked(findActiveMoveRequestByCustomerId).mock
+        .invocationCallOrder[0];
+      expect(lockOrder).toBeLessThan(checkOrder as number);
     });
 
     test("moveDate가 오늘(UTC)보다 미래가 아니면 VALIDATION_ERROR를 던지고 조회하지 않는다", async () => {

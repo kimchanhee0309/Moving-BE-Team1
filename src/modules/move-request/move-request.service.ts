@@ -26,6 +26,7 @@ import {
   findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
+  lockCustomerRow,
   type DesignatedRequestRecord,
   type MoveRequestRecord,
 } from "./move-request.repository";
@@ -94,8 +95,10 @@ export async function createMoveRequestForCustomer(
     throw new Error(`ServiceType을 찾을 수 없습니다: ${input.serviceType}`);
   }
 
-  // 활성 요청 확인과 생성을 같은 transaction으로 묶어 동시 요청으로 인한 중복 생성을 줄입니다.
+  // Customer row를 먼저 잠가 같은 고객의 동시 요청을 직렬화한 뒤 활성 요청을 확인·생성한다.
   const created = await prisma.$transaction(async (tx) => {
+    await lockCustomerRow(customerId, tx);
+
     const activeMoveRequest = await findActiveMoveRequestByCustomerId(customerId, now, tx);
 
     if (activeMoveRequest) {
