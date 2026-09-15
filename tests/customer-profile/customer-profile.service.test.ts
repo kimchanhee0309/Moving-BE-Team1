@@ -28,6 +28,7 @@ jest.mock("../../src/modules/customer-profile/customer-profile.repository", () =
   runCustomerProfileTransaction: jest.fn(),
   updateCustomerRecord: jest.fn(),
   updateCustomerUser: jest.fn(),
+  updateCustomerUserWithPasswordMatch: jest.fn(),
 }));
 
 import bcrypt from "bcrypt";
@@ -49,6 +50,7 @@ import {
   runCustomerProfileTransaction,
   updateCustomerRecord,
   updateCustomerUser,
+  updateCustomerUserWithPasswordMatch,
 } from "../../src/modules/customer-profile/customer-profile.repository";
 import {
   createCustomerProfile,
@@ -155,6 +157,32 @@ describe("Customer Profile service", () => {
 
     expect(bcrypt.compare).not.toHaveBeenCalled();
     expect(runCustomerProfileTransaction).not.toHaveBeenCalled();
+  });
+
+  test("검증 이후 기존 hash가 바뀐 비밀번호 변경 요청을 transaction에서 거절한다", async () => {
+    jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
+    jest.mocked(findCustomerProfileByIdInTransaction).mockResolvedValueOnce(emailProfile);
+    jest.mocked(bcrypt.compare).mockImplementation(() => Promise.resolve(true));
+    jest.mocked(bcrypt.hash).mockImplementation(() => Promise.resolve("new-bcrypt-hash"));
+    jest.mocked(updateCustomerUserWithPasswordMatch).mockResolvedValue({ count: 0 });
+
+    await expect(
+      updateCustomerProfile("customer-id", {
+        currentPassword: "Current1!",
+        newPassword: "Changed1!",
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_CURRENT_PASSWORD",
+      status: 401,
+    });
+
+    expect(updateCustomerUserWithPasswordMatch).toHaveBeenCalledWith(
+      transaction,
+      "user-id",
+      "bcrypt-hash",
+      { passwordHash: "new-bcrypt-hash" },
+    );
+    expect(updateCustomerUser).not.toHaveBeenCalled();
   });
 
   test("phone null을 User 변경에 전달하여 전화번호를 초기화한다", async () => {

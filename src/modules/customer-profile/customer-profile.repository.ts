@@ -185,6 +185,27 @@ export function updateCustomerUser(
   return transaction.user.update({ where: { id: userId }, data, select: { id: true } });
 }
 
+/**
+ * 비밀번호 변경 시 조회했던 기존 hash가 아직 같은 User만 원자적으로 갱신합니다.
+ * count가 0이면 Service가 동시 변경 또는 오래된 비밀번호 확인으로 판단해 transaction을 중단합니다.
+ */
+export function updateCustomerUserWithPasswordMatch(
+  transaction: CustomerProfileTransaction,
+  userId: string,
+  expectedPasswordHash: string,
+  data: {
+    name?: string;
+    email?: string;
+    phone?: string | null;
+    passwordHash: string;
+  },
+): Promise<{ count: number }> {
+  return transaction.user.updateMany({
+    where: { id: userId, passwordHash: expectedPasswordHash },
+    data,
+  });
+}
+
 /** 검증된 지역 또는 새 이미지가 있을 때 Customer 본체만 변경합니다. */
 export function updateCustomerRecord(
   transaction: CustomerProfileTransaction,

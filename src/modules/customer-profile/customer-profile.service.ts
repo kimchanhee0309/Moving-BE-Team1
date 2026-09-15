@@ -38,6 +38,7 @@ import {
   runCustomerProfileTransaction,
   updateCustomerRecord,
   updateCustomerUser,
+  updateCustomerUserWithPasswordMatch,
   type CustomerProfileRecord,
   type CustomerProfileTransaction,
 } from "./customer-profile.repository";
@@ -238,7 +239,9 @@ export async function updateCustomerProfile(
     throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
   }
 
-  let passwordHash: string | undefined;
+  let passwordChange:
+    | { expectedPasswordHash: string; newPasswordHash: string }
+    | undefined;
 
   if (input.currentPassword !== undefined && input.newPassword !== undefined) {
     if (!currentProfile.user.passwordHash) {
@@ -257,7 +260,10 @@ export async function updateCustomerProfile(
       throw new UnauthorizedError("현재 비밀번호가 올바르지 않습니다.", "INVALID_CURRENT_PASSWORD");
     }
 
-    passwordHash = await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS);
+    passwordChange = {
+      expectedPasswordHash: currentProfile.user.passwordHash,
+      newPasswordHash: await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
+    };
   }
 
   try {
@@ -288,7 +294,6 @@ export async function updateCustomerProfile(
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.email !== undefined ? { email: input.email } : {}),
         ...(input.phone !== undefined ? { phone: input.phone } : {}),
-        ...(passwordHash !== undefined ? { passwordHash } : {}),
       };
       const customerChanges = {
         ...(references.regionId !== undefined ? { regionId: references.regionId } : {}),
@@ -297,7 +302,21 @@ export async function updateCustomerProfile(
           : {}),
       };
 
-      if (Object.keys(userChanges).length > 0) {
+      if (passwordChange !== undefined) {
+        const result = await updateCustomerUserWithPasswordMatch(
+          transaction,
+          profile.user.id,
+          passwordChange.expectedPasswordHash,
+          { ...userChanges, passwordHash: passwordChange.newPasswordHash },
+        );
+
+        if (result.count === 0) {
+          throw new UnauthorizedError(
+            "현재 비밀번호가 올바르지 않습니다.",
+            "INVALID_CURRENT_PASSWORD",
+          );
+        }
+      } else if (Object.keys(userChanges).length > 0) {
         await updateCustomerUser(transaction, profile.user.id, userChanges);
       }
 
