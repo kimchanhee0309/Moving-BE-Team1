@@ -1,24 +1,24 @@
 /**
  * OAuth 계정의 재로그인, 신규 User 생성, 이메일 충돌 및 역할 불일치 정책을 검증합니다.
  */
-jest.mock("../../src/modules/auth/auth.repository", () => ({
+jest.mock("../../../src/modules/auth/auth.repository", () => ({
   createOAuthUser: jest.fn(),
   findUserByEmail: jest.fn(),
   findUserBySocialAccount: jest.fn(),
 }));
 
-jest.mock("../../src/common/utils/auth-token", () => ({
+jest.mock("../../../src/common/utils/auth-token", () => ({
   createAuthTokens: jest.fn(),
 }));
 
-import { createAuthTokens } from "../../src/common/utils/auth-token";
+import { createAuthTokens } from "../../../src/common/utils/auth-token";
 import {
   createOAuthUser,
   findUserByEmail,
   findUserBySocialAccount,
   type AuthUserRecord,
-} from "../../src/modules/auth/auth.repository";
-import { authenticateWithOAuth } from "../../src/modules/auth/oauth.service";
+} from "../../../src/modules/auth/auth.repository";
+import { authenticateWithOAuth } from "../../../src/modules/auth/oauth/oauth.service";
 
 const oauthUser: AuthUserRecord = {
   id: "oauth-user-id",

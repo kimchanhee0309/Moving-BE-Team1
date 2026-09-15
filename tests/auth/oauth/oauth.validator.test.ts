@@ -2,7 +2,7 @@
  * OAuth 시작 입력에서 공급자·역할·내부 redirect 허용 목록을 검증합니다.
  * 외부 URL이나 역할 위조가 State에 들어가지 않는 경계를 확인합니다.
  */
-import { parseOAuthStartInput } from "../../src/modules/auth/oauth.validator";
+import { parseOAuthStartInput } from "../../../src/modules/auth/oauth/oauth.validator";
 
 describe("OAuth validator", () => {
   test("CUSTOMER 역할과 같은 사이트 redirect를 정규화한다", () => {

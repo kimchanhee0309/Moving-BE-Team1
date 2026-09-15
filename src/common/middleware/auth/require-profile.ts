@@ -4,8 +4,8 @@
  */
 import type { RequestHandler } from "express";
 
-import { ForbiddenError, UnauthorizedError } from "../errors/app-error";
-import { findUserProfileState } from "../utils/user-profile";
+import { ForbiddenError, UnauthorizedError } from "../../errors/app-error";
+import { findUserProfileState } from "../../utils/user-profile";
 
 /** profile이 필요한 도메인 Router에서 인증·역할 검사 다음에 적용합니다. */
 export const requireProfile: RequestHandler = async (

@@ -6,8 +6,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type { CookieOptions, Request, Response } from "express";
 
-import { BadRequestError } from "../../common/errors/app-error";
-import { env } from "../../config/env";
+import { BadRequestError } from "../../../common/errors/app-error";
+import { env } from "../../../config/env";
 import type { OAuthProvider, OAuthStateContext } from "./oauth.dto";
 
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;

@@ -2,7 +2,7 @@
  * OAuth 시작·callback과 공급자 사용자 정보의 내부 DTO를 정의합니다.
  * 공급자 Access Token 및 원문 응답은 DTO와 DB에 포함하지 않습니다.
  */
-import type { SocialProvider, UserRole } from "../../generated/prisma/enums";
+import type { SocialProvider, UserRole } from "../../../generated/prisma/enums";
 
 /** URL 경로에서 사용하는 소문자 공급자 식별자입니다. */
 export type OAuthProvider = "google" | "kakao" | "naver";

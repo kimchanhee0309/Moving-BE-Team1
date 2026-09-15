@@ -2,16 +2,16 @@
  * OAuth 사용자의 조회·최초 생성·이메일 충돌·역할 일치 정책을 처리합니다.
  * 공급자 통신과 HTTP redirect/cookie 처리는 각각 provider와 Controller에 위임합니다.
  */
-import type { UserRole } from "../../generated/prisma/enums";
-import { BadRequestError, ConflictError } from "../../common/errors/app-error";
-import { createAuthTokens } from "../../common/utils/auth-token";
-import type { AuthResult } from "./auth.dto";
+import type { UserRole } from "../../../generated/prisma/enums";
+import { BadRequestError, ConflictError } from "../../../common/errors/app-error";
+import { createAuthTokens } from "../../../common/utils/auth-token";
+import type { AuthResult } from "../auth.dto";
 import {
   createOAuthUser,
   findUserByEmail,
   findUserBySocialAccount,
-} from "./auth.repository";
-import { toAuthUserDto } from "./auth.service";
+} from "../auth.repository";
+import { toAuthUserDto } from "../auth.service";
 import type { OAuthProfile } from "./oauth.dto";
 
 function isUniqueConstraintError(error: unknown): boolean {

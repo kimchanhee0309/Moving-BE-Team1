@@ -4,8 +4,8 @@
  */
 import type { RequestHandler } from "express";
 
-import type { UserRole } from "../../generated/prisma/enums";
-import { ForbiddenError, UnauthorizedError } from "../errors/app-error";
+import type { UserRole } from "../../../generated/prisma/enums";
+import { ForbiddenError, UnauthorizedError } from "../../errors/app-error";
 
 /** 허용 역할 목록을 받아 재사용 가능한 역할 인가 미들웨어를 생성합니다. */
 export function authorize(...allowedRoleList: UserRole[]): RequestHandler {

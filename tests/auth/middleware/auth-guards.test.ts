@@ -1,11 +1,11 @@
 /**
  * 팀 공통 Router guard가 인증 → 역할 → profile 순서를 고정하는지 검증합니다.
  */
-jest.mock("../../src/common/utils/user-profile", () => ({
+jest.mock("../../../src/common/utils/user-profile", () => ({
   findUserProfileState: jest.fn(),
 }));
 
-import { authenticate } from "../../src/common/middleware/authenticate";
+import { authenticate } from "../../../src/common/middleware/auth/authenticate";
 import {
   requireAuthenticated,
   requireCustomer,
@@ -13,8 +13,8 @@ import {
   requireProfiledCustomer,
   requireProfiledMover,
   requireProfiledUser,
-} from "../../src/common/middleware/auth-guards";
-import { requireProfile } from "../../src/common/middleware/require-profile";
+} from "../../../src/common/middleware/auth/auth-guards";
+import { requireProfile } from "../../../src/common/middleware/auth/require-profile";
 
 describe("Auth guard combinations", () => {
   test("공통 로그인 guard는 authenticate만 적용한다", () => {

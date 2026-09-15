@@ -7,7 +7,7 @@ import { Router } from "express";
 import {
   requireCustomer,
   requireProfiledCustomer,
-} from "../../common/middleware/auth-guards";
+} from "../../common/middleware/auth/auth-guards";
 import {
   createCustomerProfileController,
   getCustomerProfileController,

@@ -4,7 +4,7 @@
 import {
   createOAuthAuthorizationUrl,
   fetchOAuthProfile,
-} from "../../src/modules/auth/oauth.provider";
+} from "../../../src/modules/auth/oauth/oauth.provider";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {

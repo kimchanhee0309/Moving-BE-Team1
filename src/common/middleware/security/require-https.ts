@@ -4,7 +4,7 @@
  */
 import type { RequestHandler } from "express";
 
-import { env } from "../../config/env";
+import { env } from "../../../config/env";
 
 /** trust proxy가 복원한 프로토콜을 기준으로 운영 요청 전체에 HTTPS를 강제합니다. */
 export const requireHttps: RequestHandler = (request, response, next) => {

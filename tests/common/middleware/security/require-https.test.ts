@@ -24,7 +24,7 @@ describe("HTTPS middleware", () => {
   });
 
   test("평문 요청을 Host header가 아닌 설정된 HTTPS origin으로 308 이동한다", async () => {
-    const { requireHttps } = await import("../src/common/middleware/require-https");
+    const { requireHttps } = await import("../../../../src/common/middleware/security/require-https");
     const request = {
       secure: false,
       originalUrl: "/auth/me?source=test",
@@ -42,7 +42,7 @@ describe("HTTPS middleware", () => {
   });
 
   test("프록시가 HTTPS로 확인한 요청은 다음 middleware로 전달한다", async () => {
-    const { requireHttps } = await import("../src/common/middleware/require-https");
+    const { requireHttps } = await import("../../../../src/common/middleware/security/require-https");
     const request = { secure: true } as Request;
     const response = {} as Response;
     const next: NextFunction = jest.fn();

@@ -3,8 +3,8 @@
  */
 import type { NextFunction, Request, Response } from "express";
 
-import { BadRequestError } from "../src/common/errors/app-error";
-import { errorHandler } from "../src/common/middleware/error-handler";
+import { BadRequestError } from "../../../../src/common/errors/app-error";
+import { errorHandler } from "../../../../src/common/middleware/http/error-handler";
 
 describe("Error handler", () => {
   test("AppError를 공통 오류 응답으로 직렬화한다", () => {

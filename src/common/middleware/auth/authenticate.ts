@@ -4,9 +4,9 @@
  */
 import type { RequestHandler } from "express";
 
-import { getAccessTokenFromCookie } from "../cookies/auth-cookie";
-import { UnauthorizedError } from "../errors/app-error";
-import { verifyToken } from "../utils/auth-token";
+import { getAccessTokenFromCookie } from "../../cookies/auth-cookie";
+import { UnauthorizedError } from "../../errors/app-error";
+import { verifyToken } from "../../utils/auth-token";
 
 /** Access Token의 존재·서명·만료·payload를 검증하고 request.auth를 설정합니다. */
 export const authenticate: RequestHandler = (request, _response, next) => {

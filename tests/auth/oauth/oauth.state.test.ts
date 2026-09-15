@@ -6,7 +6,7 @@ import type { Request, Response } from "express";
 import {
   consumeOAuthState,
   createOAuthState,
-} from "../../src/modules/auth/oauth.state";
+} from "../../../src/modules/auth/oauth/oauth.state";
 
 function createResponse(): Response {
   return {

@@ -4,7 +4,7 @@
  */
 import { Router } from "express";
 
-import { authenticate } from "../../common/middleware/authenticate";
+import { authenticate } from "../../common/middleware/auth/authenticate";
 import {
   loginRateLimiter,
   oauthCallbackRateLimiter,
@@ -22,7 +22,7 @@ import {
 import {
   oauthCallbackController,
   oauthStartController,
-} from "./oauth.controller";
+} from "./oauth/oauth.controller";
 
 export const authRouter = Router();
 

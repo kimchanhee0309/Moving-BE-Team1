@@ -4,11 +4,11 @@
  */
 import type { RequestHandler } from "express";
 
-import { setAuthCookies } from "../../common/cookies/auth-cookie";
-import { AppError, BadRequestError } from "../../common/errors/app-error";
-import { HTTP_STATUS } from "../../common/constants/http-status";
-import { sendSuccess } from "../../common/response/api-response";
-import { env } from "../../config/env";
+import { setAuthCookies } from "../../../common/cookies/auth-cookie";
+import { AppError, BadRequestError } from "../../../common/errors/app-error";
+import { HTTP_STATUS } from "../../../common/constants/http-status";
+import { sendSuccess } from "../../../common/response/api-response";
+import { env } from "../../../config/env";
 import { authenticateWithOAuth } from "./oauth.service";
 import { createOAuthAuthorizationUrl, fetchOAuthProfile } from "./oauth.provider";
 import {

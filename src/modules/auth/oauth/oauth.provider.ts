@@ -2,9 +2,9 @@
  * Google·Kakao·Naver의 authorization URL, code 교환, 최소 프로필 조회를 담당합니다.
  * 공급자 토큰과 원문 응답은 함수 밖으로 반환하거나 저장·로그하지 않습니다.
  */
-import { BadGatewayError, ServiceUnavailableError } from "../../common/errors/app-error";
-import { env } from "../../config/env";
-import type { SocialProvider } from "../../generated/prisma/enums";
+import { BadGatewayError, ServiceUnavailableError } from "../../../common/errors/app-error";
+import { env } from "../../../config/env";
+import type { SocialProvider } from "../../../generated/prisma/enums";
 import type { OAuthProfile, OAuthProvider } from "./oauth.dto";
 
 const OAUTH_FETCH_TIMEOUT_MS = 10_000;

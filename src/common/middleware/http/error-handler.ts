@@ -1,9 +1,13 @@
+/**
+ * 도메인 오류와 예상하지 못한 오류를 공통 API 오류 응답으로 변환합니다.
+ * 오류 원문은 개발 환경 로그에만 남기며 운영 응답에는 노출하지 않습니다.
+ */
 import type { ErrorRequestHandler } from "express";
 
-import { HTTP_STATUS } from "../constants/http-status";
-import { AppError } from "../errors/app-error";
-import type { ApiErrorResponse } from "../response/api-response";
-import { env } from "../../config/env";
+import { HTTP_STATUS } from "../../constants/http-status";
+import { AppError } from "../../errors/app-error";
+import type { ApiErrorResponse } from "../../response/api-response";
+import { env } from "../../../config/env";
 
 interface PrismaError {
   code: string;
@@ -21,6 +25,7 @@ function isPrismaError(error: unknown): error is PrismaError {
   );
 }
 
+/** Express 처리 체인의 마지막에서 모든 오류를 계약된 JSON 형식으로 응답합니다. */
 export const errorHandler: ErrorRequestHandler = (
   error: unknown,
   request,

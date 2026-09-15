@@ -1,14 +1,14 @@
 /**
  * profile 검사 미들웨어가 역할별 relation을 확인하고 미등록 사용자를 차단하는지 검증합니다.
  */
-jest.mock("../../src/common/utils/user-profile", () => ({
+jest.mock("../../../src/common/utils/user-profile", () => ({
   findUserProfileState: jest.fn(),
 }));
 
 import type { NextFunction, Request, Response } from "express";
 
-import { requireProfile } from "../../src/common/middleware/require-profile";
-import { findUserProfileState } from "../../src/common/utils/user-profile";
+import { requireProfile } from "../../../src/common/middleware/auth/require-profile";
+import { findUserProfileState } from "../../../src/common/utils/user-profile";
 
 describe("Require profile middleware", () => {
   test("CUSTOMER profile이 없으면 PROFILE_REQUIRED로 거절한다", async () => {

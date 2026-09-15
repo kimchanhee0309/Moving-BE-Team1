@@ -3,9 +3,9 @@
  */
 import type { NextFunction, Request, Response } from "express";
 
-import { UnauthorizedError } from "../../src/common/errors/app-error";
-import { authenticate } from "../../src/common/middleware/authenticate";
-import { authorize } from "../../src/common/middleware/authorize";
+import { UnauthorizedError } from "../../../src/common/errors/app-error";
+import { authenticate } from "../../../src/common/middleware/auth/authenticate";
+import { authorize } from "../../../src/common/middleware/auth/authorize";
 
 const response = {} as Response;
 
