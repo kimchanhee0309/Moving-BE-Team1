@@ -1,8 +1,11 @@
 /**
  * 받은 견적 목록의 opaque cursor를 인코딩·복원합니다.
- * 위변조해도 customerId 필터는 Service가 다시 적용하므로 다른 고객 데이터는 노출되지 않습니다.
+ * JSON 형태는 Zod로 검사하고, 위변조해도 customerId 필터는 Service가 다시 적용합니다.
  */
+import { z } from "zod";
+
 import { BadRequestError } from "../../common/errors/app-error";
+import { parseWithZod } from "../../common/validation/zod-parser";
 import {
   isReceivedQuoteSort,
   type ReceivedQuoteCursorPayload,
@@ -12,14 +15,17 @@ import {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isIsoDateTime(value: unknown): value is string {
-  if (typeof value !== "string" || value.trim() === "") {
-    return false;
-  }
+const isoDateTimeSchema = z.string().refine((value) => {
+  return value.trim() !== "" && !Number.isNaN(Date.parse(value));
+});
 
-  const timestamp = Date.parse(value);
-  return !Number.isNaN(timestamp);
-}
+const receivedQuoteCursorSchema = z.object({
+  sort: z.string(),
+  id: z.string().regex(UUID_PATTERN),
+  createdAt: z.string().optional(),
+  moveDate: z.string().optional(),
+  price: z.union([z.number().int(), z.null()]).optional(),
+});
 
 function throwInvalidCursor(): never {
   throw new BadRequestError(
@@ -58,9 +64,17 @@ export function decodeReceivedQuoteCursor(
     throwInvalidCursor();
   }
 
-  const payload = toRecord(parsed);
+  let payload: z.infer<typeof receivedQuoteCursorSchema>;
 
-  if (typeof payload.sort !== "string" || !isReceivedQuoteSort(payload.sort) || payload.sort !== sort) {
+  try {
+    payload = parseWithZod(receivedQuoteCursorSchema, parsed, {
+      fallbackField: "cursor",
+    });
+  } catch {
+    throwInvalidCursor();
+  }
+
+  if (!isReceivedQuoteSort(payload.sort) || payload.sort !== sort) {
     throw new BadRequestError(
       "요청값이 올바르지 않습니다.",
       "VALIDATION_ERROR",
@@ -68,43 +82,23 @@ export function decodeReceivedQuoteCursor(
     );
   }
 
-  if (typeof payload.id !== "string" || !UUID_PATTERN.test(payload.id)) {
+  if (sort === "CREATED_AT_DESC" && !isoDateTimeSchema.safeParse(payload.createdAt).success) {
     throwInvalidCursor();
   }
 
-  if (sort === "CREATED_AT_DESC" && !isIsoDateTime(payload.createdAt)) {
+  if (sort === "MOVE_DATE_ASC" && !isoDateTimeSchema.safeParse(payload.moveDate).success) {
     throwInvalidCursor();
   }
 
-  if (sort === "MOVE_DATE_ASC" && !isIsoDateTime(payload.moveDate)) {
+  if (sort === "PRICE_ASC" && payload.price === undefined) {
     throwInvalidCursor();
-  }
-
-  let price: number | null | undefined;
-
-  if (sort === "PRICE_ASC") {
-    if (payload.price === null) {
-      price = null;
-    } else if (typeof payload.price === "number" && Number.isInteger(payload.price)) {
-      price = payload.price;
-    } else {
-      throwInvalidCursor();
-    }
   }
 
   return {
     sort,
     id: payload.id,
-    createdAt: typeof payload.createdAt === "string" ? payload.createdAt : undefined,
-    moveDate: typeof payload.moveDate === "string" ? payload.moveDate : undefined,
-    price,
+    createdAt: payload.createdAt,
+    moveDate: payload.moveDate,
+    price: payload.price,
   };
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throwInvalidCursor();
-  }
-
-  return value as Record<string, unknown>;
 }

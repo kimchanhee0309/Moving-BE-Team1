@@ -1,6 +1,6 @@
 /**
  * 고객이 받은 대기 견적 목록·상세 API의 입력·응답 DTO를 정의합니다.
- * Prisma 원문, password hash, token은 포함하지 않으며 확정·과거 견적 API는 담당하지 않습니다.
+ * 입력 검증 스키마는 validator의 Zod에 두고, 이 파일은 검증된 타입과 응답 형태만 담당합니다.
  */
 import type { MoveRequestStatus, QuoteStatus } from "../../generated/prisma/enums";
 

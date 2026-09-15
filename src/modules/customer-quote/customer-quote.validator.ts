@@ -1,17 +1,15 @@
 /**
- * 받은 견적 목록 query와 상세 path를 런타임에 검증합니다.
+ * 받은 견적 목록 query와 상세 path를 Zod로 검증합니다.
  * HTTP 입력 형식만 책임지며 소유권·상태 필터는 Service와 Repository에 위임합니다.
  */
-import { BadRequestError, type ErrorDetails } from "../../common/errors/app-error";
+import { z } from "zod";
+
+import { parseWithZod } from "../../common/validation/zod-parser";
 import { decodeReceivedQuoteCursor } from "./customer-quote.cursor";
 import {
   RECEIVED_QUOTE_SORTS,
   SERVICE_TYPE_NAMES,
-  isReceivedQuoteSort,
-  isServiceTypeName,
-  type ReceivedQuoteSort,
   type ReceivedQuotesQuery,
-  type ServiceTypeName,
 } from "./customer-quote.dto";
 
 const UUID_PATTERN =
@@ -21,56 +19,35 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const MAX_KEYWORD_LENGTH = 50;
 
-function getQueryRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new BadRequestError(
-      "요청값이 올바르지 않습니다.",
-      "VALIDATION_ERROR",
-      [{ field: "query", reason: "query 객체 형식이어야 합니다." }],
-    );
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function getOptionalSingleString(
-  query: Record<string, unknown>,
-  field: string,
-  details: ErrorDetails,
-): string | undefined {
-  const value = query[field];
-
+/**
+ * Express query는 같은 키가 반복되면 배열이 되므로 목록 API는 값 1개만 받습니다.
+ * 실패 시 입력 원문은 남기지 않고 field/reason만 채웁니다.
+ */
+const optionalQueryStringSchema = z.unknown().transform((value, ctx) => {
   if (value === undefined) {
     return undefined;
   }
 
   if (Array.isArray(value)) {
-    details.push({ field, reason: "하나의 값만 허용합니다." });
-    return undefined;
+    ctx.addIssue({
+      code: "custom",
+      message: "하나의 값만 허용합니다.",
+    });
+    return z.NEVER;
   }
 
   if (typeof value !== "string") {
-    details.push({ field, reason: "문자열이어야 합니다." });
-    return undefined;
+    ctx.addIssue({
+      code: "custom",
+      message: "문자열이어야 합니다.",
+    });
+    return z.NEVER;
   }
 
   return value;
-}
+});
 
-function throwIfInvalid(details: ErrorDetails): void {
-  if (details.length > 0) {
-    throw new BadRequestError(
-      "요청값이 올바르지 않습니다.",
-      "VALIDATION_ERROR",
-      details,
-    );
-  }
-}
-
-function parseKeyword(
-  value: string | undefined,
-  details: ErrorDetails,
-): string | undefined {
+const keywordSchema = optionalQueryStringSchema.transform((value, ctx) => {
   if (value === undefined) {
     return undefined;
   }
@@ -82,39 +59,33 @@ function parseKeyword(
   }
 
   if (keyword.length > MAX_KEYWORD_LENGTH) {
-    details.push({
-      field: "keyword",
-      reason: `${MAX_KEYWORD_LENGTH}자 이하여야 합니다.`,
+    ctx.addIssue({
+      code: "custom",
+      message: `${MAX_KEYWORD_LENGTH}자 이하여야 합니다.`,
     });
-    return undefined;
+    return z.NEVER;
   }
 
   return keyword;
-}
+});
 
-function parseServiceType(
-  value: string | undefined,
-  details: ErrorDetails,
-): ServiceTypeName | undefined {
+const serviceTypeSchema = optionalQueryStringSchema.transform((value, ctx) => {
   if (value === undefined) {
     return undefined;
   }
 
-  if (isServiceTypeName(value)) {
+  if (value === "SMALL" || value === "HOME" || value === "OFFICE") {
     return value;
   }
 
-  details.push({
-    field: "serviceType",
-    reason: `${SERVICE_TYPE_NAMES.join(", ")}만 사용할 수 있습니다.`,
+  ctx.addIssue({
+    code: "custom",
+    message: `${SERVICE_TYPE_NAMES.join(", ")}만 사용할 수 있습니다.`,
   });
-  return undefined;
-}
+  return z.NEVER;
+});
 
-function parseIsDesignated(
-  value: string | undefined,
-  details: ErrorDetails,
-): boolean | undefined {
+const isDesignatedSchema = optionalQueryStringSchema.transform((value, ctx) => {
   if (value === undefined) {
     return undefined;
   }
@@ -127,57 +98,89 @@ function parseIsDesignated(
     return false;
   }
 
-  details.push({
-    field: "isDesignated",
-    reason: "true 또는 false여야 합니다.",
+  ctx.addIssue({
+    code: "custom",
+    message: "true 또는 false여야 합니다.",
   });
-  return undefined;
-}
+  return z.NEVER;
+});
 
-function parseSort(
-  value: string | undefined,
-  details: ErrorDetails,
-): ReceivedQuoteSort {
+const sortSchema = optionalQueryStringSchema.transform((value, ctx) => {
   if (value === undefined || value === "") {
-    return "CREATED_AT_DESC";
+    return "CREATED_AT_DESC" as const;
   }
 
-  if (isReceivedQuoteSort(value)) {
+  if (
+    value === "CREATED_AT_DESC" ||
+    value === "MOVE_DATE_ASC" ||
+    value === "PRICE_ASC"
+  ) {
     return value;
   }
 
-  details.push({
-    field: "sort",
-    reason: `${RECEIVED_QUOTE_SORTS.join(", ")}만 사용할 수 있습니다.`,
+  ctx.addIssue({
+    code: "custom",
+    message: `${RECEIVED_QUOTE_SORTS.join(", ")}만 사용할 수 있습니다.`,
   });
-  return "CREATED_AT_DESC";
-}
+  return z.NEVER;
+});
 
-function parseLimit(value: string | undefined, details: ErrorDetails): number {
+const limitSchema = optionalQueryStringSchema.transform((value, ctx) => {
   if (value === undefined || value === "") {
     return DEFAULT_LIMIT;
   }
 
   if (!/^[1-9]\d*$/.test(value)) {
-    details.push({
-      field: "limit",
-      reason: "1 이상 50 이하의 정수여야 합니다.",
+    ctx.addIssue({
+      code: "custom",
+      message: "1 이상 50 이하의 정수여야 합니다.",
     });
-    return DEFAULT_LIMIT;
+    return z.NEVER;
   }
 
   const limit = Number(value);
 
   if (limit < 1 || limit > MAX_LIMIT) {
-    details.push({
-      field: "limit",
-      reason: "1 이상 50 이하의 정수여야 합니다.",
+    ctx.addIssue({
+      code: "custom",
+      message: "1 이상 50 이하의 정수여야 합니다.",
     });
-    return DEFAULT_LIMIT;
+    return z.NEVER;
   }
 
   return limit;
-}
+});
+
+const receivedQuotesQuerySchema = z.object({
+  keyword: keywordSchema.optional(),
+  serviceType: serviceTypeSchema.optional(),
+  isDesignated: isDesignatedSchema.optional(),
+  sort: sortSchema.optional().default("CREATED_AT_DESC"),
+  cursor: optionalQueryStringSchema.optional(),
+  limit: limitSchema.optional().default(DEFAULT_LIMIT),
+});
+
+const quoteIdParamsSchema = z.object({
+  quoteId: z.unknown().transform((value, ctx) => {
+    if (Array.isArray(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "하나의 값만 허용합니다.",
+      });
+      return z.NEVER;
+    }
+
+    if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "UUID 형식이어야 합니다.",
+      });
+      return z.NEVER;
+    }
+
+    return value;
+  }),
+});
 
 /**
  * Express query를 받은 견적 목록 조회로 변환합니다.
@@ -186,38 +189,21 @@ function parseLimit(value: string | undefined, details: ErrorDetails): number {
  * @throws BadRequestError query 형식이 잘못된 경우 VALIDATION_ERROR
  */
 export function parseReceivedQuotesQuery(value: unknown): ReceivedQuotesQuery {
-  const query = getQueryRecord(value);
-  const details: ErrorDetails = [];
-  const keyword = parseKeyword(
-    getOptionalSingleString(query, "keyword", details),
-    details,
-  );
-  const serviceType = parseServiceType(
-    getOptionalSingleString(query, "serviceType", details),
-    details,
-  );
-  const isDesignated = parseIsDesignated(
-    getOptionalSingleString(query, "isDesignated", details),
-    details,
-  );
-  const sort = parseSort(getOptionalSingleString(query, "sort", details), details);
-  const limit = parseLimit(getOptionalSingleString(query, "limit", details), details);
-  const cursorValue = getOptionalSingleString(query, "cursor", details)?.trim();
-
-  throwIfInvalid(details);
-
-  const cursor =
-    cursorValue && cursorValue.length > 0
-      ? decodeReceivedQuoteCursor(cursorValue, sort)
-      : undefined;
+  const query = parseWithZod(receivedQuotesQuerySchema, value, {
+    fallbackField: "query",
+  });
+  const cursorValue = query.cursor?.trim();
 
   return {
-    keyword,
-    serviceType,
-    isDesignated,
-    sort,
-    cursor,
-    limit,
+    keyword: query.keyword,
+    serviceType: query.serviceType,
+    isDesignated: query.isDesignated,
+    sort: query.sort,
+    cursor:
+      cursorValue && cursorValue.length > 0
+        ? decodeReceivedQuoteCursor(cursorValue, query.sort)
+        : undefined,
+    limit: query.limit,
   };
 }
 
@@ -228,30 +214,9 @@ export function parseReceivedQuotesQuery(value: unknown): ReceivedQuotesQuery {
  * @throws BadRequestError UUID가 아니면 VALIDATION_ERROR
  */
 export function parseQuoteIdParams(value: unknown): string {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new BadRequestError(
-      "요청값이 올바르지 않습니다.",
-      "VALIDATION_ERROR",
-      [{ field: "quoteId", reason: "UUID 형식이어야 합니다." }],
-    );
-  }
+  const params = parseWithZod(quoteIdParamsSchema, value, {
+    fallbackField: "quoteId",
+  });
 
-  const details: ErrorDetails = [];
-  const quoteId = getOptionalSingleString(
-    value as Record<string, unknown>,
-    "quoteId",
-    details,
-  );
-
-  throwIfInvalid(details);
-
-  if (quoteId === undefined || !UUID_PATTERN.test(quoteId)) {
-    throw new BadRequestError(
-      "요청값이 올바르지 않습니다.",
-      "VALIDATION_ERROR",
-      [{ field: "quoteId", reason: "UUID 형식이어야 합니다." }],
-    );
-  }
-
-  return quoteId;
+  return params.quoteId;
 }
