@@ -2,7 +2,7 @@
  * Zod 검증 결과를 프로젝트 공통 VALIDATION_ERROR 형식으로 변환
  * 외부 입력값을 오류 응답이나 로그에 포함하지 않음
  */
-import { z } from "zod";
+import type { z } from "zod";
 
 import { BadRequestError } from "../errors/app-error";
 
@@ -24,7 +24,14 @@ export function parseWithZod<TOutput>(
 
   const fallbackField = options.fallbackField ?? "value";
 
-  const details = result.error.issues.map((issue) => {
+  const details = result.error.issues.flatMap((issue) => {
+    if (issue.code === "unrecognized_keys") {
+      return issue.keys.map((key) => ({
+        field: key,
+        reason: "허용되지 않은 필드입니다.",
+      }));
+    }
+
     const field =
       issue.path.length > 0
         ? issue.path.map((segment) => String(segment)).join(".")

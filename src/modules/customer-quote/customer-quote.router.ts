@@ -4,7 +4,7 @@
  */
 import { Router } from "express";
 
-import { requireProfiledCustomer } from "../../common/middleware/auth-guards";
+import { requireProfiledCustomer } from "../../common/middleware/auth/auth-guards";
 import {
   getReceivedQuoteDetailController,
   listReceivedQuotesController,

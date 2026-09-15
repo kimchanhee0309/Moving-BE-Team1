@@ -18,7 +18,7 @@
 
 ## Router guard 선택
 
-`src/common/middleware/auth-guards.ts`의 배열을 Router에 펼쳐 사용합니다.
+`src/common/middleware/auth/auth-guards.ts`의 배열을 Router에 펼쳐 사용합니다.
 
 ```ts
 router.post(
