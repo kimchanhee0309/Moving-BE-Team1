@@ -1,7 +1,7 @@
 /**
  * Favorite Controller가 공통 응답 key와 상태 코드를 지키는지 검증합니다.
  *
- * 사전 조건: Validator와 Service는 mock하고 request.auth.profileId를 직접 넣는다.
+ * 사전 조건: Validator와 Service는 mock하고, HTTP 객체는 FavoriteHttpRequest/Response helper로 만든다.
  * 시나리오: 등록 201 data.favorite, 목록 200 data.items, 해제 204 Body 없음.
  * 기대 결과: sendSuccess/sendNoContent 계약과 일치한다.
  */
@@ -16,8 +16,6 @@ jest.mock("../../src/modules/favorite/favorite.service", () => ({
   removeFavorite: jest.fn(),
 }));
 
-import type { Request, Response } from "express";
-
 import {
   addFavoriteController,
   listFavoritesController,
@@ -28,6 +26,10 @@ import {
   parseListFavoritesQuery,
   parseMoverIdParam,
 } from "../../src/modules/favorite/favorite.validator";
+import {
+  createFavoriteRequest,
+  createFavoriteResponse,
+} from "./favorite.http-mock";
 
 const favorite = {
   id: "33333333-3333-4333-8333-333333333333",
@@ -47,29 +49,6 @@ const favorite = {
   },
 };
 
-function createRequest(): Request {
-  return {
-    auth: {
-      userId: "user-id",
-      role: "CUSTOMER",
-      profileId: "customer-id",
-    },
-    params: {},
-    query: {},
-  } as Request;
-}
-
-function createResponse(): Response {
-  const response = {
-    status: jest.fn(),
-    json: jest.fn(),
-    send: jest.fn(),
-  } as unknown as Response;
-
-  jest.mocked(response.status).mockReturnValue(response);
-  return response;
-}
-
 describe("Favorite controller response contract", () => {
   beforeEach(() => {
     jest.resetAllMocks();
@@ -79,8 +58,9 @@ describe("Favorite controller response contract", () => {
     jest.mocked(parseMoverIdParam).mockReturnValue({ moverId: favorite.moverId });
     jest.mocked(addFavorite).mockResolvedValue(favorite);
 
-    const response = createResponse();
-    await addFavoriteController(createRequest(), response, jest.fn());
+    const request = createFavoriteRequest();
+    const response = createFavoriteResponse();
+    await addFavoriteController(request, response);
 
     expect(addFavorite).toHaveBeenCalledWith("customer-id", favorite.moverId);
     expect(response.status).toHaveBeenCalledWith(201);
@@ -104,8 +84,9 @@ describe("Favorite controller response contract", () => {
     jest.mocked(parseListFavoritesQuery).mockReturnValue({ page: 1, pageSize: 10 });
     jest.mocked(listFavorites).mockResolvedValue(list);
 
-    const response = createResponse();
-    await listFavoritesController(createRequest(), response, jest.fn());
+    const request = createFavoriteRequest();
+    const response = createFavoriteResponse();
+    await listFavoritesController(request, response);
 
     expect(listFavorites).toHaveBeenCalledWith("customer-id", {
       page: 1,
@@ -122,8 +103,9 @@ describe("Favorite controller response contract", () => {
     jest.mocked(parseMoverIdParam).mockReturnValue({ moverId: favorite.moverId });
     jest.mocked(removeFavorite).mockResolvedValue(undefined);
 
-    const response = createResponse();
-    await removeFavoriteController(createRequest(), response, jest.fn());
+    const request = createFavoriteRequest();
+    const response = createFavoriteResponse();
+    await removeFavoriteController(request, response);
 
     expect(removeFavorite).toHaveBeenCalledWith("customer-id", favorite.moverId);
     expect(response.status).toHaveBeenCalledWith(204);

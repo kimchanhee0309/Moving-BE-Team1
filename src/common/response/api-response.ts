@@ -1,5 +1,3 @@
-import type { Response } from "express";
-
 import type { ErrorDetails } from "../errors/app-error";
 
 export interface ApiSuccessResponse<T> {
@@ -17,7 +15,22 @@ export interface ApiErrorResponse {
   };
 }
 
-export function sendSuccess<T>(response: Response, status: number, data: T) {
+/**
+ * sendSuccess/sendNoContent가 실제로 호출하는 응답 메서드입니다.
+ * Express Response와 테스트 mock이 같은 계약으로 연결되게 합니다.
+ */
+export interface SendableHttpResponse {
+  status: (code: number) => {
+    json: (body: unknown) => unknown;
+    send: (body?: unknown) => unknown;
+  };
+}
+
+export function sendSuccess<T>(
+  response: SendableHttpResponse,
+  status: number,
+  data: T,
+) {
   const responseBody: ApiSuccessResponse<T> = {
     success: true,
     data,
@@ -26,6 +39,6 @@ export function sendSuccess<T>(response: Response, status: number, data: T) {
   return response.status(status).json(responseBody);
 }
 
-export function sendNoContent(response: Response) {
+export function sendNoContent(response: SendableHttpResponse) {
   return response.status(204).send();
 }

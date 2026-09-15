@@ -8,7 +8,7 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 
-/** 목록·등록 응답에 필요한 Mover 카드와 집계만 선택합니다. */
+/** 목록·등록 응답에 필요한 Mover 카드와 찜 수 집계만 선택합니다. 리뷰 행은 가져오지 않습니다. */
 const favoriteMoverSelect = {
   id: true,
   nickname: true,
@@ -33,11 +33,6 @@ const favoriteMoverSelect = {
       },
     },
   },
-  reviews: {
-    select: {
-      rating: true,
-    },
-  },
   _count: {
     select: {
       favorites: true,
@@ -54,9 +49,99 @@ const favoriteSelect = {
   },
 } satisfies Prisma.FavoriteSelect;
 
-export type FavoriteRecord = Prisma.FavoriteGetPayload<{
+type FavoriteRow = Prisma.FavoriteGetPayload<{
   select: typeof favoriteSelect;
 }>;
+
+/**
+ * Prisma Favorite 행에 DB에서 집계한 리뷰 개수·평균만 붙인 레코드입니다.
+ * 개별 Review 행은 포함하지 않습니다.
+ */
+export type FavoriteRecord = Omit<FavoriteRow, "mover"> & {
+  mover: FavoriteRow["mover"] & {
+    reviewCount: number;
+    averageRating: number | null;
+  };
+};
+
+/** Prisma AVG 결과를 JS number로 바꿉니다. 리뷰가 없으면 null입니다. */
+function toNullableAverage(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return Number(value);
+}
+
+/**
+ * 페이지의 기사님들에 대해 Review COUNT/AVG를 한 번에 집계합니다.
+ * 리뷰가 없는 기사님은 groupBy 결과에 없으므로 0건·null로 채웁니다.
+ */
+async function withReviewStats(rows: FavoriteRow[]): Promise<FavoriteRecord[]> {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const moverIds = [...new Set(rows.map((row) => row.moverId))];
+  const stats = await prisma.review.groupBy({
+    by: ["moverId"],
+    where: {
+      moverId: {
+        in: moverIds,
+      },
+    },
+    _count: {
+      _all: true,
+    },
+    _avg: {
+      rating: true,
+    },
+  });
+
+  const statsByMoverId = new Map(
+    stats.map((item) => [
+      item.moverId,
+      {
+        reviewCount: item._count._all,
+        averageRating: toNullableAverage(item._avg.rating),
+      },
+    ]),
+  );
+
+  return rows.map((row) => {
+    const review = statsByMoverId.get(row.moverId) ?? {
+      reviewCount: 0,
+      averageRating: null,
+    };
+
+    return {
+      ...row,
+      mover: {
+        ...row.mover,
+        reviewCount: review.reviewCount,
+        averageRating: review.averageRating,
+      },
+    };
+  });
+}
+
+async function attachReviewStats(row: FavoriteRow): Promise<FavoriteRecord> {
+  const records = await withReviewStats([row]);
+  const record = records[0];
+
+  if (record === undefined) {
+    return {
+      ...row,
+      mover: {
+        ...row.mover,
+        reviewCount: 0,
+        averageRating: null,
+      },
+    };
+  }
+
+  return record;
+}
 
 /**
  * 찜 대상 기사님이 실제로 존재하는지 확인합니다.
@@ -92,35 +177,39 @@ export function findFavoriteByCustomerAndMover(
  * 찜을 생성하고 응답에 필요한 기사님 카드까지 함께 반환합니다.
  * 동시 요청이 unique 제약을 어기면 Prisma P2002가 나며 Service가 409로 변환합니다.
  */
-export function createFavorite(
+export async function createFavorite(
   customerId: string,
   moverId: string,
 ): Promise<FavoriteRecord> {
-  return prisma.favorite.create({
+  const created = await prisma.favorite.create({
     data: {
       customerId,
       moverId,
     },
     select: favoriteSelect,
   });
+
+  return attachReviewStats(created);
 }
 
 /**
  * 고객의 찜을 최신순으로 페이지 조회합니다.
- * skip/take로 한 페이지 분량만 읽고, 리뷰 평점은 선택한 기사님의 review.rating만 가져옵니다.
+ * skip/take로 한 페이지 분량만 읽고, 리뷰는 mover별 COUNT/AVG만 추가로 집계합니다.
  */
-export function findFavoritesByCustomer(
+export async function findFavoritesByCustomer(
   customerId: string,
   skip: number,
   take: number,
 ): Promise<FavoriteRecord[]> {
-  return prisma.favorite.findMany({
+  const rows = await prisma.favorite.findMany({
     where: { customerId },
     orderBy: { createdAt: "desc" },
     skip,
     take,
     select: favoriteSelect,
   });
+
+  return withReviewStats(rows);
 }
 
 /** 목록 pagination의 totalCount를 계산하기 위해 해당 고객의 찜 전체 건수를 셉니다. */

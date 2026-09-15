@@ -2,7 +2,7 @@
  * Favorite Service의 등록·목록·해제 규칙과 오류 코드를 검증합니다.
  *
  * 사전 조건: Repository와 Prisma는 mock하고 실제 DB는 사용하지 않는다.
- * 시나리오: 정상 등록, 없는 기사님, 중복 찜, 본인 목록만 조회, 없는 찜 해제.
+ * 시나리오: 정상 등록, 없는 기사님, 동시 삭제 P2003, 중복 찜, 본인 목록만 조회, 없는 찜 해제.
  * 기대 결과: DTO 변환과 MOVER_NOT_FOUND, FAVORITE_ALREADY_EXISTS, FAVORITE_NOT_FOUND.
  */
 jest.mock("../../src/modules/favorite/favorite.repository", () => ({
@@ -45,7 +45,8 @@ const favoriteRecord: FavoriteRecord = {
     shortIntroduction: "안전하고 빠른 이사",
     serviceTypes: [{ serviceType: { name: "HOME" } }],
     regions: [{ region: { name: "SEOUL" } }],
-    reviews: [{ rating: 5 }, { rating: 4 }],
+    reviewCount: 2,
+    averageRating: 4.5,
     _count: { favorites: 3 },
   },
 };
@@ -89,6 +90,31 @@ describe("Favorite service", () => {
     expect(createFavorite).not.toHaveBeenCalled();
   });
 
+  test("생성 중 기사님이 삭제되면 P2003을 MOVER_NOT_FOUND로 변환한다", async () => {
+    jest
+      .mocked(findMoverId)
+      .mockResolvedValueOnce({ id: moverId })
+      .mockResolvedValueOnce(null);
+    jest.mocked(findFavoriteByCustomerAndMover).mockResolvedValue(null);
+    jest.mocked(createFavorite).mockRejectedValue({ code: "P2003" });
+
+    await expect(addFavorite(customerId, moverId)).rejects.toMatchObject({
+      name: "AppError",
+      code: "MOVER_NOT_FOUND",
+    });
+    expect(findMoverId).toHaveBeenCalledTimes(2);
+  });
+
+  test("P2003이어도 기사님이 있으면 원래 오류를 다시 던진다", async () => {
+    const foreignKeyError = { code: "P2003" };
+
+    jest.mocked(findMoverId).mockResolvedValue({ id: moverId });
+    jest.mocked(findFavoriteByCustomerAndMover).mockResolvedValue(null);
+    jest.mocked(createFavorite).mockRejectedValue(foreignKeyError);
+
+    await expect(addFavorite(customerId, moverId)).rejects.toBe(foreignKeyError);
+  });
+
   test("이미 찜한 기사님이면 FAVORITE_ALREADY_EXISTS를 던진다", async () => {
     jest.mocked(findMoverId).mockResolvedValue({ id: moverId });
     jest.mocked(findFavoriteByCustomerAndMover).mockResolvedValue({
@@ -118,6 +144,35 @@ describe("Favorite service", () => {
       totalPages: 1,
     });
     expect(result.items).toHaveLength(1);
+  });
+
+  test("리뷰가 없으면 averageRating을 null로 두고 평균은 소수점 첫째 자리로 반올림한다", async () => {
+    jest.mocked(countFavoritesByCustomer).mockResolvedValue(2);
+    jest.mocked(findFavoritesByCustomer).mockResolvedValue([
+      {
+        ...favoriteRecord,
+        mover: {
+          ...favoriteRecord.mover,
+          reviewCount: 0,
+          averageRating: null,
+        },
+      },
+      {
+        ...favoriteRecord,
+        id: "44444444-4444-4444-8444-444444444444",
+        mover: {
+          ...favoriteRecord.mover,
+          reviewCount: 3,
+          averageRating: 4.66,
+        },
+      },
+    ]);
+
+    const result = await listFavorites(customerId, { page: 1, pageSize: 10 });
+
+    expect(result.items[0]?.mover.reviewCount).toBe(0);
+    expect(result.items[0]?.mover.averageRating).toBeNull();
+    expect(result.items[1]?.mover.averageRating).toBe(4.7);
   });
 
   test("찜이 없으면 FAVORITE_NOT_FOUND를 던진다", async () => {
