@@ -25,11 +25,22 @@
 ## 후속 작업
 
 1. 쿠키 테스트 보강분의 로컬 독립 검토와 12개 단위 테스트 검증을 마쳤습니다. PR #19에서 Codex·CodeRabbit 리뷰 결과를 확인하고 필요한 피드백을 반영합니다.
-2. 현재 FE 코드와 현행 BE DTO·오류·로그아웃 응답·OAuth callback 계약을 대조합니다. 초기 문서의 FE 조사 결과는 과거 커밋 기준이며 이번에 재검증하지 않았습니다.
-3. 격리된 로컬 DB와 브라우저에서 두 역할의 가입·로그인·갱신·로그아웃 및 프로필 분기를 검증합니다. 원격 DB나 seed를 임의로 실행하지 않습니다.
+2. FE 가입 폼의 일반 전화번호 허용과 BE의 휴대전화 전용 검증 차이를 정리하고 비밀번호 길이 기준을 대조합니다. OAuth callback 계약과 실제 공급자 연동은 추가 확인이 필요합니다.
+3. 두 역할의 이메일 인증과 미등록 프로필 분기는 아래 환경에서 확인했습니다. 프로필 등록 완료 후 이동과 Access Token 만료에 따른 FE 자동 갱신은 후속 검증 대상입니다.
 4. 공급자 설정을 확인한 뒤 Google·Kakao·Naver 실제 로그인과 오류 흐름을 검증합니다. 환경변수 값이나 토큰은 기록하지 않습니다.
 5. 제출할 변경분에 Codex 리뷰와 CodeRabbit 리뷰를 적용하고 지적 사항을 검토합니다.
 
 ## 검증 범위
 
 정리 후 `npm run typecheck`, `npm run build`, `npm run lint`, `npm test -- --runInBand`, `git diff --check` 결과를 확인합니다. 단위 테스트 통과만으로 실제 DB·브라우저·OAuth 연동 또는 배포 완료를 의미하지 않습니다.
+
+## 로컬 브라우저 인증 연동 결과 (2026-09-16)
+
+- 사용자 승인으로 별도 로컬 PostgreSQL 검증 DB를 생성하고 현재 Prisma 스키마를 적용했습니다. 저장소 Schema·migration·seed와 기존 DB·환경 파일은 변경하지 않았습니다. 가상 계정만 사용하며 JWT Secret은 서버 프로세스에 임시 주입했습니다.
+- FE `localhost:3000`과 BE `localhost:4000`에서 실제 가입 폼을 제출했습니다. CUSTOMER는 `/customer-profile/register`, MOVER는 `/mover-profile/register`로 이동했고 `/auth/me`는 각 역할과 `profileCompleted: false`를 반환했습니다.
+- 두 역할의 로그인과 `/auth/refresh` 호출이 성공했습니다. 기사 계정은 로그인 화면을 통한 재로그인과 프로필 등록 페이지 재접속 후 세션 유지도 확인했습니다. Refresh 요청 성공을 확인한 것으로, 만료 대기 및 FE 자동 재시도까지 검증한 것은 아닙니다.
+- 고객은 로그아웃 API, 기사는 헤더의 로그아웃 메뉴로 쿠키를 삭제했습니다. 이후 `/auth/me`와 `/auth/refresh`는 각각 `ACCESS_TOKEN_MISSING`, `REFRESH_TOKEN_MISSING`으로 401을 반환했습니다. Stateless 정책상 복사된 토큰의 서버 측 즉시 폐기를 의미하지 않습니다.
+- 고객의 잘못된 비밀번호·역할 로그인은 `INVALID_CREDENTIALS` 401, 중복 가입은 `EMAIL_ALREADY_EXISTS` 409, 프로필 미등록 견적 조회는 `PROFILE_REQUIRED` 403을 확인했습니다. 기사 계정의 고객 프로필 조회는 `ROLE_MISMATCH` 403을 반환했습니다.
+- 검사한 인증 응답에 토큰·passwordHash가 없고 `document.cookie`에서 인증 토큰을 읽을 수 없음을 확인했습니다.
+- FE 인증 유틸 8개와 lint는 통과했습니다. 전체 타입 검사는 기존 Dropdown 파일 누락과 빈 기사님 상세 페이지 등 담당 범위 밖 오류로 실패했으며 해당 파일은 수정하지 않았습니다.
+- 실제 소셜 로그인, 프로필 등록 완료 후 분기, 운영 환경·배포 검증은 아직 수행하지 않았습니다. 이번 점검에서 인증 기능 코드 수정은 없었습니다.
