@@ -7,6 +7,13 @@ jest.mock("../../src/modules/mover-request/mover-request.repository", () => ({
   findReceivedRequestById: jest.fn(),
 }));
 
+// Service 단위 테스트가 실제 Prisma Client와 DB를 로딩하지 않도록 transaction 경계를 격리합니다.
+jest.mock("../../src/lib/prisma", () => ({
+  prisma: {
+    $transaction: jest.fn(),
+  },
+}));
+
 import type { GetReceivedRequestsQuery } from "../../src/modules/mover-request/mover-request.dto";
 import {
   findReceivedRequests,

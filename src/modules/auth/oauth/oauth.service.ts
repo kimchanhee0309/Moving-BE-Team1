@@ -6,12 +6,12 @@ import type { UserRole } from "../../../generated/prisma/enums";
 import { BadRequestError, ConflictError } from "../../../common/errors/app-error";
 import { createAuthTokens } from "../../../common/utils/auth-token";
 import type { AuthResult } from "../auth.dto";
+import { toAuthUserDto } from "../auth.mapper";
 import {
   createOAuthUser,
   findUserByEmail,
   findUserBySocialAccount,
 } from "../auth.repository";
-import { toAuthUserDto } from "../auth.service";
 import type { OAuthProfile } from "./oauth.dto";
 
 function isUniqueConstraintError(error: unknown): boolean {
