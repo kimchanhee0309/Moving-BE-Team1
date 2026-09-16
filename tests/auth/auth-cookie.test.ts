@@ -16,6 +16,10 @@ import {
 } from "../../src/common/cookies/auth-cookie";
 import { env } from "../../src/config/env";
 
+/**
+ * 쿠키를 실제 헤더로 직렬화할 Express 응답 fixture를 생성합니다.
+ * @returns 네트워크 연결 없이 Set-Cookie 헤더를 보관하는 응답 객체입니다.
+ */
 function createResponse(): Response {
   const response = new ServerResponse(new IncomingMessage(new Socket()));
   // Express도 Node ServerResponse에 응답 prototype을 연결한다. 같은 구조를 구성한 뒤 타입을 좁힌다.
@@ -23,6 +27,11 @@ function createResponse(): Response {
   return response as Response;
 }
 
+/**
+ * 쿠키 조회 함수에 정상·비정상 cookie-parser 입력을 전달할 요청 fixture를 생성합니다.
+ * @param cookies 검증할 쿠키 값이며 외부 입력처럼 unknown으로 취급합니다.
+ * @returns 전달한 cookies를 가진 요청 객체입니다. 실제 요청이나 연결은 발생하지 않습니다.
+ */
 function createRequest(cookies: unknown): Request {
   const request = new IncomingMessage(new Socket());
   // Express 요청 prototype과 cookie-parser가 채우는 입력을 구성하여 실제 요청 형태로 검증한다.
@@ -31,6 +40,12 @@ function createRequest(cookies: unknown): Request {
   return request as Request;
 }
 
+/**
+ * 발급·삭제한 쿠키를 속성별로 검사할 수 있도록 응답 헤더를 추출합니다.
+ * @param response 쿠키 helper가 헤더를 설정한 응답 fixture입니다.
+ * @returns 변경하지 않은 Set-Cookie 문자열 배열입니다.
+ * @throws Set-Cookie 헤더가 배열이 아니면 테스트 실패 원인을 나타내는 오류입니다.
+ */
 function getCookieHeaders(response: Response): string[] {
   const headers = response.getHeader("set-cookie");
   if (!Array.isArray(headers)) {
