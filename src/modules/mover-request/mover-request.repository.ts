@@ -10,6 +10,7 @@ import type {
   ServiceTypeCode,
 } from "./mover-request.dto";
 
+/** 받은 요청 목록 조회 결과입니다. */
 export interface ReceivedRequestRecord {
   id: string;
   moveDate: Date;
@@ -33,6 +34,12 @@ export interface ReceivedRequestRecord {
   }>;
 }
 
+/**
+ * 견적 전송 및 요청 반려 가능 여부를 판단하기 위한 조회 결과입니다.
+ *
+ * 전체 지정 기사와 전체 견적을 함께 조회하여 일반·지정·전체 견적 수를
+ * 동일한 Serializable transaction 안에서 계산합니다.
+ */
 export interface ReceivedRequestActionRecord {
   id: string;
   status: MoveRequestStatus;
@@ -48,8 +55,12 @@ export interface ReceivedRequestActionRecord {
     }>;
   };
 
+  designatedRequests: Array<{
+    moverId: string;
+  }>;
+
   quotes: Array<{
-    id: string;
+    moverId: string;
   }>;
 
   requestRejections: Array<{
@@ -57,6 +68,7 @@ export interface ReceivedRequestActionRecord {
   }>;
 }
 
+/** 생성된 견적의 DB 조회 결과입니다. */
 export interface CreatedQuoteRecord {
   id: string;
   moveRequestId: string;
@@ -66,6 +78,7 @@ export interface CreatedQuoteRecord {
   createdAt: Date;
 }
 
+/** 생성된 요청 반려 기록의 DB 조회 결과입니다. */
 export interface CreatedRequestRejectionRecord {
   id: string;
   moveRequestId: string;
@@ -73,16 +86,19 @@ export interface CreatedRequestRejectionRecord {
   createdAt: Date;
 }
 
+/** 받은 요청 목록 조회 Repository 입력입니다. */
 export interface FindReceivedRequestsInput extends GetReceivedRequestsQuery {
   moverId: string;
   now: Date;
 }
 
+/** 처리할 요청 조회 Repository 입력입니다. */
 export interface FindReceivedRequestForActionInput {
   moverId: string;
   requestId: string;
 }
 
+/** 견적 생성 Repository 입력입니다. */
 export interface CreateQuoteInput {
   moverId: string;
   requestId: string;
@@ -90,12 +106,19 @@ export interface CreateQuoteInput {
   comment: string;
 }
 
+/** 요청 반려 생성 Repository 입력입니다. */
 export interface CreateRequestRejectionInput {
   moverId: string;
   requestId: string;
   reason: string;
 }
 
+/**
+ * 받은 요청 카드에 필요한 필드만 조회합니다.
+ *
+ * @param moverId 인증된 기사 프로필 UUID
+ * @returns Prisma MoveRequest select 객체
+ */
 function createReceivedRequestSelect(moverId: string) {
   return {
     id: true,
@@ -121,6 +144,7 @@ function createReceivedRequestSelect(moverId: string) {
       },
     },
 
+    // 지정 여부는 다른 기사가 아니라 현재 기사 기준으로만 계산합니다.
     designatedRequests: {
       where: {
         moverId,
@@ -133,6 +157,15 @@ function createReceivedRequestSelect(moverId: string) {
   } satisfies Prisma.MoveRequestSelect;
 }
 
+/**
+ * 인증된 기사가 목록에서 조회 가능한 요청 조건을 생성합니다.
+ *
+ * 다른 기사에게 지정되었다는 이유만으로 일반 기사에게 요청을 숨기지 않습니다.
+ * isDesignated는 현재 기사에게 지정된 요청인지 여부만 필터링합니다.
+ *
+ * @param input 기사 ID와 검색·필터·현재 시각
+ * @returns Prisma MoveRequest where 객체
+ */
 function createReceivedRequestWhere(
   input: FindReceivedRequestsInput,
 ): Prisma.MoveRequestWhereInput {
@@ -205,6 +238,13 @@ function createReceivedRequestWhere(
   };
 }
 
+/**
+ * 기사님이 받은 요청을 조회합니다.
+ *
+ * @param input 인증된 기사와 조회 조건
+ * @returns limit보다 최대 한 건 더 조회한 요청 목록
+ * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
+ */
 export async function findReceivedRequests(
   input: FindReceivedRequestsInput,
 ): Promise<ReceivedRequestRecord[]> {
@@ -230,6 +270,17 @@ export async function findReceivedRequests(
   });
 }
 
+/**
+ * 견적 전송 또는 반려 처리에 필요한 요청 정보를 조회합니다.
+ *
+ * 전체 견적과 지정 기사 목록을 조회해 Service에서 일반·지정·전체 견적 수를
+ * 계산합니다. 현재 기사의 서비스 유형과 기존 반려 여부도 함께 확인합니다.
+ *
+ * @param transaction 현재 Serializable transaction client
+ * @param input 인증된 기사 UUID와 요청 UUID
+ * @returns 처리 대상 요청 또는 null
+ * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
+ */
 export async function findReceivedRequestForAction(
   transaction: Prisma.TransactionClient,
   input: FindReceivedRequestForActionInput,
@@ -264,16 +315,21 @@ export async function findReceivedRequestForAction(
         },
       },
 
-      quotes: {
-        where: {
-          moverId: input.moverId,
-        },
+      // 현재 요청에 지정된 모든 기사 ID를 조회합니다.
+      designatedRequests: {
         select: {
-          id: true,
+          moverId: true,
         },
-        take: 1,
       },
 
+      // 현재 요청에 생성된 모든 견적의 기사 ID를 조회합니다.
+      quotes: {
+        select: {
+          moverId: true,
+        },
+      },
+
+      // 반려 여부는 현재 기사 기준으로만 확인합니다.
       requestRejections: {
         where: {
           moverId: input.moverId,
@@ -287,6 +343,14 @@ export async function findReceivedRequestForAction(
   });
 }
 
+/**
+ * 받은 요청에 기사님의 견적을 생성합니다.
+ *
+ * @param transaction 현재 Serializable transaction client
+ * @param input 기사·요청 UUID와 견적 정보
+ * @returns 생성된 견적
+ * @sideeffect Quote 레코드를 생성합니다.
+ */
 export async function createQuote(
   transaction: Prisma.TransactionClient,
   input: CreateQuoteInput,
@@ -311,6 +375,14 @@ export async function createQuote(
   });
 }
 
+/**
+ * 고객에게 새 견적 도착 알림을 생성합니다.
+ *
+ * @param transaction 현재 Serializable transaction client
+ * @param input 고객 User UUID, 요청 UUID, 견적 UUID
+ * @returns 반환값 없음
+ * @sideeffect Notification 레코드를 생성합니다.
+ */
 export async function createNewQuoteNotification(
   transaction: Prisma.TransactionClient,
   input: {
@@ -331,6 +403,14 @@ export async function createNewQuoteNotification(
   });
 }
 
+/**
+ * 기사님의 요청 반려 기록을 생성합니다.
+ *
+ * @param transaction 현재 Serializable transaction client
+ * @param input 기사·요청 UUID와 반려 사유
+ * @returns 생성된 반려 기록
+ * @sideeffect RequestRejection 레코드를 생성합니다.
+ */
 export async function createRequestRejection(
   transaction: Prisma.TransactionClient,
   input: CreateRequestRejectionInput,

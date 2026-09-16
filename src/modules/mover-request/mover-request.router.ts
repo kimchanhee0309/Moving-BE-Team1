@@ -3,7 +3,7 @@
  */
 import { Router } from "express";
 
-import { requireProfiledMover } from "../../common/middleware/auth-guards";
+import { requireProfiledMover } from "../../common/middleware/auth/auth-guards";
 import {
   getReceivedRequestsController,
   rejectReceivedRequestController,
