@@ -7,17 +7,28 @@ import { z } from "zod";
 import { BadRequestError } from "../../common/errors/app-error";
 import { parseWithZod } from "../../common/validation/zod-parser";
 import {
+  isReceivedQuoteHistorySort,
   isReceivedQuoteSort,
   type ReceivedQuoteCursorPayload,
+  type ReceivedQuoteHistoryCursorPayload,
+  type ReceivedQuoteHistorySort,
   type ReceivedQuoteSort,
 } from "./customer-quote.dto";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const isoDateTimeSchema = z.string().refine((value) => {
-  return value.trim() !== "" && !Number.isNaN(Date.parse(value));
-});
+/**
+ * 서버가 만드는 cursor는 Date.toISOString()이므로 날짜만 있는 값은 거절합니다.
+ * Date.parse만 쓰면 "2026-08-02"가 자정으로 해석되어 키셋 페이지가 어긋납니다.
+ */
+const ISO_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const isoDateTimeSchema = z
+  .string()
+  .regex(ISO_DATE_TIME_PATTERN)
+  .refine((value) => !Number.isNaN(Date.parse(value)));
 
 const receivedQuoteCursorSchema = z.object({
   sort: z.string(),
@@ -100,5 +111,73 @@ export function decodeReceivedQuoteCursor(
     createdAt: payload.createdAt,
     moveDate: payload.moveDate,
     price: payload.price,
+  };
+}
+
+const receivedQuoteHistoryCursorSchema = z.object({
+  sort: z.string(),
+  id: z.string().regex(UUID_PATTERN),
+  updatedAt: z.string().optional(),
+  moveDate: z.string().optional(),
+});
+
+/**
+ * 과거 목록 마지막 항목의 정렬 키를 opaque cursor로 만듭니다.
+ * @param payload 다음 페이지 키셋에 필요한 최소 필드
+ */
+export function encodeReceivedQuoteHistoryCursor(
+  payload: ReceivedQuoteHistoryCursorPayload,
+): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+/**
+ * 과거 목록 cursor를 복원하고 현재 sort와 일치하는지 확인합니다.
+ * @param value 클라이언트가 보낸 cursor 문자열
+ * @param sort 이번 요청의 정렬
+ */
+export function decodeReceivedQuoteHistoryCursor(
+  value: string,
+  sort: ReceivedQuoteHistorySort,
+): ReceivedQuoteHistoryCursorPayload {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throwInvalidCursor();
+  }
+
+  let payload: z.infer<typeof receivedQuoteHistoryCursorSchema>;
+
+  try {
+    payload = parseWithZod(receivedQuoteHistoryCursorSchema, parsed, {
+      fallbackField: "cursor",
+    });
+  } catch {
+    throwInvalidCursor();
+  }
+
+  if (!isReceivedQuoteHistorySort(payload.sort) || payload.sort !== sort) {
+    throw new BadRequestError(
+      "요청값이 올바르지 않습니다.",
+      "VALIDATION_ERROR",
+      [{ field: "cursor", reason: "cursor와 sort가 일치하지 않습니다." }],
+    );
+  }
+
+  if (sort === "UPDATED_AT_DESC" && !isoDateTimeSchema.safeParse(payload.updatedAt).success) {
+    throwInvalidCursor();
+  }
+
+  if (sort === "MOVE_DATE_DESC" && !isoDateTimeSchema.safeParse(payload.moveDate).success) {
+    throwInvalidCursor();
+  }
+
+  return {
+    sort,
+    id: payload.id,
+    updatedAt: payload.updatedAt,
+    moveDate: payload.moveDate,
   };
 }

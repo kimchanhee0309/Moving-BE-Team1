@@ -3,11 +3,14 @@
  */
 jest.mock("../../src/modules/customer-quote/customer-quote.validator", () => ({
   parseQuoteIdParams: jest.fn(),
+  parseReceivedQuoteHistoryQuery: jest.fn(),
   parseReceivedQuotesQuery: jest.fn(),
 }));
 
 jest.mock("../../src/modules/customer-quote/customer-quote.service", () => ({
   getReceivedQuoteDetail: jest.fn(),
+  getReceivedQuoteHistoryDetail: jest.fn(),
+  listReceivedQuoteHistory: jest.fn(),
   listReceivedQuotes: jest.fn(),
 }));
 
@@ -16,14 +19,19 @@ import type { NextFunction, Request, Response } from "express";
 import { ForbiddenError } from "../../src/common/errors/app-error";
 import {
   getReceivedQuoteDetailController,
+  getReceivedQuoteHistoryDetailController,
+  listReceivedQuoteHistoryController,
   listReceivedQuotesController,
 } from "../../src/modules/customer-quote/customer-quote.controller";
 import {
   getReceivedQuoteDetail,
+  getReceivedQuoteHistoryDetail,
+  listReceivedQuoteHistory,
   listReceivedQuotes,
 } from "../../src/modules/customer-quote/customer-quote.service";
 import {
   parseQuoteIdParams,
+  parseReceivedQuoteHistoryQuery,
   parseReceivedQuotesQuery,
 } from "../../src/modules/customer-quote/customer-quote.validator";
 
@@ -163,5 +171,98 @@ describe("getReceivedQuoteDetailController", () => {
       success: true,
       data: detail,
     });
+  });
+});
+
+describe("history controllers", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("과거 목록은 history query와 profileId를 전달한다", async () => {
+    const historyQuery = {
+      sort: "UPDATED_AT_DESC" as const,
+      limit: 10,
+    };
+    jest.mocked(parseReceivedQuoteHistoryQuery).mockReturnValue(historyQuery);
+    jest.mocked(listReceivedQuoteHistory).mockResolvedValue(result);
+    const response = createResponse();
+
+    await listReceivedQuoteHistoryController(
+      {
+        query: {},
+        auth: {
+          userId: "user-id",
+          role: "CUSTOMER",
+          profileId: "customer-profile-id",
+        },
+      } as unknown as Request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(listReceivedQuoteHistory).toHaveBeenCalledWith(
+      "customer-profile-id",
+      historyQuery,
+    );
+    expect(response.status).toHaveBeenCalledWith(200);
+  });
+
+  test("과거 상세는 quoteId와 profileId로 data.quote를 반환한다", async () => {
+    const quoteId = "44444444-4444-4444-8444-444444444444";
+    const historyDetail = {
+      quote: {
+        id: quoteId,
+        price: 180000,
+        comment: "선택해 주셔서 감사합니다.",
+        status: "CONFIRMED" as const,
+        isDesignated: false,
+        createdAt: "2026-08-01T03:00:00.000Z",
+        updatedAt: "2026-08-02T05:00:00.000Z",
+        mover: {
+          id: "22222222-2222-4222-8222-222222222222",
+          nickname: "김코드",
+          profileImageUrl: null,
+          careerYears: 7,
+          shortIntroduction: "안전하고 빠른 이사",
+          reviewCount: 128,
+          averageRating: 4.8,
+          favoriteCount: 56,
+          isFavorite: false,
+          description: "소형·가정이사 전문입니다.",
+          serviceTypes: ["HOME"],
+          regions: ["서울"],
+        },
+        moveRequest: {
+          id: "55555555-5555-4555-8555-555555555555",
+          serviceType: "HOME",
+          moveDate: "2026-08-10T01:00:00.000Z",
+          fromAddress: "서울시 강남구",
+          toAddress: "서울시 마포구",
+          status: "COMPLETED" as const,
+        },
+      },
+    };
+    jest.mocked(parseQuoteIdParams).mockReturnValue(quoteId);
+    jest.mocked(getReceivedQuoteHistoryDetail).mockResolvedValue(historyDetail);
+    const response = createResponse();
+
+    await getReceivedQuoteHistoryDetailController(
+      {
+        params: { quoteId },
+        auth: {
+          userId: "user-id",
+          role: "CUSTOMER",
+          profileId: "customer-profile-id",
+        },
+      } as unknown as Request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(getReceivedQuoteHistoryDetail).toHaveBeenCalledWith(
+      "customer-profile-id",
+      quoteId,
+    );
   });
 });
