@@ -10,7 +10,10 @@ jest.mock("../../src/modules/customer-quote/customer-quote.repository", () => ({
   findReceivedQuotes: jest.fn(),
 }));
 
-import { decodeReceivedQuoteCursor } from "../../src/modules/customer-quote/customer-quote.cursor";
+import {
+  decodeReceivedQuoteCursor,
+  decodeReceivedQuoteHistoryCursor,
+} from "../../src/modules/customer-quote/customer-quote.cursor";
 import { NotFoundError } from "../../src/common/errors/app-error";
 import type {
   ReceivedQuoteDetailRecord,
@@ -314,6 +317,60 @@ describe("listReceivedQuoteHistory", () => {
     expect(result.items[0]?.status).toBe("CONFIRMED");
     expect(result.items[0]?.moveRequest.status).toBe("COMPLETED");
     expect(result.pagination.hasNext).toBe(false);
+  });
+
+  test("limit보다 많으면 history cursor로 다음 페이지를 이어간다", async () => {
+    const first = createRecord({
+      status: "CONFIRMED",
+      updatedAt: new Date("2026-08-12T05:00:00.000Z"),
+    });
+    const second = createRecord({
+      id: "44444444-4444-4444-8444-444444444444",
+      status: "CONFIRMED",
+      updatedAt: new Date("2026-08-11T05:00:00.000Z"),
+    });
+    const third = createRecord({
+      id: "55555555-5555-4555-8555-555555555555",
+      status: "CONFIRMED",
+      updatedAt: new Date("2026-08-10T05:00:00.000Z"),
+    });
+    jest
+      .mocked(findReceivedQuoteHistory)
+      .mockResolvedValueOnce([first, second, third])
+      .mockResolvedValueOnce([third]);
+    jest.mocked(findMoverReviewAverages).mockResolvedValue([]);
+
+    const firstPage = await listReceivedQuoteHistory(customerId, {
+      sort: "UPDATED_AT_DESC",
+      limit: 2,
+    });
+
+    expect(firstPage.items.map((item) => item.id)).toEqual([first.id, second.id]);
+    expect(firstPage.pagination.hasNext).toBe(true);
+
+    const cursor = decodeReceivedQuoteHistoryCursor(
+      firstPage.pagination.nextCursor ?? "",
+      "UPDATED_AT_DESC",
+    );
+    expect(cursor.id).toBe(second.id);
+    expect(cursor.updatedAt).toBe("2026-08-11T05:00:00.000Z");
+
+    const secondPage = await listReceivedQuoteHistory(customerId, {
+      sort: "UPDATED_AT_DESC",
+      limit: 2,
+      cursor,
+    });
+
+    expect(findReceivedQuoteHistory).toHaveBeenLastCalledWith(customerId, {
+      sort: "UPDATED_AT_DESC",
+      limit: 2,
+      cursor,
+    });
+    expect(secondPage.items.map((item) => item.id)).toEqual([third.id]);
+    expect(secondPage.pagination).toEqual({
+      nextCursor: null,
+      hasNext: false,
+    });
   });
 });
 
