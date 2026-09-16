@@ -14,6 +14,8 @@ import {
   moverReviewRouter,
   reviewRouter,
 } from "../modules/review/review.router";
+import { moveRequestRouter } from "../modules/move-request/move-request.router";
+import { favoriteRouter } from "../modules/favorite/favorite.router";
 
 /** 앱이 `/`에 연결하는 최상위 API Router입니다. */
 export const apiRouter = Router();
@@ -25,6 +27,8 @@ apiRouter.use("/customers", customerProfileRouter);
 apiRouter.use("/customers", customerReviewRouter);
 apiRouter.use("/movers", moverReviewRouter);
 apiRouter.use("/reviews", reviewRouter);
+apiRouter.use("/customers/me/move-requests", moveRequestRouter);
+apiRouter.use("/favorites", favoriteRouter);
 
 apiRouter.get("/health", (_request, response) => {
   return sendSuccess(response, HTTP_STATUS.OK, {
