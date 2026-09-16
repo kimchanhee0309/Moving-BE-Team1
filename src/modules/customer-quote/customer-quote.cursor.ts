@@ -18,9 +18,17 @@ import {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const isoDateTimeSchema = z.string().refine((value) => {
-  return value.trim() !== "" && !Number.isNaN(Date.parse(value));
-});
+/**
+ * 서버가 만드는 cursor는 Date.toISOString()이므로 날짜만 있는 값은 거절합니다.
+ * Date.parse만 쓰면 "2026-08-02"가 자정으로 해석되어 키셋 페이지가 어긋납니다.
+ */
+const ISO_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const isoDateTimeSchema = z
+  .string()
+  .regex(ISO_DATE_TIME_PATTERN)
+  .refine((value) => !Number.isNaN(Date.parse(value)));
 
 const receivedQuoteCursorSchema = z.object({
   sort: z.string(),
