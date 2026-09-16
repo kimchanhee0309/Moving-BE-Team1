@@ -9,10 +9,13 @@ import { sendSuccess } from "../../common/response/api-response";
 import { getProfileAuthContext } from "../../common/utils/auth-context";
 import {
   getReceivedQuoteDetail,
+  getReceivedQuoteHistoryDetail,
+  listReceivedQuoteHistory,
   listReceivedQuotes,
 } from "./customer-quote.service";
 import {
   parseQuoteIdParams,
+  parseReceivedQuoteHistoryQuery,
   parseReceivedQuotesQuery,
 } from "./customer-quote.validator";
 
@@ -27,6 +30,36 @@ export const listReceivedQuotesController: RequestHandler = async (
   const query = parseReceivedQuotesQuery(request.query);
   const auth = getProfileAuthContext(request);
   const result = await listReceivedQuotes(auth.profileId, query);
+
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/**
+ * GET /customers/me/quotes/history
+ * 입력 검증 → 인증 주체 추출 → 과거 확정 견적 목록 조회 → data.items 응답
+ */
+export const listReceivedQuoteHistoryController: RequestHandler = async (
+  request,
+  response,
+) => {
+  const query = parseReceivedQuoteHistoryQuery(request.query);
+  const auth = getProfileAuthContext(request);
+  const result = await listReceivedQuoteHistory(auth.profileId, query);
+
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/**
+ * GET /customers/me/quotes/history/:quoteId
+ * 입력 검증 → 인증 주체 추출 → 과거 확정 견적 상세 조회 → data.quote 응답
+ */
+export const getReceivedQuoteHistoryDetailController: RequestHandler = async (
+  request,
+  response,
+) => {
+  const quoteId = parseQuoteIdParams(request.params);
+  const auth = getProfileAuthContext(request);
+  const result = await getReceivedQuoteHistoryDetail(auth.profileId, quoteId);
 
   return sendSuccess(response, HTTP_STATUS.OK, result);
 };

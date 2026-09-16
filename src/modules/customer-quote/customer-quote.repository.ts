@@ -1,10 +1,13 @@
 /**
- * 고객 소유 대기 견적 목록과 상세를 Prisma로 조회합니다.
+ * 고객 소유 대기·과거 견적 목록과 상세를 Prisma로 조회합니다.
  * HTTP·cookie는 다루지 않고 응답에 필요한 column과 집계만 선택합니다.
  */
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
-import type { ReceivedQuotesQuery } from "./customer-quote.dto";
+import type {
+  ReceivedQuoteHistoryQuery,
+  ReceivedQuotesQuery,
+} from "./customer-quote.dto";
 
 function createReceivedQuoteSelect(customerId: string) {
   return {
@@ -13,6 +16,7 @@ function createReceivedQuoteSelect(customerId: string) {
     comment: true,
     status: true,
     createdAt: true,
+    updatedAt: true,
     moverId: true,
     mover: {
       select: {
@@ -164,6 +168,55 @@ function createOrderBy(
   return [{ createdAt: "desc" }, { id: "desc" }];
 }
 
+function createHistoryCursorWhere(
+  query: ReceivedQuoteHistoryQuery,
+): Prisma.QuoteWhereInput | undefined {
+  const cursor = query.cursor;
+
+  if (!cursor) {
+    return undefined;
+  }
+
+  if (query.sort === "UPDATED_AT_DESC" && cursor.updatedAt) {
+    const updatedAt = new Date(cursor.updatedAt);
+
+    return {
+      OR: [
+        { updatedAt: { lt: updatedAt } },
+        { AND: [{ updatedAt }, { id: { lt: cursor.id } }] },
+      ],
+    };
+  }
+
+  if (query.sort === "MOVE_DATE_DESC" && cursor.moveDate) {
+    const moveDate = new Date(cursor.moveDate);
+
+    return {
+      OR: [
+        { moveRequest: { moveDate: { lt: moveDate } } },
+        {
+          AND: [
+            { moveRequest: { moveDate } },
+            { id: { lt: cursor.id } },
+          ],
+        },
+      ],
+    };
+  }
+
+  return undefined;
+}
+
+function createHistoryOrderBy(
+  sort: ReceivedQuoteHistoryQuery["sort"],
+): Prisma.QuoteOrderByWithRelationInput[] {
+  if (sort === "MOVE_DATE_DESC") {
+    return [{ moveRequest: { moveDate: "desc" } }, { id: "desc" }];
+  }
+
+  return [{ updatedAt: "desc" }, { id: "desc" }];
+}
+
 /**
  * 지정 견적 여부는 (moveRequestId, moverId) 쌍으로만 판정합니다.
  * 요청에 지정 기사가 있다는 사실만으로는 다른 일반 견적이 지정으로 섞이지 않습니다.
@@ -281,6 +334,69 @@ export function findReceivedQuoteDetail(
       moveRequest: {
         customerId,
         status: "WAITING",
+      },
+    },
+    select: createReceivedQuoteDetailSelect(customerId),
+  });
+}
+
+/**
+ * 내가 확정한 과거 견적을 limit+1개 조회합니다.
+ * Quote는 CONFIRMED만 포함하고 요청 상태는 CONFIRMED 또는 COMPLETED입니다.
+ */
+export async function findReceivedQuoteHistory(
+  customerId: string,
+  query: ReceivedQuoteHistoryQuery,
+): Promise<ReceivedQuoteRecord[]> {
+  const cursorWhere = createHistoryCursorWhere(query);
+  const requestStatuses: Array<"CONFIRMED" | "COMPLETED"> =
+    query.moveRequestStatus
+      ? [query.moveRequestStatus]
+      : ["CONFIRMED", "COMPLETED"];
+
+  return prisma.quote.findMany({
+    where: {
+      status: "CONFIRMED",
+      moveRequest: {
+        customerId,
+        status: { in: requestStatuses },
+        ...(query.serviceType
+          ? { serviceType: { name: query.serviceType } }
+          : {}),
+      },
+      ...(query.keyword
+        ? {
+            mover: {
+              nickname: {
+                contains: query.keyword,
+                mode: "insensitive",
+              },
+            },
+          }
+        : {}),
+      ...(cursorWhere ? { AND: [cursorWhere] } : {}),
+    },
+    orderBy: createHistoryOrderBy(query.sort),
+    take: query.limit + 1,
+    select: createReceivedQuoteSelect(customerId),
+  });
+}
+
+/**
+ * 내가 확정한 과거 견적 1건을 조회합니다.
+ * 대기 견적이거나 내 요청이 아니면 null을 반환해 존재 여부를 구분하지 않습니다.
+ */
+export function findReceivedQuoteHistoryDetail(
+  customerId: string,
+  quoteId: string,
+): Promise<ReceivedQuoteDetailRecord | null> {
+  return prisma.quote.findFirst({
+    where: {
+      id: quoteId,
+      status: "CONFIRMED",
+      moveRequest: {
+        customerId,
+        status: { in: ["CONFIRMED", "COMPLETED"] },
       },
     },
     select: createReceivedQuoteDetailSelect(customerId),
