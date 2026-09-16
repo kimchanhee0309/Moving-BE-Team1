@@ -74,6 +74,9 @@ const limitSchema = z.preprocess(
     .int({
       error: "limit는 정수어야 합니다.",
     })
+    .min(1, {
+      error: "limit은 1 이상이어야 합니다.",
+    })
     .max(MAX_LIMIT, {
       error: `limit은 ${MAX_LIMIT} 이하여야 합니다.`,
     }),

@@ -68,6 +68,8 @@ export const moverQuoteRouter = Router();
  *         price:
  *           type: integer
  *           minimum: 1
+ *           nullable: true
+ *           description: REJECTED 상태의 견적은 가격이 없어 null일 수 있습니다.
  *           example: 180000
  *         quoteStatus:
  *           $ref: "#/components/schemas/QuoteStatus"
@@ -113,6 +115,8 @@ export const moverQuoteRouter = Router();
  *               format: date-time
  *             comment:
  *               type: string
+ *               nullable: true
+ *               description: 견적 코멘트이며 데이터 상태에 따라 null일 수 있습니다.
  *               example: "안전하고 신속하게 이사를 진행해 드리겠습니다."
  *
  *     MoverQuoteDetailResponse:

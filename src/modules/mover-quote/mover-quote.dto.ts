@@ -46,7 +46,7 @@ export interface MoverQuoteItemDto {
   fromAddress: string;
   toAddress: string;
   moveDate: string;
-  price: number;
+  price: number | null;
   quoteStatus: MoverQuoteStatus;
   moveRequestStatus: MoverQuoteMoveRequestStatus;
 }
@@ -61,7 +61,7 @@ export interface MoverQuoteListDto {
 export interface MoverQuoteDetailDto extends MoverQuoteItemDto {
   requestId: string;
   requestedAt: string;
-  comment: string;
+  comment: string | null;
 }
 
 /** 기사님이 반려한 견적 요청 카드 한 건입니다. */

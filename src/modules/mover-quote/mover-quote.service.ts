@@ -37,25 +37,8 @@ function toMoverQuoteServiceType(value: string): MoverQuoteServiceType {
   }
 }
 
-/**
- * nullable로 선언된 Quote 필드가 정상 견적 조회에 필요한 값을 갖는지 확인합니다.
- * RequestRejection과 달리 실제로 전송된 Quote에는 가격과 코멘트가 있어야 합니다.
- */
-function assertQuoteHasRequiredFields(
-  record: MoverQuoteRecord,
-): asserts record is MoverQuoteRecord & {
-  price: number;
-  comment: string;
-} {
-  if (record.price === null || record.comment === null) {
-    throw new Error("견적의 가격 또는 코멘트가 저장되어 있지 않습니다.");
-  }
-}
-
 /** Prisma 견적 레코드를 카드 DTO로 변환합니다. */
 function toMoverQuoteItemDto(record: MoverQuoteRecord): MoverQuoteItemDto {
-  assertQuoteHasRequiredFields(record);
-
   return {
     quoteId: record.id,
     customerName: record.moveRequest.customer.user.name,
@@ -144,9 +127,6 @@ export async function getMoverQuoteDetail(
       "MOVER_QUOTE_NOT_FOUND",
     );
   }
-
-  assertQuoteHasRequiredFields(record);
-
   return {
     ...toMoverQuoteItemDto(record),
     requestId: record.moveRequest.id,
