@@ -1,12 +1,14 @@
 /**
- * 고객이 받은 대기 견적 목록·상세 endpoint와 guard 순서를 선언합니다.
- * history 경로를 추가할 때는 /history를 /:quoteId보다 먼저 등록해야 합니다.
+ * 고객이 받은 대기·과거 견적 목록·상세 endpoint와 guard 순서를 선언합니다.
+ * /history를 /:quoteId보다 먼저 등록해야 history가 quoteId로 파싱되지 않습니다.
  */
 import { Router } from "express";
 
 import { requireProfiledCustomer } from "../../common/middleware/auth/auth-guards";
 import {
   getReceivedQuoteDetailController,
+  getReceivedQuoteHistoryDetailController,
+  listReceivedQuoteHistoryController,
   listReceivedQuotesController,
 } from "./customer-quote.controller";
 
@@ -156,6 +158,82 @@ customerQuoteRouter.get(
   "/",
   ...requireProfiledCustomer,
   listReceivedQuotesController,
+);
+
+/**
+ * @openapi
+ * /customers/me/quotes/history:
+ *   get:
+ *     tags: [Quotes]
+ *     summary: Get Received Quotes History
+ *     description: 내가 확정한 견적 목록을 조회합니다. Quote status는 CONFIRMED이며 요청 상태는 CONFIRMED 또는 COMPLETED입니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: keyword
+ *         schema: { type: string, maxLength: 50 }
+ *         description: 기사님 닉네임 검색
+ *       - in: query
+ *         name: serviceType
+ *         schema: { $ref: "#/components/schemas/ServiceType" }
+ *       - in: query
+ *         name: moveRequestStatus
+ *         schema: { type: string, enum: [CONFIRMED, COMPLETED] }
+ *         description: 진행 중 확정 또는 이사 완료만 조회
+ *       - in: query
+ *         name: sort
+ *         schema: { type: string, enum: [UPDATED_AT_DESC, MOVE_DATE_DESC], default: UPDATED_AT_DESC }
+ *         description: 기본값은 확정 시각 최신순입니다.
+ *       - in: query
+ *         name: cursor
+ *         schema: { type: string }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+ *     responses:
+ *       200:
+ *         description: 과거 확정 견적 카드 목록
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ReceivedQuotesResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       403: { $ref: "#/components/responses/Forbidden" }
+ */
+customerQuoteRouter.get(
+  "/history",
+  ...requireProfiledCustomer,
+  listReceivedQuoteHistoryController,
+);
+
+/**
+ * @openapi
+ * /customers/me/quotes/history/{quoteId}:
+ *   get:
+ *     tags: [Quotes]
+ *     summary: Get Received Quotes History Details
+ *     description: 내가 확정한 과거 견적 상세를 조회합니다. 대기 견적 ID를 이 URI로 조회하면 QUOTE_NOT_FOUND입니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: quoteId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: 확정 견적 상세
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ReceivedQuoteDetailResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       403: { $ref: "#/components/responses/Forbidden" }
+ *       404: { $ref: "#/components/responses/NotFound" }
+ */
+customerQuoteRouter.get(
+  "/history/:quoteId",
+  ...requireProfiledCustomer,
+  getReceivedQuoteHistoryDetailController,
 );
 
 /**
