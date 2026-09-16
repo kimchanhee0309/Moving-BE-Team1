@@ -52,6 +52,22 @@ describe("Mover search query validator", () => {
     }
   });
 
+  test("page가 상한을 넘으면 VALIDATION_ERROR를 반환한다", () => {
+    expect.assertions(2);
+
+    try {
+      parseMoverSearchQuery({ page: "1001" });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.details).toEqual([
+          { field: "page", reason: "1 이상 1000 이하의 정수여야 합니다." },
+        ]);
+      }
+    }
+  });
+
   test("허용되지 않은 정렬과 지역을 거절한다", () => {
     expect.assertions(2);
 

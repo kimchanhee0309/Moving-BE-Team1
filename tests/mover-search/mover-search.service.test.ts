@@ -155,4 +155,29 @@ describe("listMovers", () => {
     expect(result.items[0]?.serviceType).toBe("OFFICE");
     expect(result.items[0]?.region).toBe("부산");
   });
+
+  test("인식 가능한 서비스·지역이 없으면 SMALL이나 빈 지역을 넣지 않는다", async () => {
+    // 목록 where는 이런 mover를 totalCount에서 제외합니다.
+    // 카드 매핑은 폴백 값을 만들지 않는 방어입니다.
+    jest.mocked(findFilteredMoverSortRows).mockResolvedValue([
+      { id: moverA, careerYears: 3 },
+    ]);
+    jest.mocked(findMoverSearchAggregates).mockResolvedValue({
+      reviewCountByMoverId: new Map(),
+      ratingByMoverId: new Map(),
+      favoriteCountByMoverId: new Map(),
+      confirmedCountByMoverId: new Map(),
+    });
+    jest.mocked(findMoverSearchCardsByIds).mockResolvedValue([
+      createCard(moverA, {
+        serviceTypes: [],
+        regions: [{ region: { name: "UNKNOWN" } }],
+      }),
+    ]);
+
+    const result = await listMovers(defaultQuery);
+
+    expect(result.items).toEqual([]);
+    expect(result.totalCount).toBe(1);
+  });
 });

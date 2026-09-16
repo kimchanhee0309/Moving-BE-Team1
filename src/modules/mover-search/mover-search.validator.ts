@@ -4,6 +4,7 @@ import { parseWithZod } from "../../common/validation/zod-parser";
 import {
   DEFAULT_MOVER_SEARCH_PAGE_SIZE,
   MAX_MOVER_SEARCH_LENGTH,
+  MAX_MOVER_SEARCH_PAGE,
   MAX_MOVER_SEARCH_PAGE_SIZE,
   MOVER_REGIONS,
   MOVER_SEARCH_SORTS,
@@ -161,19 +162,7 @@ function parsePositiveInteger(
 }
 
 const pageSchema = optionalQueryStringSchema.transform((value, ctx) => {
-  if (value === undefined || value === "") {
-    return 1;
-  }
-
-  if (!/^[1-9]\d*$/.test(value)) {
-    ctx.addIssue({
-      code: "custom",
-      message: "1 이상의 정수여야 합니다.",
-    });
-    return z.NEVER;
-  }
-
-  return Number(value);
+  return parsePositiveInteger(value, 1, 1, MAX_MOVER_SEARCH_PAGE, ctx);
 });
 
 const pageSizeSchema = optionalQueryStringSchema.transform((value, ctx) => {

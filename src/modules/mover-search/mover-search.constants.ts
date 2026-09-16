@@ -73,7 +73,12 @@ export const DEFAULT_MOVER_SEARCH_PAGE_SIZE = 5;
 
 export const MAX_MOVER_SEARCH_PAGE_SIZE = 20;
 
+/** page 오프셋 폭주를 막기 위한 상한. 목록 전체 조회량과는 별개입니다. */
+export const MAX_MOVER_SEARCH_PAGE = 1000;
+
 export const MAX_MOVER_SEARCH_LENGTH = 50;
+
+export const REGION_DB_NAMES = Object.values(REGION_TO_DB_NAME);
 
 export type MoverServiceType = (typeof MOVER_SERVICE_TYPES)[number];
 export type MoverRegion = (typeof MOVER_REGIONS)[number];

@@ -46,7 +46,7 @@ export const moverSearchRouter = Router();
  *   get:
  *     tags: [Movers]
  *     summary: List Movers
- *     description: 비회원도 기사님 목록을 조회합니다. 찜 여부·리뷰 본문은 포함하지 않습니다.
+ *     description: 비회원도 기사님 목록을 조회합니다. 인식 가능한 서비스 유형과 가능 지역이 있는 기사님만 포함하며, 찜 여부·리뷰 본문은 포함하지 않습니다.
  *     parameters:
  *       - in: query
  *         name: search
@@ -66,7 +66,7 @@ export const moverSearchRouter = Router();
  *         description: 내림차순 정렬. 동점이면 id 오름차순
  *       - in: query
  *         name: page
- *         schema: { type: integer, minimum: 1, default: 1 }
+ *         schema: { type: integer, minimum: 1, maximum: 1000, default: 1 }
  *       - in: query
  *         name: pageSize
  *         schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
