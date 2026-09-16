@@ -19,6 +19,10 @@ jest.mock("../../src/common/cookies/auth-cookie", () => ({
   setAuthCookies: jest.fn(),
 }));
 
+jest.mock("../../src/common/utils/auth-context", () => ({
+  getAuthContext: jest.fn(),
+}));
+
 import type { NextFunction, Request, Response } from "express";
 
 import {
@@ -26,6 +30,7 @@ import {
   getRefreshTokenFromCookie,
   setAuthCookies,
 } from "../../src/common/cookies/auth-cookie";
+import { getAuthContext } from "../../src/common/utils/auth-context";
 import {
   loginController,
   logoutController,
@@ -99,15 +104,19 @@ describe("Auth controller response contract", () => {
   });
 
   test("현재 사용자 조회는 data.user 형식을 사용한다", async () => {
+    const request = { auth: { userId: "user-id", role: "CUSTOMER" } } as Request;
+    jest.mocked(getAuthContext).mockReturnValue(request.auth!);
     jest.mocked(getCurrentUser).mockResolvedValue(user);
     const response = createResponse();
 
     await meController(
-      { auth: { userId: "user-id", role: "CUSTOMER" } } as Request,
+      request,
       response,
       jest.fn() as NextFunction,
     );
 
+    expect(getAuthContext).toHaveBeenCalledWith(request);
+    expect(getCurrentUser).toHaveBeenCalledWith("user-id");
     expect(response.json).toHaveBeenCalledWith({ success: true, data: { user } });
   });
 

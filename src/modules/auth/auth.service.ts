@@ -4,33 +4,29 @@
  */
 import { ConflictError, UnauthorizedError } from "../../common/errors/app-error";
 import { createAuthTokens, verifyToken } from "../../common/utils/auth-token";
-import type { AuthResult, AuthUserDto, LoginInput, SignUpInput } from "./auth.dto";
+import type {
+  AuthResult,
+  AuthUserDto,
+  LoginRequestDto,
+  SignUpRequestDto,
+} from "./auth.dto";
+import { toAuthUserDto } from "./auth.mapper";
 import {
   createEmailUser,
   findUserByEmail,
   findUserById,
   findUserByPhone,
-  type AuthUserRecord,
 } from "./auth.repository";
 import { hashPassword, verifyPassword } from "./password";
 
-/** Repository User에서 인증 비밀 필드를 제거하고 역할별 profile 상태를 계산합니다. */
-export function toAuthUserDto(user: AuthUserRecord): AuthUserDto {
-  const profileCompleted =
-    user.role === "CUSTOMER" ? user.customer !== null : user.mover !== null;
-
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    phone: user.phone,
-    role: user.role,
-    profileCompleted,
-  };
-}
-
-/** 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다. */
-export async function signUp(input: SignUpInput): Promise<AuthResult> {
+/**
+ * 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다.
+ * @param input Validator가 정규화한 회원가입 요청 DTO
+ * @returns 공개 사용자와 cookie 설정용 Access/Refresh Token
+ * @throws 이메일·전화번호 중복 시 각각 EMAIL_ALREADY_EXISTS, PHONE_ALREADY_EXISTS
+ * @remarks User를 생성하며 역할 profile과 cookie는 생성하지 않습니다.
+ */
+export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
   const [emailUser, phoneUser] = await Promise.all([
     findUserByEmail(input.email),
     findUserByPhone(input.phone),
@@ -59,8 +55,14 @@ export async function signUp(input: SignUpInput): Promise<AuthResult> {
   };
 }
 
-/** 계정 존재·비밀번호·역할 실패를 하나의 오류로 처리하고 인증 토큰을 발급합니다. */
-export async function login(input: LoginInput): Promise<AuthResult> {
+/**
+ * 계정 존재·비밀번호·역할을 확인하고 인증 토큰을 발급합니다.
+ * @param input Validator가 정규화한 로그인 요청 DTO
+ * @returns 공개 사용자와 cookie 설정용 Access/Refresh Token
+ * @throws 세 자격 증명 중 하나라도 실패하면 동일한 INVALID_CREDENTIALS
+ * @remarks DB를 변경하지 않으며 cookie 설정은 Controller가 담당합니다.
+ */
+export async function login(input: LoginRequestDto): Promise<AuthResult> {
   const user = await findUserByEmail(input.email);
   const isPasswordValid =
     user?.passwordHash !== null && user?.passwordHash !== undefined

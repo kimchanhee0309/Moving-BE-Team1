@@ -5,7 +5,7 @@
 import { z } from "zod";
 
 import { parseWithZod } from "../../common/validation/zod-parser";
-import type { LoginInput, SignUpInput } from "./auth.dto";
+import type { LoginRequestDto, SignUpRequestDto } from "./auth.dto";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^01[016789]\d{7,8}$/;
@@ -61,12 +61,24 @@ const loginSchema = z
   })
   .strict();
 
-/** 회원가입 필수값과 길이·형식을 검증하고 이메일과 전화번호를 정규화합니다. */
-export function parseSignUpInput(value: unknown): SignUpInput {
+/**
+ * 회원가입 필수값과 길이·형식을 검증하고 이메일과 전화번호를 정규화합니다.
+ * @param value Express가 전달한 신뢰하지 않는 요청 Body
+ * @returns Service가 사용할 검증된 회원가입 요청 DTO
+ * @throws 형식·필수값·허용 필드 검증 실패 시 VALIDATION_ERROR
+ * @remarks DB·cookie·token을 변경하지 않습니다.
+ */
+export function parseSignUpInput(value: unknown): SignUpRequestDto {
   return parseWithZod(signUpSchema, value, { fallbackField: "body" });
 }
 
-/** 로그인 입력을 검증하며 계정 존재 여부와 무관하게 동일한 형식 오류만 반환합니다. */
-export function parseLoginInput(value: unknown): LoginInput {
+/**
+ * 로그인 입력 형식만 검증하며 계정 존재 여부는 조회하지 않습니다.
+ * @param value Express가 전달한 신뢰하지 않는 요청 Body
+ * @returns 이메일이 정규화된 로그인 요청 DTO
+ * @throws 형식·필수값·허용 필드 검증 실패 시 VALIDATION_ERROR
+ * @remarks DB·cookie·token을 변경하지 않습니다.
+ */
+export function parseLoginInput(value: unknown): LoginRequestDto {
   return parseWithZod(loginSchema, value, { fallbackField: "body" });
 }

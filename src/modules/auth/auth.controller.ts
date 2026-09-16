@@ -2,7 +2,8 @@
  * Auth Router의 HTTP 입력을 DTO로 변환하고 Service 결과를 공통 응답과 쿠키로 전달합니다.
  * 비밀번호 검증, DB 조회, JWT 정책은 각각 Validator와 Service에 위임합니다.
  */
-import type { Request, RequestHandler } from "express";
+import type { RequestHandler } from "express";
+import type { ParamsDictionary } from "express-serve-static-core";
 
 import {
   clearAuthCookies,
@@ -12,19 +13,15 @@ import {
 import { UnauthorizedError } from "../../common/errors/app-error";
 import { HTTP_STATUS } from "../../common/constants/http-status";
 import { sendSuccess } from "../../common/response/api-response";
+import { getAuthContext } from "../../common/utils/auth-context";
 import { getCurrentUser, login, refreshAuth, signUp } from "./auth.service";
 import { parseLoginInput, parseSignUpInput } from "./auth.validator";
 
-function getAuthenticatedUserId(request: Request): string {
-  if (!request.auth) {
-    throw new UnauthorizedError("로그인이 필요합니다.", "ACCESS_TOKEN_MISSING");
-  }
-
-  return request.auth.userId;
-}
+/** Express가 파싱한 외부 body를 Validator 전까지 신뢰하지 않는 Auth Controller 계약입니다. */
+type UnknownBodyRequestHandler = RequestHandler<ParamsDictionary, unknown, unknown>;
 
 /** 회원가입 요청을 검증하고 사용자를 생성한 뒤 인증 쿠키와 data.user를 201로 반환합니다. */
-export const signUpController: RequestHandler = async (request, response) => {
+export const signUpController: UnknownBodyRequestHandler = async (request, response) => {
   const input = parseSignUpInput(request.body);
   const result = await signUp(input);
 
@@ -34,7 +31,7 @@ export const signUpController: RequestHandler = async (request, response) => {
 };
 
 /** 자격 증명을 검증하고 Access/Refresh Token을 HttpOnly 쿠키로 발급합니다. */
-export const loginController: RequestHandler = async (request, response) => {
+export const loginController: UnknownBodyRequestHandler = async (request, response) => {
   const input = parseLoginInput(request.body);
   const result = await login(input);
 
@@ -45,7 +42,8 @@ export const loginController: RequestHandler = async (request, response) => {
 
 /** Access Token으로 식별된 사용자의 최신 정보와 profileCompleted를 반환합니다. */
 export const meController: RequestHandler = async (request, response) => {
-  const user = await getCurrentUser(getAuthenticatedUserId(request));
+  const { userId } = getAuthContext(request);
+  const user = await getCurrentUser(userId);
 
   return sendSuccess(response, HTTP_STATUS.OK, { user });
 };
