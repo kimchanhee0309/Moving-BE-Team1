@@ -31,8 +31,11 @@ const emailSchema = z
 
 const phoneSchema = z
   .string({ error: "전화번호 형식이 올바르지 않습니다." })
+  .nullable()
   .transform((value) =>
-    value.trim() === "" ? null : value.replace(/[-\s]/g, ""),
+    value === null || value.trim() === ""
+      ? null
+      : value.replace(/[-\s]/g, ""),
   )
   .refine(
     (value) => value === null || KOREAN_MOBILE_PATTERN.test(value),

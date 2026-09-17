@@ -21,6 +21,12 @@ describe("Mover My Page validator", () => {
     });
   });
 
+  test("명시적인 null 전화번호를 허용한다", () => {
+    expect(parseUpdateMoverBasicInfoRequest({ phone: null })).toEqual({
+      phone: null,
+    });
+  });
+
   test("빈 PATCH를 거절한다", () => {
     expect(() => parseUpdateMoverBasicInfoRequest({})).toThrow(
       expect.objectContaining({
