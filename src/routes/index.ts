@@ -11,6 +11,7 @@ import { customerProfileRouter } from "../modules/customer-profile/customer-prof
 import { customerQuoteRouter } from "../modules/customer-quote/customer-quote.router";
 import { favoriteRouter } from "../modules/favorite/favorite.router";
 import { moveRequestRouter } from "../modules/move-request/move-request.router";
+import { moverMyPageRouter } from "../modules/mover-mypage/mover-mypage.router";
 import { moverProfileRouter } from "../modules/mover-profile/mover-profile.router";
 import { moverQuoteRouter } from "../modules/mover-quote/mover-quote.router";
 import { moverRequestRouter } from "../modules/mover-request/mover-request.router";
@@ -29,6 +30,7 @@ apiRouter.use("/auth", authRouter);
 apiRouter.use("/customers/me/quotes", customerQuoteRouter);
 apiRouter.use("/customers", customerProfileRouter);
 apiRouter.use("/customers", customerReviewRouter);
+apiRouter.use("/movers/me", moverMyPageRouter);
 apiRouter.use("/movers", moverSearchRouter);
 apiRouter.use("/movers", moverReviewRouter);
 apiRouter.use("/reviews", reviewRouter);
