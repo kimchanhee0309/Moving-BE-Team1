@@ -2,7 +2,10 @@
  * 기사님 찾기 목록 query가 기본값을 채우고 잘못된 필드를 details로 거절하는지 검증합니다.
  */
 import { BadRequestError } from "../../src/common/errors/app-error";
-import { parseMoverSearchQuery } from "../../src/modules/mover-search/mover-search.validator";
+import {
+  parseMoverSearchIdParams,
+  parseMoverSearchQuery,
+} from "../../src/modules/mover-search/mover-search.validator";
 
 describe("Mover search query validator", () => {
   test("비어 있는 query는 reviewCount 정렬과 pageSize 5를 사용한다", () => {
@@ -107,6 +110,32 @@ describe("Mover search query validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
           { field: "regions", reason: "하나의 값만 허용합니다." },
+        ]);
+      }
+    }
+  });
+});
+
+describe("parseMoverSearchIdParams", () => {
+  test("UUID 경로 파라미터를 정규화한다", () => {
+    expect(
+      parseMoverSearchIdParams({
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).toEqual({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+  });
+
+  test("me처럼 UUID가 아니면 VALIDATION_ERROR를 반환한다", () => {
+    expect.assertions(2);
+
+    try {
+      parseMoverSearchIdParams({ id: "me" });
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(BadRequestError);
+
+      if (error instanceof BadRequestError) {
+        expect(error.details).toEqual([
+          { field: "id", reason: "UUID 형식이어야 합니다." },
         ]);
       }
     }

@@ -2,14 +2,17 @@
  * 찜 여부·리뷰 본문·지정 견적은 해당 담당 API가 생긴 뒤 연결합니다.
  * 목록 카드의 대표 서비스·지역은 실제 보유 값만 쓰고, 없으면 카드를 제외합니다.
  */
+import { NotFoundError } from "../../common/errors/app-error";
 import {
   DB_NAME_TO_REGION,
   MOVER_REGIONS,
   SERVICE_TYPE_PRIORITY,
   isMoverServiceType,
+  type MoverRegion,
   type MoverServiceType,
 } from "./mover-search.constants";
 import type {
+  MoverSearchDetailDto,
   MoverSearchItemDto,
   MoverSearchListResult,
   MoverSearchQuery,
@@ -17,6 +20,7 @@ import type {
 import {
   findFilteredMoverSortRows,
   findMoverSearchAggregates,
+  findMoverSearchCardById,
   findMoverSearchCardsByIds,
   type MoverSearchAggregates,
   type MoverSearchCardRecord,
@@ -68,29 +72,12 @@ function compareRankedMovers(
   return left.id.localeCompare(right.id);
 }
 
-/**
- * 보유 서비스 중 화면 우선순위가 가장 높은 값을 고릅니다.
- * 인식 가능한 값이 없으면 SMALL을 만들지 않고 카드를 제외합니다.
- */
-function pickRepresentativeServiceType(
-  names: string[],
-): MoverServiceType | undefined {
-  const owned = names.filter(isMoverServiceType);
-
-  for (const candidate of SERVICE_TYPE_PRIORITY) {
-    if (owned.includes(candidate)) {
-      return candidate;
-    }
-  }
-
-  return undefined;
+function listOwnedServiceTypes(names: string[]): MoverServiceType[] {
+  const owned = new Set(names.filter(isMoverServiceType));
+  return SERVICE_TYPE_PRIORITY.filter((serviceType) => owned.has(serviceType));
 }
 
-/**
- * 보유 지역 중 화면 순서상 앞선 값을 고릅니다.
- * 매핑되지 않은 이름만 있으면 빈 문자열 대신 카드를 제외합니다.
- */
-function pickRepresentativeRegion(dbNames: string[]): string | undefined {
+function listOwnedRegions(dbNames: string[]): MoverRegion[] {
   const owned = new Set(
     dbNames.flatMap((name) => {
       const region = DB_NAME_TO_REGION[name];
@@ -98,13 +85,17 @@ function pickRepresentativeRegion(dbNames: string[]): string | undefined {
     }),
   );
 
-  for (const region of MOVER_REGIONS) {
-    if (owned.has(region)) {
-      return region;
-    }
-  }
+  return MOVER_REGIONS.filter((region) => owned.has(region));
+}
 
-  return undefined;
+function pickRepresentativeServiceType(
+  names: string[],
+): MoverServiceType | undefined {
+  return listOwnedServiceTypes(names)[0];
+}
+
+function pickRepresentativeRegion(dbNames: string[]): string | undefined {
+  return listOwnedRegions(dbNames)[0];
 }
 
 function toMoverSearchItem(
@@ -138,10 +129,26 @@ function toMoverSearchItem(
   };
 }
 
+function toMoverSearchDetail(
+  record: MoverSearchCardRecord,
+  ranked: RankedMover,
+): MoverSearchDetailDto | undefined {
+  const item = toMoverSearchItem(record, ranked);
+
+  if (!item) {
+    return undefined;
+  }
+
+  return {
+    ...item,
+    serviceTypes: listOwnedServiceTypes(
+      record.serviceTypes.map((entry) => entry.serviceType.name),
+    ),
+    regions: listOwnedRegions(record.regions.map((entry) => entry.region.name)),
+  };
+}
+
 /**
- * 필터된 기사님을 집계·정렬한 뒤 현재 페이지 카드 DTO를 만듭니다.
- *
- * @param query 검증된 찾기 목록 query
  * @returns items, nextPage, totalCount. totalCount는 서비스·지역이 있는 mover 기준입니다.
  */
 export async function listMovers(
@@ -180,4 +187,27 @@ export async function listMovers(
     nextPage: hasNext ? query.page + 1 : null,
     totalCount: ranked.length,
   };
+}
+
+export async function getMoverById(
+  moverId: string,
+): Promise<MoverSearchDetailDto> {
+  const record = await findMoverSearchCardById(moverId);
+
+  if (!record) {
+    throw new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND");
+  }
+
+  const aggregates = await findMoverSearchAggregates([moverId]);
+  const ranked = toRankedMover(
+    { id: record.id, careerYears: record.careerYears },
+    aggregates,
+  );
+  const mover = toMoverSearchDetail(record, ranked);
+
+  if (!mover) {
+    throw new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND");
+  }
+
+  return mover;
 }

@@ -1,6 +1,4 @@
 /**
- * 기사님 찾기 목록의 Prisma 조회를 담당합니다.
- * 필터·검색 대상 선정만 하며 정렬·페이지 계산은 Service가 합니다.
  * 스키마에 서비스·지역 최소 개수 제약이 없어, 검색에서는 인식 가능한
  * 관계가 있는 mover만 포함해 totalCount와 페이지에 반영합니다.
  */
@@ -37,9 +35,6 @@ export interface MoverSearchAggregates {
 }
 
 /**
- * 목록 필터를 Prisma where로 만듭니다.
- *
- * @param query 검증된 찾기 목록 query
  * @returns 인식 가능한 서비스·지역이 있는 mover만 남기는 조건
  */
 export function createMoverSearchWhere(
@@ -87,12 +82,8 @@ export function createMoverSearchWhere(
 }
 
 /**
- * 집계 정렬에 필요한 id·경력을 모읍니다.
  * take로 자르면 리뷰·평점 정렬이 현재 페이지 데이터만 기준으로 틀어지므로
  * 필터된 행을 모두 가져오고, 데이터 증가 시 집계 컬럼·DB 정렬을 후속으로 둡니다.
- *
- * @param query 검증된 찾기 목록 query
- * @returns 필터된 mover의 id와 경력. 정렬·페이지는 Service가 계산합니다.
  */
 export function findFilteredMoverSortRows(
   query: MoverSearchQuery,
@@ -188,4 +179,11 @@ export function findMoverSearchCardsByIds(
       },
     },
   });
+}
+
+export async function findMoverSearchCardById(
+  moverId: string,
+): Promise<MoverSearchCardRecord | null> {
+  const cards = await findMoverSearchCardsByIds([moverId]);
+  return cards[0] ?? null;
 }

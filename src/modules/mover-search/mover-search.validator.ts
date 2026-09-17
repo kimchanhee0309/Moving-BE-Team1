@@ -13,7 +13,10 @@ import {
   isMoverSearchSort,
   isMoverServiceType,
 } from "./mover-search.constants";
-import type { MoverSearchQuery } from "./mover-search.dto";
+import type { MoverSearchIdParams, MoverSearchQuery } from "./mover-search.dto";
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const optionalQueryStringSchema = z.unknown().transform((value, ctx) => {
   if (value === undefined) {
@@ -197,4 +200,20 @@ export function parseMoverSearchQuery(value: unknown): MoverSearchQuery {
     page: query.page,
     pageSize: query.pageSize,
   };
+}
+
+const moverSearchIdParamsSchema = z
+  .object({
+    id: z
+      .string({ error: "필수 UUID 값입니다." })
+      .trim()
+      .min(1, { error: "필수 UUID 값입니다." })
+      .regex(UUID_PATTERN, { error: "UUID 형식이어야 합니다." }),
+  })
+  .strip();
+
+export function parseMoverSearchIdParams(value: unknown): MoverSearchIdParams {
+  return parseWithZod(moverSearchIdParamsSchema, value, {
+    fallbackField: "id",
+  });
 }

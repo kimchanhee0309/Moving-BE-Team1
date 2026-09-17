@@ -13,7 +13,7 @@ export interface MoverSearchQuery {
   pageSize: number;
 }
 
-/** 상세의 다중 서비스·지역과 찜 여부는 다음 작업 범위입니다. */
+/** 목록 카드. 찜 여부·리뷰 본문은 해당 담당 API 범위입니다. */
 export interface MoverSearchItemDto {
   id: string;
   serviceType: MoverServiceType;
@@ -33,4 +33,13 @@ export interface MoverSearchListResult {
   items: MoverSearchItemDto[];
   nextPage: number | null;
   totalCount: number;
+}
+
+export interface MoverSearchIdParams {
+  id: string;
+}
+
+export interface MoverSearchDetailDto extends MoverSearchItemDto {
+  serviceTypes: MoverServiceType[];
+  regions: MoverRegion[];
 }

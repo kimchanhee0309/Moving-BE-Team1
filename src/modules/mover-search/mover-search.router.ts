@@ -1,6 +1,9 @@
 import { Router } from "express";
 
-import { listMoversController } from "./mover-search.controller";
+import {
+  getMoverByIdController,
+  listMoversController,
+} from "./mover-search.controller";
 
 export const moverSearchRouter = Router();
 
@@ -24,6 +27,20 @@ export const moverSearchRouter = Router();
  *         careerYears: { type: integer, example: 8 }
  *         confirmedCount: { type: integer, example: 1, description: "CONFIRMED 견적 수" }
  *         favoriteCount: { type: integer, example: 4 }
+ *     MoverSearchDetail:
+ *       allOf:
+ *         - $ref: "#/components/schemas/MoverSearchItem"
+ *         - type: object
+ *           required: [serviceTypes, regions]
+ *           properties:
+ *             serviceTypes:
+ *               type: array
+ *               items: { $ref: "#/components/schemas/ServiceType" }
+ *               example: [SMALL, HOME]
+ *             regions:
+ *               type: array
+ *               items: { type: string, example: "서울" }
+ *               description: 보유 지역 전체. 한글 시·도이며 목록 필터와 같은 값입니다.
  *     MoverSearchListResponse:
  *       type: object
  *       required: [success, data]
@@ -38,6 +55,16 @@ export const moverSearchRouter = Router();
  *               items: { $ref: "#/components/schemas/MoverSearchItem" }
  *             nextPage: { type: integer, nullable: true, example: 2, description: "다음 page. 없으면 null" }
  *             totalCount: { type: integer, example: 10 }
+ *     MoverSearchDetailResponse:
+ *       type: object
+ *       required: [success, data]
+ *       properties:
+ *         success: { type: boolean, example: true }
+ *         data:
+ *           type: object
+ *           required: [mover]
+ *           properties:
+ *             mover: { $ref: "#/components/schemas/MoverSearchDetail" }
  */
 
 /**
@@ -79,3 +106,27 @@ export const moverSearchRouter = Router();
  *       400: { $ref: "#/components/responses/BadRequest" }
  */
 moverSearchRouter.get("/", listMoversController);
+
+/**
+ * @openapi
+ * /movers/{id}:
+ *   get:
+ *     tags: [Movers]
+ *     summary: Get Mover
+ *     description: 비회원도 기사님 상세를 조회합니다. 인식 가능한 서비스 유형과 가능 지역이 있는 기사님만 반환하며, 찜 여부·리뷰 본문은 포함하지 않습니다.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *         description: Prisma Mover.id. User.id가 아닙니다.
+ *     responses:
+ *       200:
+ *         description: 기사님 찾기 상세
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/MoverSearchDetailResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       404: { $ref: "#/components/responses/NotFound" }
+ */
+moverSearchRouter.get("/:id", getMoverByIdController);
