@@ -1,11 +1,12 @@
 /**
- * Customer Profile 이미지가 확장자 문자열이 아니라 실제 JPEG·PNG·WebP signature로 검증되는지 확인합니다.
+ * Customer Profile 이미지가 확장자 문자열이 아니라 실제 JPEG·PNG·WebP 디코딩으로 검증되는지 확인합니다.
  * 임시 폴더만 사용하고 테스트 종료 후 생성 파일을 모두 제거합니다.
  */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import sharp from "sharp";
 
 import { BadRequestError } from "../../src/common/errors/app-error";
 import {
@@ -41,12 +42,18 @@ describe("Customer Profile image", () => {
     await rm(temporaryDirectory, { recursive: true, force: true });
   });
 
-  test("PNG signature가 맞는 파일과 공개 상대 URL을 허용한다", async () => {
+  test("전체 디코딩 가능한 PNG와 공개 상대 URL을 허용한다", async () => {
     const filePath = path.join(temporaryDirectory, "00000000-0000-0000-0000-000000000000.png");
-    await writeFile(
-      filePath,
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    );
+    await sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 4,
+        background: { r: 20, g: 40, b: 60, alpha: 1 },
+      },
+    })
+      .png()
+      .toFile(filePath);
     const file = createMulterFile(filePath, "image/png");
 
     await expect(validateUploadedProfileImage(file)).resolves.toBeUndefined();
@@ -55,7 +62,7 @@ describe("Customer Profile image", () => {
     );
   });
 
-  test("MIME만 image/jpeg이고 실제 signature가 다른 파일을 거절한다", async () => {
+  test("MIME만 image/jpeg이고 실제 디코딩할 수 없는 파일을 거절한다", async () => {
     const filePath = path.join(temporaryDirectory, "00000000-0000-0000-0000-000000000000.jpg");
     await writeFile(filePath, Buffer.from("not-an-image"));
     const file = createMulterFile(filePath, "image/jpeg");

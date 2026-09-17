@@ -7,7 +7,7 @@ coverage/
 src/generated/
 
 # local uploads (development only; production storage will use S3)
-uploads/
+/uploads/
 
 # environment
 .env
