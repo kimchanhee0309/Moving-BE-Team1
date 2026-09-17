@@ -250,4 +250,29 @@ describe("Mover Profile service", () => {
 
     expect(removeReplacedMoverProfileImage).not.toHaveBeenCalled();
   });
+
+  test("저장 결과의 기준 데이터가 잘못되면 transaction 안에서 거절하고 이전 이미지를 보존한다", async () => {
+    const invalidSavedProfile = {
+      ...moverProfile,
+      profileImageUrl:
+        "/uploads/mover-profiles/11111111-1111-1111-1111-111111111111.png",
+      serviceTypes: [
+        { serviceType: { id: "service-legacy", name: "LEGACY" } },
+      ],
+    } satisfies MoverProfileRecord;
+    jest.mocked(findMoverProfileByIdInTransaction)
+      .mockResolvedValueOnce(moverProfile)
+      .mockResolvedValueOnce(invalidSavedProfile);
+
+    await expect(
+      updateMoverProfile("mover-id", {
+        profileImageUrl: invalidSavedProfile.profileImageUrl ?? undefined,
+      }),
+    ).rejects.toMatchObject({
+      code: "PROFILE_REFERENCE_DATA_NOT_FOUND",
+      status: 409,
+    });
+
+    expect(removeReplacedMoverProfileImage).not.toHaveBeenCalled();
+  });
 });

@@ -206,7 +206,7 @@ export async function createMoverProfile(
   input: CreateMoverProfileRequestDto,
 ): Promise<MoverProfileResponseDto> {
   try {
-    const profile = await runMoverProfileTransaction(async (transaction) => {
+    return await runMoverProfileTransaction(async (transaction) => {
       const user = await findUserForMoverProfileCreation(transaction, userId);
 
       if (!user) {
@@ -251,7 +251,7 @@ export async function createMoverProfile(
         );
       }
 
-      return createMoverProfileRecord(transaction, {
+      const createdProfile = await createMoverProfileRecord(transaction, {
         userId,
         profileImageUrl: input.profileImageUrl,
         nickname: input.nickname,
@@ -261,9 +261,11 @@ export async function createMoverProfile(
         serviceTypeIds: references.serviceTypeIds,
         regionIds: references.regionIds,
       });
-    });
 
-    return toMoverProfileResponseDto(profile);
+      // 공개 DTO 변환까지 transaction 안에서 끝내 기준 데이터 오류가 쓰기 커밋 뒤에
+      // 발생하지 않게 하며, Controller가 삭제한 신규 이미지를 DB가 참조하는 상황을 막습니다.
+      return toMoverProfileResponseDto(createdProfile);
+    });
   } catch (error: unknown) {
     convertMoverUniqueConstraintError(error);
   }
@@ -362,7 +364,8 @@ export async function updateMoverProfile(
       }
 
       return {
-        profile: savedProfile,
+        // 변환 실패도 transaction 실패로 처리해야 DB와 신규 이미지 정리 상태가 어긋나지 않습니다.
+        profile: toMoverProfileResponseDto(savedProfile),
         previousProfileImageUrl: currentProfile.profileImageUrl,
       };
     });
@@ -374,7 +377,7 @@ export async function updateMoverProfile(
       await removeReplacedMoverProfileImage(result.previousProfileImageUrl);
     }
 
-    return toMoverProfileResponseDto(result.profile);
+    return result.profile;
   } catch (error: unknown) {
     convertMoverUniqueConstraintError(error);
   }

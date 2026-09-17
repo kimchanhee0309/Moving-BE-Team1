@@ -8,6 +8,7 @@ import path from "node:path";
 
 import type { RequestHandler } from "express";
 import multer from "multer";
+import sharp from "sharp";
 
 import { BadRequestError } from "../errors/app-error";
 
@@ -16,6 +17,18 @@ const MIME_EXTENSION: Readonly<Record<string, string>> = {
   "image/png": ".png",
   "image/webp": ".webp",
 };
+
+const MIME_IMAGE_FORMAT: Readonly<Record<string, "jpeg" | "png" | "webp">> = {
+  "image/jpeg": "jpeg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+// 압축 해제 폭탄이 작은 업로드 파일로 과도한 메모리를 사용하지 못하게 실제 픽셀 수도 제한합니다.
+const MAX_PROFILE_IMAGE_PIXELS = 40_000_000;
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
 /** 역할별 로컬 저장소와 공개 URL 계약을 주입하는 설정입니다. */
 export interface LocalProfileImageConfig {
@@ -41,28 +54,36 @@ function normalizePublicUrlPrefix(prefix: string): string {
   return withLeadingSlash.endsWith("/") ? withLeadingSlash : `${withLeadingSlash}/`;
 }
 
-function isExpectedSignature(mimeType: string, bytes: Buffer): boolean {
-  if (mimeType === "image/jpeg") {
-    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  }
-
-  if (mimeType === "image/png") {
-    return (
-      bytes.length >= 8 &&
-      bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-    );
-  }
-
-  return (
-    mimeType === "image/webp" &&
-    bytes.length >= 12 &&
-    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
-    bytes.subarray(8, 12).toString("ascii") === "WEBP"
-  );
-}
-
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function hasPngAnimationControlChunk(bytes: Buffer): boolean {
+  if (
+    bytes.length < PNG_SIGNATURE.length ||
+    !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+  ) {
+    return false;
+  }
+
+  let offset = PNG_SIGNATURE.length;
+
+  while (offset + 12 <= bytes.length) {
+    const dataLength = bytes.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataEnd = typeStart + 4 + dataLength;
+    const chunkEnd = dataEnd + 4;
+
+    if (chunkEnd > bytes.length) return false;
+
+    const chunkType = bytes.subarray(typeStart, typeStart + 4).toString("ascii");
+    if (chunkType === "acTL") return true;
+    if (chunkType === "IEND") return false;
+
+    offset = chunkEnd;
+  }
+
+  return false;
 }
 
 /**
@@ -158,16 +179,69 @@ export function createLocalProfileImageStorage(
     });
   };
 
-  /** MIME 헤더 위조를 막기 위해 저장된 파일의 실제 signature를 확인합니다. */
+  /** 전체 파일을 디코딩해 MIME 위조·손상·애니메이션 이미지와 압축 해제 폭탄을 거절합니다. */
   async function validateUploadedProfileImage(file?: Express.Multer.File): Promise<void> {
     if (!file) return;
 
-    const bytes = await readFile(file.path);
+    const expectedFormat = MIME_IMAGE_FORMAT[file.mimetype];
 
-    if (!isExpectedSignature(file.mimetype, bytes)) {
-      throw new BadRequestError("올바른 이미지 파일이 아닙니다.", "VALIDATION_ERROR", [
-        { field: fieldName, reason: "파일 내용과 이미지 형식이 일치하지 않습니다." },
-      ]);
+    if (!expectedFormat) {
+      throw new BadRequestError(
+        "올바른 이미지 파일이 아닙니다.",
+        "VALIDATION_ERROR",
+        [{ field: fieldName, reason: "지원하지 않는 이미지 형식입니다." }],
+      );
+    }
+
+    try {
+      // Multer의 역할별 크기 제한을 통과한 파일만 메모리로 읽어 Windows 파일 잠금을 피합니다.
+      const imageBytes = await readFile(file.path);
+
+      if (expectedFormat === "png" && hasPngAnimationControlChunk(imageBytes)) {
+        throw new BadRequestError(
+          "애니메이션 이미지는 업로드할 수 없습니다.",
+          "VALIDATION_ERROR",
+          [{ field: fieldName, reason: "정지 이미지만 업로드할 수 있습니다." }],
+        );
+      }
+
+      const metadata = await sharp(imageBytes, {
+        animated: true,
+        failOn: "error",
+        limitInputPixels: MAX_PROFILE_IMAGE_PIXELS,
+      }).metadata();
+
+      if (metadata.format !== expectedFormat) {
+        throw new BadRequestError(
+          "올바른 이미지 파일이 아닙니다.",
+          "VALIDATION_ERROR",
+          [{ field: fieldName, reason: "파일 내용과 이미지 형식이 일치하지 않습니다." }],
+        );
+      }
+
+      if ((metadata.pages ?? 1) > 1) {
+        throw new BadRequestError(
+          "애니메이션 이미지는 업로드할 수 없습니다.",
+          "VALIDATION_ERROR",
+          [{ field: fieldName, reason: "정지 이미지만 업로드할 수 있습니다." }],
+        );
+      }
+
+      // metadata만 읽으면 잘린 픽셀 데이터가 남을 수 있으므로 전체 픽셀을 실제로 디코딩합니다.
+      await sharp(imageBytes, {
+        failOn: "error",
+        limitInputPixels: MAX_PROFILE_IMAGE_PIXELS,
+      })
+        .raw()
+        .toBuffer();
+    } catch (error: unknown) {
+      if (error instanceof BadRequestError) throw error;
+
+      throw new BadRequestError(
+        "올바른 이미지 파일이 아닙니다.",
+        "VALIDATION_ERROR",
+        [{ field: fieldName, reason: "손상되지 않은 정지 이미지를 업로드해 주세요." }],
+      );
     }
   }
 
