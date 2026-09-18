@@ -1,5 +1,5 @@
 /**
- * 받은 견적 대기·과거 목록 query와 상세 path를 Zod로 검증합니다.
+ * 받은 견적 대기·과거 목록 query와 상세·확정 path를 Zod로 검증합니다.
  * HTTP 입력 형식만 책임지며 소유권·상태 필터는 Service와 Repository에 위임합니다.
  */
 import { z } from "zod";

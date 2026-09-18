@@ -2,36 +2,60 @@
  * 받은 견적 목록 Service가 고객 profile 기준으로 매핑·페이지를 만드는지 검증합니다.
  * 실제 DB 대신 Repository를 mock하여 소유권 필터 전달과 DTO 변환만 확인합니다.
  */
+jest.mock("../../src/lib/prisma", () => ({
+  prisma: {
+    $transaction: jest.fn(async (callback: (tx: unknown) => unknown) =>
+      callback({}),
+    ),
+  },
+}));
+
 jest.mock("../../src/modules/customer-quote/customer-quote.repository", () => ({
+  applyQuoteConfirmation: jest.fn(),
+  createQuoteConfirmedNotifications: jest.fn(),
   findMoverReviewAverages: jest.fn(),
+  findOwnedQuoteDetailAfterConfirm: jest.fn(),
+  findOwnedQuoteForConfirm: jest.fn(),
   findReceivedQuoteDetail: jest.fn(),
   findReceivedQuoteHistory: jest.fn(),
   findReceivedQuoteHistoryDetail: jest.fn(),
   findReceivedQuotes: jest.fn(),
+  lockMoveRequestForConfirm: jest.fn(),
 }));
 
 import {
   decodeReceivedQuoteCursor,
   decodeReceivedQuoteHistoryCursor,
 } from "../../src/modules/customer-quote/customer-quote.cursor";
-import { NotFoundError } from "../../src/common/errors/app-error";
+import {
+  BadRequestError,
+  NotFoundError,
+} from "../../src/common/errors/app-error";
 import type {
+  OwnedQuoteForConfirm,
   ReceivedQuoteDetailRecord,
   ReceivedQuoteRecord,
 } from "../../src/modules/customer-quote/customer-quote.repository";
 import {
+  applyQuoteConfirmation,
+  createQuoteConfirmedNotifications,
   findMoverReviewAverages,
+  findOwnedQuoteDetailAfterConfirm,
+  findOwnedQuoteForConfirm,
   findReceivedQuoteDetail,
   findReceivedQuoteHistory,
   findReceivedQuoteHistoryDetail,
   findReceivedQuotes,
+  lockMoveRequestForConfirm,
 } from "../../src/modules/customer-quote/customer-quote.repository";
 import {
+  confirmReceivedQuote,
   getReceivedQuoteDetail,
   getReceivedQuoteHistoryDetail,
   listReceivedQuoteHistory,
   listReceivedQuotes,
 } from "../../src/modules/customer-quote/customer-quote.service";
+import { prisma } from "../../src/lib/prisma";
 
 const customerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherCustomerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -65,6 +89,7 @@ function createRecord(
       fromAddress: "서울시 중구",
       toAddress: "경기도 수원시",
       status: "WAITING",
+      createdAt: new Date("2026-09-10T02:00:00.000Z"),
       serviceType: { name: "SMALL" },
       designatedRequests: [{ moverId: "22222222-2222-4222-8222-222222222222" }],
     },
@@ -123,6 +148,7 @@ describe("listReceivedQuotes", () => {
             fromAddress: "서울시 중구",
             toAddress: "경기도 수원시",
             status: "WAITING",
+            createdAt: "2026-09-10T02:00:00.000Z",
           },
         },
       ],
@@ -142,6 +168,7 @@ describe("listReceivedQuotes", () => {
           fromAddress: "서울시 중구",
           toAddress: "경기도 수원시",
           status: "WAITING",
+          createdAt: new Date("2026-09-10T02:00:00.000Z"),
           serviceType: { name: "SMALL" },
           designatedRequests: [{ moverId: "99999999-9999-4999-8999-999999999999" }],
         },
@@ -300,6 +327,7 @@ describe("listReceivedQuoteHistory", () => {
         fromAddress: "서울시 강남구",
         toAddress: "서울시 마포구",
         status: "COMPLETED",
+        createdAt: new Date("2026-08-01T02:00:00.000Z"),
         serviceType: { name: "HOME" },
         designatedRequests: [],
       },
@@ -390,5 +418,140 @@ describe("getReceivedQuoteHistoryDetail", () => {
     ).rejects.toMatchObject({
       code: "QUOTE_NOT_FOUND",
     });
+  });
+});
+
+function createOwnedQuote(
+  overrides: Partial<OwnedQuoteForConfirm> = {},
+): OwnedQuoteForConfirm {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    price: 150000,
+    status: "PROPOSED",
+    moverId: "22222222-2222-4222-8222-222222222222",
+    mover: {
+      userId: "mover-user-id",
+      nickname: "김코드",
+    },
+    moveRequest: {
+      id: "33333333-3333-4333-8333-333333333333",
+      status: "WAITING",
+      customer: {
+        userId: "customer-user-id",
+        user: { name: "홍길동" },
+      },
+    },
+    ...overrides,
+  };
+}
+
+describe("confirmReceivedQuote", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+    jest.mocked(prisma.$transaction).mockImplementation(async (callback) =>
+      (callback as unknown as (tx: object) => Promise<unknown>)({}),
+    );
+  });
+
+  test("없거나 내 요청이 아니면 QUOTE_NOT_FOUND를 던진다", async () => {
+    jest.mocked(findOwnedQuoteForConfirm).mockResolvedValue(null);
+
+    await expect(
+      confirmReceivedQuote(
+        customerId,
+        "11111111-1111-4111-8111-111111111111",
+      ),
+    ).rejects.toMatchObject({
+      code: "QUOTE_NOT_FOUND",
+    });
+    expect(lockMoveRequestForConfirm).not.toHaveBeenCalled();
+  });
+
+  test("PROPOSED가 아니면 QUOTE_NOT_CONFIRMABLE이다", async () => {
+    const owned = createOwnedQuote({ status: "REJECTED" });
+    jest.mocked(findOwnedQuoteForConfirm).mockResolvedValue(owned);
+
+    await expect(confirmReceivedQuote(customerId, owned.id)).rejects.toMatchObject({
+      code: "QUOTE_NOT_CONFIRMABLE",
+    });
+    expect(applyQuoteConfirmation).not.toHaveBeenCalled();
+  });
+
+  test("요청이 이미 확정·완료면 REQUEST_ALREADY_CONFIRMED이다", async () => {
+    const owned = createOwnedQuote({
+      moveRequest: {
+        id: "33333333-3333-4333-8333-333333333333",
+        status: "CONFIRMED",
+        customer: {
+          userId: "customer-user-id",
+          user: { name: "홍길동" },
+        },
+      },
+    });
+    jest.mocked(findOwnedQuoteForConfirm).mockResolvedValue(owned);
+
+    await expect(confirmReceivedQuote(customerId, owned.id)).rejects.toMatchObject({
+      code: "REQUEST_ALREADY_CONFIRMED",
+    });
+    expect(applyQuoteConfirmation).not.toHaveBeenCalled();
+  });
+
+  test("금액이 없으면 INVALID_REQUEST다", async () => {
+    const owned = createOwnedQuote({ price: null });
+    jest.mocked(findOwnedQuoteForConfirm).mockResolvedValue(owned);
+
+    await expect(confirmReceivedQuote(customerId, owned.id)).rejects.toBeInstanceOf(
+      BadRequestError,
+    );
+    await expect(confirmReceivedQuote(customerId, owned.id)).rejects.toMatchObject({
+      code: "INVALID_REQUEST",
+    });
+    expect(applyQuoteConfirmation).not.toHaveBeenCalled();
+  });
+
+  test("확정하면 경쟁 견적 반려·알림 생성 후 CONFIRMED 상세를 반환한다", async () => {
+    const owned = createOwnedQuote();
+    const confirmedDetail = {
+      ...createDetailRecord(),
+      status: "CONFIRMED" as const,
+      moveRequest: {
+        ...createDetailRecord().moveRequest,
+        status: "CONFIRMED" as const,
+      },
+    };
+    jest.mocked(findOwnedQuoteForConfirm).mockResolvedValue(owned);
+    jest.mocked(lockMoveRequestForConfirm).mockResolvedValue(undefined);
+    jest.mocked(applyQuoteConfirmation).mockResolvedValue(undefined);
+    jest.mocked(createQuoteConfirmedNotifications).mockResolvedValue(undefined);
+    jest.mocked(findOwnedQuoteDetailAfterConfirm).mockResolvedValue(confirmedDetail);
+    jest.mocked(findMoverReviewAverages).mockResolvedValue([
+      { moverId: owned.moverId, averageRating: 4.76 },
+    ]);
+
+    const result = await confirmReceivedQuote(customerId, owned.id);
+
+    expect(lockMoveRequestForConfirm).toHaveBeenCalledWith(
+      owned.moveRequest.id,
+      {},
+    );
+    expect(applyQuoteConfirmation).toHaveBeenCalledWith(
+      owned.id,
+      owned.moveRequest.id,
+      {},
+    );
+    expect(createQuoteConfirmedNotifications).toHaveBeenCalledWith(
+      {
+        customerUserId: "customer-user-id",
+        customerName: "홍길동",
+        moverUserId: "mover-user-id",
+        moverNickname: "김코드",
+        moveRequestId: owned.moveRequest.id,
+        quoteId: owned.id,
+      },
+      {},
+    );
+    expect(result.quote.status).toBe("CONFIRMED");
+    expect(result.quote.moveRequest.status).toBe("CONFIRMED");
+    expect(result.quote.mover.averageRating).toBe(4.8);
   });
 });

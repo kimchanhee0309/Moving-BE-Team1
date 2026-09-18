@@ -1,8 +1,9 @@
 /**
- * 고객 소유 대기·과거 견적 목록과 상세를 Prisma로 조회합니다.
+ * 고객 소유 대기·과거 견적 조회와 견적 확정 쓰기를 Prisma로 처리합니다.
  * HTTP·cookie는 다루지 않고 응답에 필요한 column과 집계만 선택합니다.
  */
 import type { Prisma } from "../../generated/prisma/client";
+import type { MoveRequestStatus, QuoteStatus } from "../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
 import type {
   ReceivedQuoteHistoryQuery,
@@ -45,6 +46,7 @@ function createReceivedQuoteSelect(customerId: string) {
         fromAddress: true,
         toAddress: true,
         status: true,
+        createdAt: true,
         serviceType: {
           select: { name: true },
         },
@@ -95,6 +97,43 @@ export interface MoverReviewAverage {
   moverId: string;
   averageRating: number | null;
 }
+
+type PrismaClientOrTx = Prisma.TransactionClient | typeof prisma;
+
+/**
+ * 확정 전 소유권·상태 검사를 위한 최소 조회입니다.
+ * 다른 고객 견적은 제외하고 Quote 상태는 걸지 않아 404와 409를 구분합니다.
+ */
+const ownedQuoteForConfirmSelect = {
+  id: true,
+  price: true,
+  status: true,
+  moverId: true,
+  mover: {
+    select: {
+      userId: true,
+      nickname: true,
+    },
+  },
+  moveRequest: {
+    select: {
+      id: true,
+      status: true,
+      customer: {
+        select: {
+          userId: true,
+          user: {
+            select: { name: true },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.QuoteSelect;
+
+export type OwnedQuoteForConfirm = Prisma.QuoteGetPayload<{
+  select: typeof ownedQuoteForConfirmSelect;
+}>;
 
 function createCursorWhere(
   query: ReceivedQuotesQuery,
@@ -424,4 +463,119 @@ export async function findMoverReviewAverages(
     moverId: row.moverId,
     averageRating: row._avg.rating,
   }));
+}
+
+/**
+ * 내 요청에 속한 견적 1건을 상태와 무관하게 조회합니다.
+ * 없으면 null을 반환해 다른 고객 견적과 존재 여부를 구분하지 않습니다.
+ */
+export function findOwnedQuoteForConfirm(
+  customerId: string,
+  quoteId: string,
+  client: PrismaClientOrTx = prisma,
+): Promise<OwnedQuoteForConfirm | null> {
+  return client.quote.findFirst({
+    where: {
+      id: quoteId,
+      moveRequest: { customerId },
+    },
+    select: ownedQuoteForConfirmSelect,
+  });
+}
+
+/**
+ * 같은 요청에 대한 동시 확정을 직렬화하려고 MoveRequest 행을 FOR UPDATE로 잠급니다.
+ * 잠금은 transaction 안에서만 의미가 있으므로 tx로만 호출해야 합니다.
+ */
+export async function lockMoveRequestForConfirm(
+  moveRequestId: string,
+  client: Prisma.TransactionClient,
+): Promise<void> {
+  await client.$queryRaw`
+    SELECT id FROM "MoveRequest" WHERE id = ${moveRequestId} FOR UPDATE
+  `;
+}
+
+/**
+ * 대상 견적을 CONFIRMED로 바꾸고 같은 요청의 다른 PROPOSED 견적은 REJECTED로 바꿉니다.
+ * 요청 상태는 WAITING → CONFIRMED입니다.
+ */
+export async function applyQuoteConfirmation(
+  quoteId: string,
+  moveRequestId: string,
+  client: Prisma.TransactionClient,
+): Promise<void> {
+  await client.quote.update({
+    where: { id: quoteId },
+    data: { status: "CONFIRMED" satisfies QuoteStatus },
+  });
+
+  await client.quote.updateMany({
+    where: {
+      moveRequestId,
+      id: { not: quoteId },
+      status: "PROPOSED",
+    },
+    data: { status: "REJECTED" satisfies QuoteStatus },
+  });
+
+  await client.moveRequest.update({
+    where: { id: moveRequestId },
+    data: { status: "CONFIRMED" satisfies MoveRequestStatus },
+  });
+}
+
+/**
+ * 고객과 확정된 기사님에게 QUOTE_CONFIRMED 알림을 같은 트랜잭션에서 만듭니다.
+ * 문구는 seed의 확정 알림과 같게 맞춰 화면이 다른 카피를 받지 않게 합니다.
+ */
+export async function createQuoteConfirmedNotifications(
+  input: {
+    customerUserId: string;
+    customerName: string;
+    moverUserId: string;
+    moverNickname: string;
+    moveRequestId: string;
+    quoteId: string;
+  },
+  client: Prisma.TransactionClient,
+): Promise<void> {
+  await client.notification.createMany({
+    data: [
+      {
+        userId: input.customerUserId,
+        moveRequestId: input.moveRequestId,
+        quoteId: input.quoteId,
+        type: "QUOTE_CONFIRMED",
+        title: "견적이 확정되었습니다.",
+        content: `${input.moverNickname} 기사님의 견적이 확정되었습니다.`,
+      },
+      {
+        userId: input.moverUserId,
+        moveRequestId: input.moveRequestId,
+        quoteId: input.quoteId,
+        type: "QUOTE_CONFIRMED",
+        title: "고객님이 견적을 확정했습니다.",
+        content: `${input.customerName} 고객님이 견적을 확정했습니다.`,
+      },
+    ],
+  });
+}
+
+/**
+ * 확정 직후 상세 응답용 견적을 다시 조회합니다.
+ * 트랜잭션 안에서 호출하면 방금 바꾼 CONFIRMED 상태를 읽습니다.
+ */
+export function findOwnedQuoteDetailAfterConfirm(
+  customerId: string,
+  quoteId: string,
+  client: PrismaClientOrTx = prisma,
+): Promise<ReceivedQuoteDetailRecord | null> {
+  return client.quote.findFirst({
+    where: {
+      id: quoteId,
+      moveRequest: { customerId },
+    },
+    select: createReceivedQuoteDetailSelect(customerId),
+  });
 }

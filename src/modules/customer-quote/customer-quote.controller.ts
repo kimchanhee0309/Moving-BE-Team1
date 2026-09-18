@@ -1,5 +1,5 @@
 /**
- * 받은 견적 목록·상세 HTTP 입력을 DTO로 바꾸고 Service 결과를 공통 응답으로 반환합니다.
+ * 받은 견적 목록·상세·확정 HTTP 입력을 DTO로 바꾸고 Service 결과를 공통 응답으로 반환합니다.
  * Cookie·JWT를 다시 해석하지 않으며 권한·상태 필터는 guard와 Service에 맡깁니다.
  */
 import type { RequestHandler } from "express";
@@ -8,6 +8,7 @@ import { HTTP_STATUS } from "../../common/constants/http-status";
 import { sendSuccess } from "../../common/response/api-response";
 import { getProfileAuthContext } from "../../common/utils/auth-context";
 import {
+  confirmReceivedQuote,
   getReceivedQuoteDetail,
   getReceivedQuoteHistoryDetail,
   listReceivedQuoteHistory,
@@ -75,6 +76,21 @@ export const getReceivedQuoteDetailController: RequestHandler = async (
   const quoteId = parseQuoteIdParams(request.params);
   const auth = getProfileAuthContext(request);
   const result = await getReceivedQuoteDetail(auth.profileId, quoteId);
+
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/**
+ * POST /customers/me/quotes/:quoteId/confirm
+ * 입력 검증 → 인증 주체 추출 → 견적 확정 → data.quote 응답
+ */
+export const confirmReceivedQuoteController: RequestHandler = async (
+  request,
+  response,
+) => {
+  const quoteId = parseQuoteIdParams(request.params);
+  const auth = getProfileAuthContext(request);
+  const result = await confirmReceivedQuote(auth.profileId, quoteId);
 
   return sendSuccess(response, HTTP_STATUS.OK, result);
 };
