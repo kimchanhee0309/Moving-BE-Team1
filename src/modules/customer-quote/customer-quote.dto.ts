@@ -98,6 +98,8 @@ export interface QuoteListMoveRequestDto {
   fromAddress: string;
   toAddress: string;
   status: MoveRequestStatus;
+  /** 이사 요청 생성일. 견적 항목 createdAt과 구분합니다. */
+  createdAt: string;
 }
 
 /** 목록 한 건입니다. 상세의 updatedAt·기사 소개·가능 지역은 포함하지 않습니다. */

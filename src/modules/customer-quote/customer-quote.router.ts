@@ -1,11 +1,12 @@
 /**
- * 고객이 받은 대기·과거 견적 목록·상세 endpoint와 guard 순서를 선언합니다.
+ * 고객이 받은 대기·과거 견적 목록·상세와 견적 확정 endpoint, guard 순서를 선언합니다.
  * /history를 /:quoteId보다 먼저 등록해야 history가 quoteId로 파싱되지 않습니다.
  */
 import { Router } from "express";
 
 import { requireProfiledCustomer } from "../../common/middleware/auth/auth-guards";
 import {
+  confirmReceivedQuoteController,
   getReceivedQuoteDetailController,
   getReceivedQuoteHistoryDetailController,
   listReceivedQuoteHistoryController,
@@ -33,7 +34,7 @@ export const customerQuoteRouter = Router();
  *         isFavorite: { type: boolean, example: true }
  *     QuoteListMoveRequest:
  *       type: object
- *       required: [id, serviceType, moveDate, fromAddress, toAddress, status]
+ *       required: [id, serviceType, moveDate, fromAddress, toAddress, status, createdAt]
  *       properties:
  *         id: { type: string, format: uuid }
  *         serviceType: { $ref: "#/components/schemas/ServiceType" }
@@ -41,6 +42,7 @@ export const customerQuoteRouter = Router();
  *         fromAddress: { type: string, example: "서울시 중구" }
  *         toAddress: { type: string, example: "경기도 수원시" }
  *         status: { $ref: "#/components/schemas/MoveRequestStatus" }
+ *         createdAt: { type: string, format: date-time, example: "2026-09-10T02:00:00.000Z", description: "이사 요청 생성일. 견적 createdAt과 다릅니다." }
  *     QuoteListItem:
  *       type: object
  *       required: [id, price, comment, status, isDesignated, createdAt, mover, moveRequest]
@@ -234,6 +236,38 @@ customerQuoteRouter.get(
   "/history/:quoteId",
   ...requireProfiledCustomer,
   getReceivedQuoteHistoryDetailController,
+);
+
+/**
+ * @openapi
+ * /customers/me/quotes/{quoteId}/confirm:
+ *   post:
+ *     tags: [Quotes]
+ *     summary: Confirm Quote
+ *     description: 내 활성(WAITING) 요청의 PROPOSED 견적 1건을 확정합니다. 같은 요청의 다른 PROPOSED 견적은 REJECTED가 되고 요청 상태는 CONFIRMED가 됩니다. 동시 확정은 트랜잭션으로 막으며 진 쪽은 409입니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: quoteId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *         description: 확정할 견적 ID
+ *     responses:
+ *       200:
+ *         description: 확정된 견적 상세. 생성 API가 아니므로 201을 쓰지 않습니다.
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ReceivedQuoteDetailResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       403: { $ref: "#/components/responses/Forbidden" }
+ *       404: { $ref: "#/components/responses/NotFound" }
+ *       409: { $ref: "#/components/responses/Conflict" }
+ */
+customerQuoteRouter.post(
+  "/:quoteId/confirm",
+  ...requireProfiledCustomer,
+  confirmReceivedQuoteController,
 );
 
 /**

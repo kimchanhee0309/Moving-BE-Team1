@@ -1,8 +1,13 @@
 /**
- * 고객이 받은 대기·과거 견적 목록·상세의 조회 범위와 응답 매핑을 담당합니다.
+ * 고객이 받은 대기·과거 견적 목록·상세와 견적 확정의 조회 범위·상태 전이를 담당합니다.
  * 대기 API는 PROPOSED+WAITING만, 과거 API는 CONFIRMED 견적만 다룹니다.
  */
-import { NotFoundError } from "../../common/errors/app-error";
+import {
+  BadRequestError,
+  ConflictError,
+  NotFoundError,
+} from "../../common/errors/app-error";
+import { prisma } from "../../lib/prisma";
 import { encodeReceivedQuoteCursor, encodeReceivedQuoteHistoryCursor } from "./customer-quote.cursor";
 import type {
   QuoteDetailDto,
@@ -17,11 +22,16 @@ import type {
   ReceivedQuotesResult,
 } from "./customer-quote.dto";
 import {
+  applyQuoteConfirmation,
+  createQuoteConfirmedNotifications,
   findMoverReviewAverages,
+  findOwnedQuoteDetailAfterConfirm,
+  findOwnedQuoteForConfirm,
   findReceivedQuoteDetail,
   findReceivedQuoteHistory,
   findReceivedQuoteHistoryDetail,
   findReceivedQuotes,
+  lockMoveRequestForConfirm,
   type MoverReviewAverage,
   type ReceivedQuoteDetailRecord,
   type ReceivedQuoteRecord,
@@ -93,6 +103,7 @@ function toQuoteListItem(
       fromAddress: record.moveRequest.fromAddress,
       toAddress: record.moveRequest.toAddress,
       status: record.moveRequest.status,
+      createdAt: record.moveRequest.createdAt.toISOString(),
     },
   };
 }
@@ -249,5 +260,95 @@ export async function getReceivedQuoteHistoryDetail(
 
   return {
     quote: toQuoteDetail(record, averages),
+  };
+}
+
+/**
+ * 내 활성 요청의 PROPOSED 견적 1건을 확정합니다.
+ * 같은 요청의 다른 PROPOSED 견적은 REJECTED, 요청은 CONFIRMED로 바꿉니다.
+ * @param customerId requireProfile이 보장한 Customer.id
+ * @param quoteId 검증된 Quote UUID
+ * @returns 확정된 견적 상세 data.quote
+ * @throws NotFoundError 없거나 내 요청이 아니면 QUOTE_NOT_FOUND
+ * @throws ConflictError 견적이 PROPOSED가 아니면 QUOTE_NOT_CONFIRMABLE
+ * @throws ConflictError 요청이 이미 확정·완료면 REQUEST_ALREADY_CONFIRMED
+ * @throws BadRequestError 금액이 없으면 INVALID_REQUEST
+ * @remarks Quote·MoveRequest·Notification을 한 트랜잭션에서 변경합니다.
+ */
+export async function confirmReceivedQuote(
+  customerId: string,
+  quoteId: string,
+): Promise<ReceivedQuoteDetailResult> {
+  const confirmed = await prisma.$transaction(async (tx) => {
+    const owned = await findOwnedQuoteForConfirm(customerId, quoteId, tx);
+
+    if (!owned) {
+      throw new NotFoundError("견적을 찾을 수 없습니다.", "QUOTE_NOT_FOUND");
+    }
+
+    // 같은 요청의 다른 견적 확정과 겹치지 않도록 요청 행을 잠근 뒤 상태를 다시 읽습니다.
+    await lockMoveRequestForConfirm(owned.moveRequest.id, tx);
+    const locked = await findOwnedQuoteForConfirm(customerId, quoteId, tx);
+
+    if (!locked) {
+      throw new NotFoundError("견적을 찾을 수 없습니다.", "QUOTE_NOT_FOUND");
+    }
+
+    if (locked.status !== "PROPOSED") {
+      throw new ConflictError(
+        "확정할 수 없는 견적입니다.",
+        "QUOTE_NOT_CONFIRMABLE",
+      );
+    }
+
+    if (locked.moveRequest.status !== "WAITING") {
+      throw new ConflictError(
+        "이미 확정된 견적 요청입니다.",
+        "REQUEST_ALREADY_CONFIRMED",
+      );
+    }
+
+    if (locked.price === null) {
+      throw new BadRequestError(
+        "금액이 없는 견적은 확정할 수 없습니다.",
+        "INVALID_REQUEST",
+        [{ field: "price", reason: "확정하려면 견적 금액이 필요합니다." }],
+      );
+    }
+
+    await applyQuoteConfirmation(locked.id, locked.moveRequest.id, tx);
+    await createQuoteConfirmedNotifications(
+      {
+        customerUserId: locked.moveRequest.customer.userId,
+        customerName: locked.moveRequest.customer.user.name,
+        moverUserId: locked.mover.userId,
+        moverNickname: locked.mover.nickname,
+        moveRequestId: locked.moveRequest.id,
+        quoteId: locked.id,
+      },
+      tx,
+    );
+
+    const detail = await findOwnedQuoteDetailAfterConfirm(
+      customerId,
+      quoteId,
+      tx,
+    );
+
+    if (!detail) {
+      throw new NotFoundError("견적을 찾을 수 없습니다.", "QUOTE_NOT_FOUND");
+    }
+
+    return detail;
+  });
+
+  const averages = new Map<string, number | null>(
+    (await findMoverReviewAverages([confirmed.mover.id])).map(
+      (row: MoverReviewAverage) => [row.moverId, row.averageRating],
+    ),
+  );
+
+  return {
+    quote: toQuoteDetail(confirmed, averages),
   };
 }
