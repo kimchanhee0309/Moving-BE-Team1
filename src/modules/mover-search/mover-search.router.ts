@@ -14,10 +14,15 @@ export const moverSearchRouter = Router();
  *   schemas:
  *     MoverSearchItem:
  *       type: object
- *       required: [id, serviceType, region, moverName, introduction, description, profileImageUrl, rating, reviewCount, careerYears, confirmedCount, favoriteCount]
+ *       required: [id, serviceType, serviceTypes, region, moverName, introduction, description, profileImageUrl, rating, reviewCount, careerYears, confirmedCount, favoriteCount]
  *       properties:
  *         id: { type: string, format: uuid }
- *         serviceType: { $ref: "#/components/schemas/ServiceType" }
+ *         serviceType: { $ref: "#/components/schemas/ServiceType", description: "대표 1개. SMALL → HOME → OFFICE 중 첫 보유값입니다." }
+ *         serviceTypes:
+ *           type: array
+ *           items: { $ref: "#/components/schemas/ServiceType" }
+ *           example: [SMALL, HOME]
+ *           description: 보유 서비스 전체. 대표 serviceType과 같은 우선순위이며 빈 배열로 내려가지 않습니다.
  *         region: { type: string, example: "서울", description: "카드 대표 지역. 필터는 보유 지역 전체 기준입니다." }
  *         moverName: { type: string, example: "김코드" }
  *         introduction: { type: string, example: "꼼꼼하고 안전한 이사를 도와드립니다." }
