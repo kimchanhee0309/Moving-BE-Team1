@@ -1,3 +1,11 @@
+/**
+ * 기사님 찾기 목록·상세·추천 API의 입력·응답 DTO를 정의합니다.
+ * Prisma Mover 원문과 password 같은 내부 필드는 포함하지 않습니다.
+ *
+ * 담당 기능: GET /movers, GET /movers/:id, GET /movers/recommended
+ * 계층 책임: API 필드 의미·허용값·nullable만 선언합니다.
+ * 담당하지 않는 범위: HTTP 파싱, 권한, DB 조회, isFavorite
+ */
 import type {
   MoverRegion,
   MoverSearchSort,

@@ -1,3 +1,9 @@
+/**
+ * 기사님 찾기 목록·상세·추천에서 공유하는 허용값과 상한입니다.
+ * 화면 한글 지역과 DB Region.name(SEOUL 등) 매핑, page/추천 인원 제한을 둡니다.
+ *
+ * 담당하지 않는 범위: HTTP 검증, DTO 조립, Prisma 조회
+ */
 export const MOVER_SERVICE_TYPES = ["SMALL", "HOME", "OFFICE"] as const;
 
 export const SERVICE_TYPE_PRIORITY = MOVER_SERVICE_TYPES;

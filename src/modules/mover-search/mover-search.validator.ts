@@ -1,3 +1,10 @@
+/**
+ * 기사님 찾기 query·params를 Zod로 검증하고 정규화합니다.
+ * HTTP 입력만 책임지며 대상 존재·정렬·집계는 Service에 위임합니다.
+ *
+ * 처리 흐름: unknown 입력 → parseWithZod → DTO 반환 또는 VALIDATION_ERROR
+ * 목록은 comma 구분 필터와 page 상한, 상세는 UUID params만 허용합니다.
+ */
 import { z } from "zod";
 
 import { parseWithZod } from "../../common/validation/zod-parser";
