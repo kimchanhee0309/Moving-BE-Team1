@@ -193,6 +193,33 @@ describe("Mover My Page service", () => {
     );
   });
 
+  test("새 비밀번호 없이 기본정보를 수정해도 현재 비밀번호를 검증한다", async () => {
+    jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
+    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+    jest.mocked(findMoverBasicInfoInTransaction)
+      .mockResolvedValueOnce(basicRecord)
+      .mockResolvedValueOnce({
+        ...basicRecord,
+        user: { ...basicRecord.user, name: "새 이름" },
+      });
+
+    await expect(
+      updateMoverBasicInfo(moverId, {
+        name: "새 이름",
+        currentPassword: "old-pass1!",
+      }),
+    ).resolves.toMatchObject({ name: "새 이름" });
+
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(updateMoverUserWithPasswordMatch).toHaveBeenCalledWith(
+      transaction,
+      userId,
+      "old-hash",
+      { name: "새 이름", passwordHash: "old-hash" },
+    );
+    expect(updateMoverUser).not.toHaveBeenCalled();
+  });
+
   test("비밀번호 hash가 동시에 바뀌면 전체 transaction을 중단한다", async () => {
     jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
     jest.mocked(bcrypt.compare).mockResolvedValue(true as never);

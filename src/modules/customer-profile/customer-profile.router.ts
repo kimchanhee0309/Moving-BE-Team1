@@ -103,7 +103,7 @@ export const customerProfileRouter = Router();
  *   patch:
  *     tags: [Customers]
  *     summary: Update Customer Profile
- *     description: 전달한 필드만 수정합니다. phone 생략은 유지, 빈 문자열은 null 초기화입니다. OAuth 전용 계정은 비밀번호를 변경할 수 없습니다.
+ *     description: 전달한 필드만 수정합니다. phone 생략은 유지, 빈 문자열은 null 초기화입니다. currentPassword가 있으면 새 비밀번호 변경 여부와 관계없이 서버에서 검증하며, OAuth 전용 계정은 비밀번호 확인·변경을 지원하지 않습니다.
  *     security: [{ accessTokenCookie: [] }]
  *     requestBody:
  *       required: true
@@ -116,8 +116,8 @@ export const customerProfileRouter = Router();
  *               name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용" }
  *               email: { type: string, format: email }
  *               phone: { type: string, nullable: true, description: "빈 문자열이면 null로 초기화" }
- *               currentPassword: { type: string, format: password, description: "newPassword와 함께 전송" }
- *               newPassword: { type: string, format: password, minLength: 8, description: "영문·숫자·특수문자 포함, 8~72바이트" }
+ *               currentPassword: { type: string, format: password, description: "선택. 전달하면 프로필 수정 전에 서버 비밀번호와 검증" }
+ *               newPassword: { type: string, format: password, minLength: 8, description: "선택. 변경 시 currentPassword 필수, 영문·숫자·특수문자 포함, 8~72바이트" }
  *               profileImage: { type: string, format: binary, description: "JPEG/PNG/WebP, 최대 5 MiB" }
  *               serviceTypes:
  *                 type: array

@@ -179,7 +179,7 @@ export async function getMoverMyPage(
   return toMoverMyPage(record, ratingGroups);
 }
 
-/** 이름·이메일·전화번호와 선택적 비밀번호를 원자적으로 수정합니다. */
+/** 이름·이메일·전화번호를 수정하고, 전달된 현재 비밀번호를 같은 transaction 경계에 연결합니다. */
 export async function updateMoverBasicInfo(
   moverId: string,
   input: UpdateMoverBasicInfoRequestDto,
@@ -190,14 +190,14 @@ export async function updateMoverBasicInfo(
     throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
   }
 
-  let passwordChange:
-    | { expectedPasswordHash: string; newPasswordHash: string }
+  let passwordVerification:
+    | { expectedPasswordHash: string; nextPasswordHash: string }
     | undefined;
 
-  if (input.currentPassword !== undefined && input.newPassword !== undefined) {
+  if (input.currentPassword !== undefined) {
     if (!current.user.passwordHash) {
       throw new ConflictError(
-        "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
+        "소셜 로그인 계정은 현재 비밀번호를 확인하거나 변경할 수 없습니다.",
         "PASSWORD_CHANGE_NOT_AVAILABLE",
       );
     }
@@ -214,9 +214,12 @@ export async function updateMoverBasicInfo(
       );
     }
 
-    passwordChange = {
+    passwordVerification = {
       expectedPasswordHash: current.user.passwordHash,
-      newPasswordHash: await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
+      nextPasswordHash:
+        input.newPassword === undefined
+          ? current.user.passwordHash
+          : await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
     };
   }
 
@@ -268,12 +271,12 @@ export async function updateMoverBasicInfo(
         ...(input.phone !== undefined ? { phone: input.phone } : {}),
       };
 
-      if (passwordChange) {
+      if (passwordVerification) {
         const result = await updateMoverUserWithPasswordMatch(
           transaction,
           profile.user.id,
-          passwordChange.expectedPasswordHash,
-          { ...userChanges, passwordHash: passwordChange.newPasswordHash },
+          passwordVerification.expectedPasswordHash,
+          { ...userChanges, passwordHash: passwordVerification.nextPasswordHash },
         );
 
         if (result.count === 0) {

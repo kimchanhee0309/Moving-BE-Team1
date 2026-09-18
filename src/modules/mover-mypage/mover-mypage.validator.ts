@@ -67,15 +67,13 @@ const updateMoverBasicInfoSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    const hasCurrentPassword = value.currentPassword !== undefined;
     const hasNewPassword = value.newPassword !== undefined;
 
-    if (hasCurrentPassword !== hasNewPassword) {
+    if (hasNewPassword && value.currentPassword === undefined) {
       context.addIssue({
         code: "custom",
-        path: [hasCurrentPassword ? "newPassword" : "currentPassword"],
-        message:
-          "비밀번호 변경에는 현재 비밀번호와 새 비밀번호가 모두 필요합니다.",
+        path: ["currentPassword"],
+        message: "비밀번호 변경에는 현재 비밀번호가 필요합니다.",
       });
     }
   });

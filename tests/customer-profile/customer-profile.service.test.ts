@@ -185,6 +185,57 @@ describe("Customer Profile service", () => {
     expect(updateCustomerUser).not.toHaveBeenCalled();
   });
 
+  test("지역 수정과 함께 전달한 현재 비밀번호가 틀리면 transaction 전에 거절한다", async () => {
+    jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
+    jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+
+    await expect(
+      updateCustomerProfile("customer-id", {
+        currentPassword: "WrongPassword1!",
+        region: "경기",
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_CURRENT_PASSWORD",
+      status: 401,
+    });
+
+    expect(runCustomerProfileTransaction).not.toHaveBeenCalled();
+    expect(updateCustomerRecord).not.toHaveBeenCalled();
+  });
+
+  test("현재 비밀번호가 맞으면 새 비밀번호 없이 지역만 수정한다", async () => {
+    jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
+    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+    jest.mocked(findRegionByName).mockResolvedValue({
+      id: "region-gyeonggi",
+      name: "GYEONGGI",
+    });
+    jest.mocked(findCustomerProfileByIdInTransaction)
+      .mockResolvedValueOnce(emailProfile)
+      .mockResolvedValueOnce(emailProfile);
+    jest.mocked(updateCustomerUserWithPasswordMatch).mockResolvedValue({ count: 1 });
+
+    await expect(
+      updateCustomerProfile("customer-id", {
+        currentPassword: "Current1!",
+        region: "경기",
+      }),
+    ).resolves.toBeDefined();
+
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(updateCustomerUserWithPasswordMatch).toHaveBeenCalledWith(
+      transaction,
+      "user-id",
+      "bcrypt-hash",
+      { passwordHash: "bcrypt-hash" },
+    );
+    expect(updateCustomerRecord).toHaveBeenCalledWith(
+      transaction,
+      "customer-id",
+      { regionId: "region-gyeonggi" },
+    );
+  });
+
   test("phone null을 User 변경에 전달하여 전화번호를 초기화한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
     jest.mocked(findCustomerProfileByIdInTransaction)

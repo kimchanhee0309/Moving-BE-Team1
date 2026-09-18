@@ -227,7 +227,8 @@ export async function getCustomerProfile(customerId: string): Promise<CustomerPr
 
 /**
  * 현재 프로필의 User·Customer·서비스 연결을 transaction으로 수정합니다.
- * OAuth 전용 계정은 passwordHash가 없으므로 임의 비밀번호 생성 대신 변경 요청을 409로 거절합니다.
+ * currentPassword가 전달되면 새 비밀번호 유무와 관계없이 검증하고, OAuth 전용 계정은
+ * 확인할 passwordHash가 없으므로 임의 비밀번호 생성 대신 409로 거절합니다.
  */
 export async function updateCustomerProfile(
   customerId: string,
@@ -239,14 +240,14 @@ export async function updateCustomerProfile(
     throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
   }
 
-  let passwordChange:
-    | { expectedPasswordHash: string; newPasswordHash: string }
+  let passwordVerification:
+    | { expectedPasswordHash: string; nextPasswordHash: string }
     | undefined;
 
-  if (input.currentPassword !== undefined && input.newPassword !== undefined) {
+  if (input.currentPassword !== undefined) {
     if (!currentProfile.user.passwordHash) {
       throw new ConflictError(
-        "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
+        "소셜 로그인 계정은 현재 비밀번호를 확인하거나 변경할 수 없습니다.",
         "PASSWORD_CHANGE_NOT_AVAILABLE",
       );
     }
@@ -260,9 +261,12 @@ export async function updateCustomerProfile(
       throw new UnauthorizedError("현재 비밀번호가 올바르지 않습니다.", "INVALID_CURRENT_PASSWORD");
     }
 
-    passwordChange = {
+    passwordVerification = {
       expectedPasswordHash: currentProfile.user.passwordHash,
-      newPasswordHash: await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
+      nextPasswordHash:
+        input.newPassword === undefined
+          ? currentProfile.user.passwordHash
+          : await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
     };
   }
 
@@ -302,12 +306,12 @@ export async function updateCustomerProfile(
           : {}),
       };
 
-      if (passwordChange !== undefined) {
+      if (passwordVerification !== undefined) {
         const result = await updateCustomerUserWithPasswordMatch(
           transaction,
           profile.user.id,
-          passwordChange.expectedPasswordHash,
-          { ...userChanges, passwordHash: passwordChange.newPasswordHash },
+          passwordVerification.expectedPasswordHash,
+          { ...userChanges, passwordHash: passwordVerification.nextPasswordHash },
         );
 
         if (result.count === 0) {
