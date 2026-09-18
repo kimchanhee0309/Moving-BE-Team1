@@ -8,6 +8,7 @@ jest.mock("../../src/modules/customer-quote/customer-quote.validator", () => ({
 }));
 
 jest.mock("../../src/modules/customer-quote/customer-quote.service", () => ({
+  confirmReceivedQuote: jest.fn(),
   getReceivedQuoteDetail: jest.fn(),
   getReceivedQuoteHistoryDetail: jest.fn(),
   listReceivedQuoteHistory: jest.fn(),
@@ -18,12 +19,14 @@ import type { NextFunction, Request, Response } from "express";
 
 import { ForbiddenError } from "../../src/common/errors/app-error";
 import {
+  confirmReceivedQuoteController,
   getReceivedQuoteDetailController,
   getReceivedQuoteHistoryDetailController,
   listReceivedQuoteHistoryController,
   listReceivedQuotesController,
 } from "../../src/modules/customer-quote/customer-quote.controller";
 import {
+  confirmReceivedQuote,
   getReceivedQuoteDetail,
   getReceivedQuoteHistoryDetail,
   listReceivedQuoteHistory,
@@ -143,6 +146,7 @@ describe("getReceivedQuoteDetailController", () => {
           fromAddress: "서울시 중구",
           toAddress: "경기도 수원시",
           status: "WAITING" as const,
+          createdAt: "2026-09-10T02:00:00.000Z",
         },
       },
     };
@@ -240,6 +244,7 @@ describe("history controllers", () => {
           fromAddress: "서울시 강남구",
           toAddress: "서울시 마포구",
           status: "COMPLETED" as const,
+          createdAt: "2026-08-01T02:00:00.000Z",
         },
       },
     };
@@ -264,5 +269,46 @@ describe("history controllers", () => {
       "customer-profile-id",
       quoteId,
     );
+  });
+});
+
+describe("confirmReceivedQuoteController", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("quoteId와 profileId로 확정하고 data.quote를 반환한다", async () => {
+    const quoteId = "11111111-1111-4111-8111-111111111111";
+    const confirmed = {
+      quote: {
+        id: quoteId,
+        status: "CONFIRMED" as const,
+      },
+    };
+    jest.mocked(parseQuoteIdParams).mockReturnValue(quoteId);
+    jest.mocked(confirmReceivedQuote).mockResolvedValue(confirmed as never);
+    const response = createResponse();
+
+    await confirmReceivedQuoteController(
+      {
+        params: { quoteId },
+        auth: {
+          userId: "user-id",
+          role: "CUSTOMER",
+          profileId: "customer-profile-id",
+        },
+      } as unknown as Request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(confirmReceivedQuote).toHaveBeenCalledWith(
+      "customer-profile-id",
+      quoteId,
+    );
+    expect(response.json).toHaveBeenCalledWith({
+      success: true,
+      data: confirmed,
+    });
   });
 });
