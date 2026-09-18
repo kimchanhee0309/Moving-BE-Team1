@@ -43,3 +43,7 @@ export interface MoverSearchDetailDto extends MoverSearchItemDto {
   serviceTypes: MoverServiceType[];
   regions: MoverRegion[];
 }
+
+export interface MoverSearchRecommendedResult {
+  items: MoverSearchItemDto[];
+}

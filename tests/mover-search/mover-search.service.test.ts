@@ -20,12 +20,14 @@ import {
 import {
   getMoverById,
   listMovers,
+  listRecommendedMovers,
 } from "../../src/modules/mover-search/mover-search.service";
 import type { MoverSearchQuery } from "../../src/modules/mover-search/mover-search.dto";
 
 const moverA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const moverB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const moverC = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const moverD = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 function createCard(
   id: string,
@@ -249,5 +251,55 @@ describe("getMoverById", () => {
     });
 
     await expect(getMoverById(moverA)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("listRecommendedMovers", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("찜 수·평점 순으로 최대 3명을 반환한다", async () => {
+    jest.mocked(findFilteredMoverSortRows).mockResolvedValue([
+      { id: moverA, careerYears: 1 },
+      { id: moverB, careerYears: 2 },
+      { id: moverC, careerYears: 3 },
+      { id: moverD, careerYears: 4 },
+    ]);
+    jest.mocked(findMoverSearchAggregates).mockResolvedValue({
+      reviewCountByMoverId: new Map(),
+      ratingByMoverId: new Map([
+        [moverA, 5],
+        [moverB, 3],
+        [moverC, 4.2],
+        [moverD, 4.9],
+      ]),
+      favoriteCountByMoverId: new Map([
+        [moverA, 2],
+        [moverB, 5],
+        [moverC, 5],
+        [moverD, 1],
+      ]),
+      confirmedCountByMoverId: new Map(),
+    });
+    jest.mocked(findMoverSearchCardsByIds).mockResolvedValue([
+      createCard(moverC, { nickname: "찜같음평점높음" }),
+      createCard(moverB, { nickname: "찜같음평점낮음" }),
+      createCard(moverA, { nickname: "찜중간" }),
+    ]);
+
+    const result = await listRecommendedMovers();
+
+    expect(findMoverSearchCardsByIds).toHaveBeenCalledWith([
+      moverC,
+      moverB,
+      moverA,
+    ]);
+    expect(result.items.map((item) => item.moverName)).toEqual([
+      "찜같음평점높음",
+      "찜같음평점낮음",
+      "찜중간",
+    ]);
+    expect(result.items).toHaveLength(3);
   });
 });

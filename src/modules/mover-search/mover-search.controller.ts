@@ -2,7 +2,11 @@ import type { RequestHandler } from "express";
 
 import { HTTP_STATUS } from "../../common/constants/http-status";
 import { sendSuccess } from "../../common/response/api-response";
-import { getMoverById, listMovers } from "./mover-search.service";
+import {
+  getMoverById,
+  listMovers,
+  listRecommendedMovers,
+} from "./mover-search.service";
 import {
   parseMoverSearchIdParams,
   parseMoverSearchQuery,
@@ -14,6 +18,15 @@ export const listMoversController: RequestHandler = async (
 ) => {
   const query = parseMoverSearchQuery(request.query);
   const result = await listMovers(query);
+
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+export const listRecommendedMoversController: RequestHandler = async (
+  _request,
+  response,
+) => {
+  const result = await listRecommendedMovers();
 
   return sendSuccess(response, HTTP_STATUS.OK, result);
 };

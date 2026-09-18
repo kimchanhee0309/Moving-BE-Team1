@@ -6,6 +6,7 @@ import { NotFoundError } from "../../common/errors/app-error";
 import {
   DB_NAME_TO_REGION,
   MOVER_REGIONS,
+  RECOMMENDED_MOVER_LIMIT,
   SERVICE_TYPE_PRIORITY,
   isMoverServiceType,
   type MoverRegion,
@@ -16,6 +17,7 @@ import type {
   MoverSearchItemDto,
   MoverSearchListResult,
   MoverSearchQuery,
+  MoverSearchRecommendedResult,
 } from "./mover-search.dto";
 import {
   findFilteredMoverSortRows,
@@ -67,6 +69,22 @@ function compareRankedMovers(
 
   if (delta !== 0) {
     return delta;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function compareRecommendedMovers(left: RankedMover, right: RankedMover): number {
+  const favoriteDelta = right.favoriteCount - left.favoriteCount;
+
+  if (favoriteDelta !== 0) {
+    return favoriteDelta;
+  }
+
+  const ratingDelta = right.rating - left.rating;
+
+  if (ratingDelta !== 0) {
+    return ratingDelta;
   }
 
   return left.id.localeCompare(right.id);
@@ -148,6 +166,34 @@ function toMoverSearchDetail(
   };
 }
 
+function toMoverSearchItems(
+  pageRows: RankedMover[],
+  cards: MoverSearchCardRecord[],
+): MoverSearchItemDto[] {
+  const cardById = new Map(cards.map((card) => [card.id, card]));
+  const rankedById = new Map(pageRows.map((row) => [row.id, row]));
+
+  return pageRows.flatMap((row) => {
+    const card = cardById.get(row.id);
+    const rankedMover = rankedById.get(row.id);
+
+    if (!card || !rankedMover) {
+      return [];
+    }
+
+    const item = toMoverSearchItem(card, rankedMover);
+    return item ? [item] : [];
+  });
+}
+
+const RECOMMENDED_FILTER_QUERY: MoverSearchQuery = {
+  regions: [],
+  services: [],
+  sort: "reviewCount",
+  page: 1,
+  pageSize: RECOMMENDED_MOVER_LIMIT,
+};
+
 /**
  * @returns items, nextPage, totalCount. totalCount는 서비스·지역이 있는 mover 기준입니다.
  */
@@ -165,20 +211,7 @@ export async function listMovers(
   const start = (query.page - 1) * query.pageSize;
   const pageRows = ranked.slice(start, start + query.pageSize);
   const cards = await findMoverSearchCardsByIds(pageRows.map((row) => row.id));
-  const cardById = new Map(cards.map((card) => [card.id, card]));
-  const rankedById = new Map(pageRows.map((row) => [row.id, row]));
-
-  const items = pageRows.flatMap((row) => {
-    const card = cardById.get(row.id);
-    const rankedMover = rankedById.get(row.id);
-
-    if (!card || !rankedMover) {
-      return [];
-    }
-
-    const item = toMoverSearchItem(card, rankedMover);
-    return item ? [item] : [];
-  });
+  const items = toMoverSearchItems(pageRows, cards);
 
   const hasNext = start + pageRows.length < ranked.length;
 
@@ -210,4 +243,20 @@ export async function getMoverById(
   }
 
   return mover;
+}
+
+export async function listRecommendedMovers(): Promise<MoverSearchRecommendedResult> {
+  const sortRows = await findFilteredMoverSortRows(RECOMMENDED_FILTER_QUERY);
+  const aggregates = await findMoverSearchAggregates(
+    sortRows.map((row) => row.id),
+  );
+  const ranked = sortRows
+    .map((row) => toRankedMover(row, aggregates))
+    .sort(compareRecommendedMovers)
+    .slice(0, RECOMMENDED_MOVER_LIMIT);
+  const cards = await findMoverSearchCardsByIds(ranked.map((row) => row.id));
+
+  return {
+    items: toMoverSearchItems(ranked, cards),
+  };
 }

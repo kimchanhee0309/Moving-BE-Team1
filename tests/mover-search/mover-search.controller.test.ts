@@ -9,6 +9,7 @@ jest.mock("../../src/modules/mover-search/mover-search.validator", () => ({
 jest.mock("../../src/modules/mover-search/mover-search.service", () => ({
   listMovers: jest.fn(),
   getMoverById: jest.fn(),
+  listRecommendedMovers: jest.fn(),
 }));
 
 import type { NextFunction, Request, Response } from "express";
@@ -16,10 +17,12 @@ import type { NextFunction, Request, Response } from "express";
 import {
   getMoverByIdController,
   listMoversController,
+  listRecommendedMoversController,
 } from "../../src/modules/mover-search/mover-search.controller";
 import {
   getMoverById,
   listMovers,
+  listRecommendedMovers,
 } from "../../src/modules/mover-search/mover-search.service";
 import {
   parseMoverSearchIdParams,
@@ -114,6 +117,31 @@ describe("getMoverByIdController", () => {
     expect(response.json).toHaveBeenCalledWith({
       success: true,
       data: { mover },
+    });
+  });
+});
+
+describe("listRecommendedMoversController", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("추천 목록을 data.items로 반환한다", async () => {
+    const recommended = { items: [mover] };
+    jest.mocked(listRecommendedMovers).mockResolvedValue(recommended);
+    const response = createResponse();
+
+    await listRecommendedMoversController(
+      {} as unknown as Request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(listRecommendedMovers).toHaveBeenCalledWith();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({
+      success: true,
+      data: recommended,
     });
   });
 });

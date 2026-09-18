@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   getMoverByIdController,
   listMoversController,
+  listRecommendedMoversController,
 } from "./mover-search.controller";
 
 export const moverSearchRouter = Router();
@@ -65,6 +66,19 @@ export const moverSearchRouter = Router();
  *           required: [mover]
  *           properties:
  *             mover: { $ref: "#/components/schemas/MoverSearchDetail" }
+ *     MoverSearchRecommendedResponse:
+ *       type: object
+ *       required: [success, data]
+ *       properties:
+ *         success: { type: boolean, example: true }
+ *         data:
+ *           type: object
+ *           required: [items]
+ *           properties:
+ *             items:
+ *               type: array
+ *               maxItems: 3
+ *               items: { $ref: "#/components/schemas/MoverSearchItem" }
  */
 
 /**
@@ -106,6 +120,22 @@ export const moverSearchRouter = Router();
  *       400: { $ref: "#/components/responses/BadRequest" }
  */
 moverSearchRouter.get("/", listMoversController);
+
+/**
+ * @openapi
+ * /movers/recommended:
+ *   get:
+ *     tags: [Movers]
+ *     summary: List Recommended Movers
+ *     description: 비회원도 사이드바용 추천 기사님 3명을 조회합니다. 찜 수·평점 내림차순이며 동점이면 id 오름차순입니다. GET /movers/:id보다 먼저 연결합니다.
+ *     responses:
+ *       200:
+ *         description: 추천 기사님 카드 목록
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/MoverSearchRecommendedResponse" }
+ */
+moverSearchRouter.get("/recommended", listRecommendedMoversController);
 
 /**
  * @openapi

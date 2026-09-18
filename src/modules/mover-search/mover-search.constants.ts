@@ -78,6 +78,8 @@ export const MAX_MOVER_SEARCH_PAGE = 1000;
 
 export const MAX_MOVER_SEARCH_LENGTH = 50;
 
+export const RECOMMENDED_MOVER_LIMIT = 3;
+
 export const REGION_DB_NAMES = Object.values(REGION_TO_DB_NAME);
 
 export type MoverServiceType = (typeof MOVER_SERVICE_TYPES)[number];
