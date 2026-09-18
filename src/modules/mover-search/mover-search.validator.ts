@@ -187,6 +187,13 @@ const moverSearchQuerySchema = z.object({
   pageSize: pageSizeSchema.optional().default(DEFAULT_MOVER_SEARCH_PAGE_SIZE),
 });
 
+/**
+ * GET /movers query를 파싱합니다.
+ * 배열 query·알 수 없는 sort·page 상한을 거절하고, 기본 pageSize는 5입니다.
+ *
+ * @param value Express request.query
+ * @returns 정규화된 검색 조건
+ */
 export function parseMoverSearchQuery(value: unknown): MoverSearchQuery {
   const query = parseWithZod(moverSearchQuerySchema, value, {
     fallbackField: "query",
@@ -212,6 +219,13 @@ const moverSearchIdParamsSchema = z
   })
   .strip();
 
+/**
+ * GET /movers/:id 경로 id를 UUID로 검증합니다.
+ * "recommended"나 "me"는 라우터 순서·별도 API로 처리하며, 여기 통과 시 400입니다.
+ *
+ * @param value Express request.params
+ * @returns 상세 조회용 mover id
+ */
 export function parseMoverSearchIdParams(value: unknown): MoverSearchIdParams {
   return parseWithZod(moverSearchIdParamsSchema, value, {
     fallbackField: "id",

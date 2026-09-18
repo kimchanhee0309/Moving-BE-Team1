@@ -39,11 +39,13 @@ export interface MoverSearchIdParams {
   id: string;
 }
 
+/** 상세. 목록 카드에 보유 서비스·한글 지역 배열을 더합니다. isFavorite는 포함하지 않습니다. */
 export interface MoverSearchDetailDto extends MoverSearchItemDto {
   serviceTypes: MoverServiceType[];
   regions: MoverRegion[];
 }
 
+/** 추천 사이드바. pagination 없이 상위 3명 items만 담습니다. */
 export interface MoverSearchRecommendedResult {
   items: MoverSearchItemDto[];
 }

@@ -78,6 +78,7 @@ export const MAX_MOVER_SEARCH_PAGE = 1000;
 
 export const MAX_MOVER_SEARCH_LENGTH = 50;
 
+/** 비회원 사이드바 추천 인원. DB LIMIT이 아니라 집계 정렬 뒤 slice 상한입니다. */
 export const RECOMMENDED_MOVER_LIMIT = 3;
 
 export const REGION_DB_NAMES = Object.values(REGION_TO_DB_NAME);
