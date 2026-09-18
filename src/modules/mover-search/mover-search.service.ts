@@ -1,22 +1,31 @@
 /**
+ * 기사님 찾기 목록·상세·추천의 정렬·대표값·불완전 프로필 제외를 담당합니다.
+ * Express 객체에 의존하지 않으며 Prisma는 Repository에 위임합니다.
+ *
  * 찜 여부·리뷰 본문·지정 견적은 해당 담당 API가 생긴 뒤 연결합니다.
  * 목록 카드의 대표 서비스·지역은 실제 보유 값만 쓰고, 없으면 카드를 제외합니다.
  */
+import { NotFoundError } from "../../common/errors/app-error";
 import {
   DB_NAME_TO_REGION,
   MOVER_REGIONS,
+  RECOMMENDED_MOVER_LIMIT,
   SERVICE_TYPE_PRIORITY,
   isMoverServiceType,
+  type MoverRegion,
   type MoverServiceType,
 } from "./mover-search.constants";
 import type {
+  MoverSearchDetailDto,
   MoverSearchItemDto,
   MoverSearchListResult,
   MoverSearchQuery,
+  MoverSearchRecommendedResult,
 } from "./mover-search.dto";
 import {
   findFilteredMoverSortRows,
   findMoverSearchAggregates,
+  findMoverSearchCardById,
   findMoverSearchCardsByIds,
   type MoverSearchAggregates,
   type MoverSearchCardRecord,
@@ -68,29 +77,28 @@ function compareRankedMovers(
   return left.id.localeCompare(right.id);
 }
 
-/**
- * 보유 서비스 중 화면 우선순위가 가장 높은 값을 고릅니다.
- * 인식 가능한 값이 없으면 SMALL을 만들지 않고 카드를 제외합니다.
- */
-function pickRepresentativeServiceType(
-  names: string[],
-): MoverServiceType | undefined {
-  const owned = names.filter(isMoverServiceType);
+function compareRecommendedMovers(left: RankedMover, right: RankedMover): number {
+  const favoriteDelta = right.favoriteCount - left.favoriteCount;
 
-  for (const candidate of SERVICE_TYPE_PRIORITY) {
-    if (owned.includes(candidate)) {
-      return candidate;
-    }
+  if (favoriteDelta !== 0) {
+    return favoriteDelta;
   }
 
-  return undefined;
+  const ratingDelta = right.rating - left.rating;
+
+  if (ratingDelta !== 0) {
+    return ratingDelta;
+  }
+
+  return left.id.localeCompare(right.id);
 }
 
-/**
- * 보유 지역 중 화면 순서상 앞선 값을 고릅니다.
- * 매핑되지 않은 이름만 있으면 빈 문자열 대신 카드를 제외합니다.
- */
-function pickRepresentativeRegion(dbNames: string[]): string | undefined {
+function listOwnedServiceTypes(names: string[]): MoverServiceType[] {
+  const owned = new Set(names.filter(isMoverServiceType));
+  return SERVICE_TYPE_PRIORITY.filter((serviceType) => owned.has(serviceType));
+}
+
+function listOwnedRegions(dbNames: string[]): MoverRegion[] {
   const owned = new Set(
     dbNames.flatMap((name) => {
       const region = DB_NAME_TO_REGION[name];
@@ -98,13 +106,17 @@ function pickRepresentativeRegion(dbNames: string[]): string | undefined {
     }),
   );
 
-  for (const region of MOVER_REGIONS) {
-    if (owned.has(region)) {
-      return region;
-    }
-  }
+  return MOVER_REGIONS.filter((region) => owned.has(region));
+}
 
-  return undefined;
+function pickRepresentativeServiceType(
+  names: string[],
+): MoverServiceType | undefined {
+  return listOwnedServiceTypes(names)[0];
+}
+
+function pickRepresentativeRegion(dbNames: string[]): string | undefined {
+  return listOwnedRegions(dbNames)[0];
 }
 
 function toMoverSearchItem(
@@ -138,11 +150,61 @@ function toMoverSearchItem(
   };
 }
 
+function toMoverSearchDetail(
+  record: MoverSearchCardRecord,
+  ranked: RankedMover,
+): MoverSearchDetailDto | undefined {
+  const item = toMoverSearchItem(record, ranked);
+
+  if (!item) {
+    return undefined;
+  }
+
+  return {
+    ...item,
+    serviceTypes: listOwnedServiceTypes(
+      record.serviceTypes.map((entry) => entry.serviceType.name),
+    ),
+    regions: listOwnedRegions(record.regions.map((entry) => entry.region.name)),
+  };
+}
+
+function toMoverSearchItems(
+  pageRows: RankedMover[],
+  cards: MoverSearchCardRecord[],
+): MoverSearchItemDto[] {
+  const cardById = new Map(cards.map((card) => [card.id, card]));
+  const rankedById = new Map(pageRows.map((row) => [row.id, row]));
+
+  return pageRows.flatMap((row) => {
+    const card = cardById.get(row.id);
+    const rankedMover = rankedById.get(row.id);
+
+    if (!card || !rankedMover) {
+      return [];
+    }
+
+    const item = toMoverSearchItem(card, rankedMover);
+    return item ? [item] : [];
+  });
+}
+
+/** 사이드바 추천은 지역·서비스 필터 없이, 목록과 같은 불완전 프로필 제외만 적용합니다. */
+const RECOMMENDED_FILTER_QUERY: MoverSearchQuery = {
+  regions: [],
+  services: [],
+  sort: "reviewCount",
+  page: 1,
+  pageSize: RECOMMENDED_MOVER_LIMIT,
+};
+
 /**
- * 필터된 기사님을 집계·정렬한 뒤 현재 페이지 카드 DTO를 만듭니다.
+ * 필터된 기사님을 집계 기준으로 정렬한 뒤 page 단위로 잘라 반환합니다.
+ * totalCount는 인식 가능한 서비스·지역이 있는 mover 기준이며, 정렬 전에
+ * take로 후보를 자르지 않습니다.
  *
- * @param query 검증된 찾기 목록 query
- * @returns items, nextPage, totalCount. totalCount는 서비스·지역이 있는 mover 기준입니다.
+ * @param query validator가 파싱한 검색·필터·정렬·페이지
+ * @returns items, nextPage, totalCount
  */
 export async function listMovers(
   query: MoverSearchQuery,
@@ -158,20 +220,7 @@ export async function listMovers(
   const start = (query.page - 1) * query.pageSize;
   const pageRows = ranked.slice(start, start + query.pageSize);
   const cards = await findMoverSearchCardsByIds(pageRows.map((row) => row.id));
-  const cardById = new Map(cards.map((card) => [card.id, card]));
-  const rankedById = new Map(pageRows.map((row) => [row.id, row]));
-
-  const items = pageRows.flatMap((row) => {
-    const card = cardById.get(row.id);
-    const rankedMover = rankedById.get(row.id);
-
-    if (!card || !rankedMover) {
-      return [];
-    }
-
-    const item = toMoverSearchItem(card, rankedMover);
-    return item ? [item] : [];
-  });
+  const items = toMoverSearchItems(pageRows, cards);
 
   const hasNext = start + pageRows.length < ranked.length;
 
@@ -179,5 +228,63 @@ export async function listMovers(
     items,
     nextPage: hasNext ? query.page + 1 : null,
     totalCount: ranked.length,
+  };
+}
+
+/**
+ * 공개 상세 카드 한 명을 반환합니다.
+ * 없거나 서비스·지역을 인식할 수 없으면 404 MOVER_NOT_FOUND로 거절합니다.
+ * isFavorite는 이 API 범위가 아닙니다.
+ *
+ * @param moverId 경로 UUID. 인증 주체와 무관합니다.
+ * @returns 목록 카드 필드에 보유 서비스·지역 배열을 더한 상세 DTO
+ * @throws {NotFoundError} 대상 없음 또는 불완전 프로필
+ */
+export async function getMoverById(
+  moverId: string,
+): Promise<MoverSearchDetailDto> {
+  const record = await findMoverSearchCardById(moverId);
+
+  if (!record) {
+    throw new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND");
+  }
+
+  const aggregates = await findMoverSearchAggregates([moverId]);
+  const ranked = toRankedMover(
+    { id: record.id, careerYears: record.careerYears },
+    aggregates,
+  );
+  const mover = toMoverSearchDetail(record, ranked);
+
+  if (!mover) {
+    throw new NotFoundError("기사님을 찾을 수 없습니다.", "MOVER_NOT_FOUND");
+  }
+
+  return mover;
+}
+
+/**
+ * 비회원 사이드바용 추천 상위 3명을 반환합니다.
+ * 지역·서비스 필터는 쓰지 않지만, 목록과 같은 불완전 프로필 제외 where는 유지합니다.
+ *
+ * 찜 수·평점이 Mover 컬럼이 아니므로 DB LIMIT 3만 넣으면 임의 3명의 순위가 됩니다.
+ * 후보를 집계·정렬한 뒤 slice하고, JOIN ORDER BY LIMIT 또는 집계 컬럼은 후속으로 둡니다.
+ *
+ * @returns 찜 수 내림차순, 같으면 평점 내림차순, 같으면 id 오름차순인 items. 최대 3명
+ */
+export async function listRecommendedMovers(): Promise<MoverSearchRecommendedResult> {
+  const sortRows = await findFilteredMoverSortRows(RECOMMENDED_FILTER_QUERY);
+  const aggregates = await findMoverSearchAggregates(
+    sortRows.map((row) => row.id),
+  );
+  // LIMIT을 쿼리에 두면 집계 전 임의 행이 잘리므로, 순위가 정해진 뒤에만 3명으로 자릅니다.
+  const ranked = sortRows
+    .map((row) => toRankedMover(row, aggregates))
+    .sort(compareRecommendedMovers)
+    .slice(0, RECOMMENDED_MOVER_LIMIT);
+  const cards = await findMoverSearchCardsByIds(ranked.map((row) => row.id));
+
+  return {
+    items: toMoverSearchItems(ranked, cards),
   };
 }

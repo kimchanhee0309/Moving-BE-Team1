@@ -1,3 +1,9 @@
+/**
+ * 기사님 찾기 목록·상세·추천에서 공유하는 허용값과 상한입니다.
+ * 화면 한글 지역과 DB Region.name(SEOUL 등) 매핑, page/추천 인원 제한을 둡니다.
+ *
+ * 담당하지 않는 범위: HTTP 검증, DTO 조립, Prisma 조회
+ */
 export const MOVER_SERVICE_TYPES = ["SMALL", "HOME", "OFFICE"] as const;
 
 export const SERVICE_TYPE_PRIORITY = MOVER_SERVICE_TYPES;
@@ -77,6 +83,9 @@ export const MAX_MOVER_SEARCH_PAGE_SIZE = 20;
 export const MAX_MOVER_SEARCH_PAGE = 1000;
 
 export const MAX_MOVER_SEARCH_LENGTH = 50;
+
+/** 비회원 사이드바 추천 인원. DB LIMIT이 아니라 집계 정렬 뒤 slice 상한입니다. */
+export const RECOMMENDED_MOVER_LIMIT = 3;
 
 export const REGION_DB_NAMES = Object.values(REGION_TO_DB_NAME);
 
