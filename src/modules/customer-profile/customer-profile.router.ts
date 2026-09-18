@@ -27,7 +27,7 @@ export const customerProfileRouter = Router();
  *       required: [id, name, email, phone, profileImageUrl, serviceTypes, region, createdAt, updatedAt]
  *       properties:
  *         id: { type: string, format: uuid }
- *         name: { type: string, maxLength: 50, example: "홍길동" }
+ *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
  *         email: { type: string, format: email, example: "customer@example.com" }
  *         phone: { type: string, nullable: true, example: "01012345678" }
  *         profileImageUrl: { type: string, nullable: true, example: "/uploads/customer-profiles/example.jpg" }
@@ -113,7 +113,7 @@ export const customerProfileRouter = Router();
  *             type: object
  *             minProperties: 1
  *             properties:
- *               name: { type: string, minLength: 1, maxLength: 50 }
+ *               name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용" }
  *               email: { type: string, format: email }
  *               phone: { type: string, nullable: true, description: "빈 문자열이면 null로 초기화" }
  *               currentPassword: { type: string, format: password, description: "newPassword와 함께 전송" }

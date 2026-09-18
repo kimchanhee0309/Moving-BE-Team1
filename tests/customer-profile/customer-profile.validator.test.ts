@@ -32,11 +32,22 @@ describe("Customer Profile validator", () => {
   });
 
   test("PATCH에서 phone 빈 문자열은 null, 생략은 미포함으로 구분한다", () => {
-    expect(parseUpdateCustomerProfileInput({ phone: "" })).toEqual({ phone: null });
+    expect(parseUpdateCustomerProfileInput({ phone: "" })).toEqual({
+      phone: null,
+    });
     expect(parseUpdateCustomerProfileInput({ name: " 홍길동 " })).toEqual({
       name: "홍길동",
     });
   });
+
+  test.each(["ㄱㄴㄷ", "김지훈2", "홍길동!"])(
+    "PATCH에서 허용되지 않은 이름 형식을 거절한다: %s",
+    (name) => {
+      expect(() => parseUpdateCustomerProfileInput({ name })).toThrow(
+        BadRequestError,
+      );
+    },
+  );
 
   test("비밀번호 변경에는 현재 비밀번호와 새 비밀번호가 모두 필요하다", () => {
     expect(() =>

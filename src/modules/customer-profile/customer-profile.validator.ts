@@ -5,6 +5,7 @@
 import { z } from "zod";
 
 import { BadRequestError } from "../../common/errors/app-error";
+import { userNameSchema } from "../../common/validation/user-name-schema";
 import { parseWithZod } from "../../common/validation/zod-parser";
 import {
   CUSTOMER_REGIONS,
@@ -59,12 +60,6 @@ const regionSchema = z
     }),
   );
 
-const nameSchema = z
-  .string({ error: "이름을 입력해 주세요." })
-  .trim()
-  .min(1, { error: "이름을 입력해 주세요." })
-  .max(50, { error: "이름은 50자 이하여야 합니다." });
-
 const emailSchema = z
   .string({ error: "이메일을 입력해 주세요." })
   .trim()
@@ -116,7 +111,7 @@ const createCustomerProfileSchema = z
 
 const updateCustomerProfileSchema = z
   .object({
-    name: nameSchema.optional(),
+    name: userNameSchema.optional(),
     email: emailSchema.optional(),
     phone: phoneSchema.optional(),
     currentPassword: passwordSchema("currentPassword").optional(),
