@@ -95,6 +95,7 @@ describe("listMovers", () => {
         {
           id: moverB,
           serviceType: "SMALL",
+          serviceTypes: ["SMALL", "HOME"],
           region: "서울",
           moverName: "많은리뷰",
           introduction: "꼼꼼하고 안전한 이사를 도와드립니다.",
@@ -109,6 +110,7 @@ describe("listMovers", () => {
         {
           id: moverA,
           serviceType: "SMALL",
+          serviceTypes: ["SMALL", "HOME"],
           region: "서울",
           moverName: "적은리뷰",
           introduction: "꼼꼼하고 안전한 이사를 도와드립니다.",
@@ -161,6 +163,7 @@ describe("listMovers", () => {
       "경력2",
     ]);
     expect(result.items[0]?.serviceType).toBe("OFFICE");
+    expect(result.items[0]?.serviceTypes).toEqual(["OFFICE"]);
     expect(result.items[0]?.region).toBe("부산");
   });
 
@@ -301,5 +304,8 @@ describe("listRecommendedMovers", () => {
       "찜중간",
     ]);
     expect(result.items).toHaveLength(3);
+    expect(result.items[0]?.serviceType).toBe("SMALL");
+    expect(result.items[0]?.serviceTypes).toEqual(["SMALL", "HOME"]);
+    expect(result.items[0]).not.toHaveProperty("regions");
   });
 });

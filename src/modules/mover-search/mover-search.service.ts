@@ -3,7 +3,7 @@
  * Express 객체에 의존하지 않으며 Prisma는 Repository에 위임합니다.
  *
  * 찜 여부·리뷰 본문·지정 견적은 해당 담당 API가 생긴 뒤 연결합니다.
- * 목록 카드의 대표 서비스·지역은 실제 보유 값만 쓰고, 없으면 카드를 제외합니다.
+ * 목록·추천 카드는 대표 서비스와 보유 서비스 배열을 함께 내리고, 없으면 카드를 제외합니다.
  */
 import { NotFoundError } from "../../common/errors/app-error";
 import {
@@ -109,12 +109,6 @@ function listOwnedRegions(dbNames: string[]): MoverRegion[] {
   return MOVER_REGIONS.filter((region) => owned.has(region));
 }
 
-function pickRepresentativeServiceType(
-  names: string[],
-): MoverServiceType | undefined {
-  return listOwnedServiceTypes(names)[0];
-}
-
 function pickRepresentativeRegion(dbNames: string[]): string | undefined {
   return listOwnedRegions(dbNames)[0];
 }
@@ -123,9 +117,10 @@ function toMoverSearchItem(
   record: MoverSearchCardRecord,
   ranked: RankedMover,
 ): MoverSearchItemDto | undefined {
-  const serviceType = pickRepresentativeServiceType(
+  const serviceTypes = listOwnedServiceTypes(
     record.serviceTypes.map((entry) => entry.serviceType.name),
   );
+  const serviceType = serviceTypes[0];
   const region = pickRepresentativeRegion(
     record.regions.map((entry) => entry.region.name),
   );
@@ -137,6 +132,7 @@ function toMoverSearchItem(
   return {
     id: record.id,
     serviceType,
+    serviceTypes,
     region,
     moverName: record.nickname,
     introduction: record.shortIntroduction,
@@ -162,9 +158,6 @@ function toMoverSearchDetail(
 
   return {
     ...item,
-    serviceTypes: listOwnedServiceTypes(
-      record.serviceTypes.map((entry) => entry.serviceType.name),
-    ),
     regions: listOwnedRegions(record.regions.map((entry) => entry.region.name)),
   };
 }
