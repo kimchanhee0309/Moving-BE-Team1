@@ -26,6 +26,36 @@ describe("Auth validator", () => {
     });
   });
 
+  test.each(["김지훈", "홍 길동", "Jihoon Kim", "Anne-Marie", "O'Connor", "김·지훈"])(
+    "회원가입에서 허용된 이름 형식을 통과시킨다: %s",
+    (name) => {
+      expect(
+        parseSignUpInput({
+          name,
+          email: "user@example.com",
+          phone: "01012345678",
+          password: "Password1!",
+          role: "CUSTOMER",
+        }).name,
+      ).toBe(name);
+    },
+  );
+
+  test.each(["", "ㄱㄴㄷ", "김지훈2", "홍길동!", "가".repeat(51)])(
+    "회원가입에서 허용되지 않은 이름 형식을 거절한다: %s",
+    (name) => {
+      expect(() =>
+        parseSignUpInput({
+          name,
+          email: "user@example.com",
+          phone: "01012345678",
+          password: "Password1!",
+          role: "CUSTOMER",
+        }),
+      ).toThrow(BadRequestError);
+    },
+  );
+
   test("여러 필드가 잘못되면 details 배열에 모두 기록한다", () => {
     expect.assertions(2);
 

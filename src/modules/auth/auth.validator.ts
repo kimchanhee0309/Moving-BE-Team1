@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 
+import { userNameSchema } from "../../common/validation/user-name-schema";
 import { parseWithZod } from "../../common/validation/zod-parser";
 import type { LoginRequestDto, SignUpRequestDto } from "./auth.dto";
 
@@ -39,7 +40,7 @@ const passwordSchema = requiredString.refine(
 
 const signUpSchema = z
   .object({
-    name: requiredString.max(50, { error: "50자 이하여야 합니다." }),
+    name: userNameSchema,
     email: emailSchema,
     phone: requiredString
       .transform((value) => value.replace(/-/g, ""))

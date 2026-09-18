@@ -1,3 +1,5 @@
+/** 기사님 기본정보 수정 요청의 정규화와 검증 규칙을 확인합니다. */
+import { BadRequestError } from "../../src/common/errors/app-error";
 import { parseUpdateMoverBasicInfoRequest } from "../../src/modules/mover-mypage/mover-mypage.validator";
 
 describe("Mover My Page validator", () => {
@@ -26,6 +28,15 @@ describe("Mover My Page validator", () => {
       phone: null,
     });
   });
+
+  test.each(["ㄱㄴㄷ", "김지훈2", "홍길동!"])(
+    "허용되지 않은 이름 형식을 거절한다: %s",
+    (name) => {
+      expect(() => parseUpdateMoverBasicInfoRequest({ name })).toThrow(
+        BadRequestError,
+      );
+    },
+  );
 
   test("빈 PATCH를 거절한다", () => {
     expect(() => parseUpdateMoverBasicInfoRequest({})).toThrow(

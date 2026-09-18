@@ -2,6 +2,7 @@
 import { z } from "zod";
 
 import { BadRequestError } from "../../common/errors/app-error";
+import { userNameSchema } from "../../common/validation/user-name-schema";
 import { parseWithZod } from "../../common/validation/zod-parser";
 import type { UpdateMoverBasicInfoRequestDto } from "./mover-mypage.dto";
 
@@ -10,12 +11,6 @@ const KOREAN_MOBILE_PATTERN = /^01[016789]\d{7,8}$/;
 const PASSWORD_LETTER_PATTERN = /[A-Za-z]/;
 const PASSWORD_NUMBER_PATTERN = /\d/;
 const PASSWORD_SPECIAL_PATTERN = /[^A-Za-z0-9]/;
-
-const nameSchema = z
-  .string({ error: "이름을 입력해 주세요." })
-  .trim()
-  .min(1, { error: "이름을 입력해 주세요." })
-  .max(50, { error: "이름은 50자 이하여야 합니다." });
 
 const emailSchema = z
   .string({ error: "이메일을 입력해 주세요." })
@@ -64,7 +59,7 @@ function passwordSchema(field: "currentPassword" | "newPassword") {
 
 const updateMoverBasicInfoSchema = z
   .object({
-    name: nameSchema.optional(),
+    name: userNameSchema.optional(),
     email: emailSchema.optional(),
     phone: phoneSchema.optional(),
     currentPassword: passwordSchema("currentPassword").optional(),

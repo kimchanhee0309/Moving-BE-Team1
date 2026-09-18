@@ -44,7 +44,7 @@ export const authRouter = Router();
  *       type: object
  *       required: [name, email, phone, password, role]
  *       properties:
- *         name: { type: string, maxLength: 50, example: "홍길동" }
+ *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
  *         email: { type: string, format: email, example: "user@example.com" }
  *         phone: { type: string, example: "01012345678" }
  *         password: { type: string, format: password, minLength: 8, example: "Password1!" }
