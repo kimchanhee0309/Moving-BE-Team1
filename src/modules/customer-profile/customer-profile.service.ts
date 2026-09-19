@@ -5,6 +5,7 @@
 import bcrypt from "bcrypt";
 
 import {
+  BadRequestError,
   ConflictError,
   ForbiddenError,
   UnauthorizedError,
@@ -227,8 +228,8 @@ export async function getCustomerProfile(customerId: string): Promise<CustomerPr
 
 /**
  * 현재 프로필의 User·Customer·서비스 연결을 transaction으로 수정합니다.
- * currentPassword가 전달되면 새 비밀번호 유무와 관계없이 검증하고, OAuth 전용 계정은
- * 확인할 passwordHash가 없으므로 임의 비밀번호 생성 대신 409로 거절합니다.
+ * 이메일·비밀번호 계정은 이메일 또는 비밀번호 변경에만 현재 비밀번호를 요구하고,
+ * OAuth 계정은 이메일·비밀번호 변경을 지원하지 않으며 일반 프로필 수정만 허용합니다.
  */
 export async function updateCustomerProfile(
   customerId: string,
@@ -243,12 +244,34 @@ export async function updateCustomerProfile(
   let passwordVerification:
     | { expectedPasswordHash: string; nextPasswordHash: string }
     | undefined;
+  const isEmailChanging =
+    input.email !== undefined && input.email !== currentProfile.user.email;
+  const requiresPasswordVerification =
+    isEmailChanging || input.newPassword !== undefined;
 
-  if (input.currentPassword !== undefined) {
-    if (!currentProfile.user.passwordHash) {
+  if (!currentProfile.user.passwordHash) {
+    if (isEmailChanging) {
       throw new ConflictError(
-        "소셜 로그인 계정은 현재 비밀번호를 확인하거나 변경할 수 없습니다.",
+        "소셜 로그인 계정은 이메일을 변경할 수 없습니다.",
+        "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+      );
+    }
+
+    if (input.currentPassword !== undefined || input.newPassword !== undefined) {
+      throw new ConflictError(
+        "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
         "PASSWORD_CHANGE_NOT_AVAILABLE",
+      );
+    }
+  } else if (requiresPasswordVerification) {
+    if (input.currentPassword === undefined) {
+      throw new BadRequestError(
+        "입력값을 확인해 주세요.",
+        "VALIDATION_ERROR",
+        [{
+          field: "currentPassword",
+          reason: "이메일 또는 비밀번호 변경에는 현재 비밀번호가 필요합니다.",
+        }],
       );
     }
 

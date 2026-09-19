@@ -193,9 +193,22 @@ describe("Mover My Page service", () => {
     );
   });
 
-  test("새 비밀번호 없이 기본정보를 수정해도 현재 비밀번호를 검증한다", async () => {
+  test("OAuth 계정의 이메일 변경을 거절한다", async () => {
+    jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue({
+      ...basicRecord,
+      user: { ...basicRecord.user, passwordHash: null },
+    });
+
+    await expect(
+      updateMoverBasicInfo(moverId, { email: "new@example.com" }),
+    ).rejects.toEqual(expect.objectContaining({
+      status: 409,
+      code: "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+    }));
+  });
+
+  test("이름·전화번호는 현재 비밀번호 없이 수정한다", async () => {
     jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
-    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
     jest.mocked(findMoverBasicInfoInTransaction)
       .mockResolvedValueOnce(basicRecord)
       .mockResolvedValueOnce({
@@ -206,18 +219,56 @@ describe("Mover My Page service", () => {
     await expect(
       updateMoverBasicInfo(moverId, {
         name: "새 이름",
-        currentPassword: "old-pass1!",
       }),
     ).resolves.toMatchObject({ name: "새 이름" });
 
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(updateMoverUserWithPasswordMatch).not.toHaveBeenCalled();
+    expect(updateMoverUser).toHaveBeenCalledWith(transaction, userId, {
+      name: "새 이름",
+    });
+  });
+
+  test("이메일 변경에서 현재 비밀번호를 생략하면 거절한다", async () => {
+    jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
+
+    await expect(
+      updateMoverBasicInfo(moverId, { email: "new@example.com" }),
+    ).rejects.toEqual(expect.objectContaining({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      details: [expect.objectContaining({ field: "currentPassword" })],
+    }));
+
+    expect(runMoverMyPageTransaction).not.toHaveBeenCalled();
+  });
+
+  test("이메일 변경은 현재 비밀번호를 확인하고 기존 hash를 유지한다", async () => {
+    jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
+    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+    jest.mocked(findMoverBasicInfoInTransaction)
+      .mockResolvedValueOnce(basicRecord)
+      .mockResolvedValueOnce({
+        ...basicRecord,
+        user: { ...basicRecord.user, email: "new@example.com" },
+      });
+
+    await expect(
+      updateMoverBasicInfo(moverId, {
+        email: "new@example.com",
+        currentPassword: "old-pass1!",
+      }),
+    ).resolves.toMatchObject({ email: "new@example.com" });
+
+    expect(bcrypt.compare).toHaveBeenCalledWith("old-pass1!", "old-hash");
     expect(bcrypt.hash).not.toHaveBeenCalled();
     expect(updateMoverUserWithPasswordMatch).toHaveBeenCalledWith(
       transaction,
       userId,
       "old-hash",
-      { name: "새 이름", passwordHash: "old-hash" },
+      { email: "new@example.com", passwordHash: "old-hash" },
     );
-    expect(updateMoverUser).not.toHaveBeenCalled();
   });
 
   test("비밀번호 hash가 동시에 바뀌면 전체 transaction을 중단한다", async () => {
@@ -242,11 +293,15 @@ describe("Mover My Page service", () => {
 
   test("중복 이메일은 409로 거절한다", async () => {
     jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
+    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
     jest.mocked(findMoverBasicInfoInTransaction).mockResolvedValue(basicRecord);
     jest.mocked(findOtherUserByEmail).mockResolvedValue({ id: "other-user" });
 
     await expect(
-      updateMoverBasicInfo(moverId, { email: "other@example.com" }),
+      updateMoverBasicInfo(moverId, {
+        email: "other@example.com",
+        currentPassword: "old-pass1!",
+      }),
     ).rejects.toEqual(
       expect.objectContaining({
         status: 409,

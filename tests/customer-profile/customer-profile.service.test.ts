@@ -159,6 +159,22 @@ describe("Customer Profile service", () => {
     expect(runCustomerProfileTransaction).not.toHaveBeenCalled();
   });
 
+  test("OAuth 계정의 이메일 변경을 409로 거절한다", async () => {
+    jest.mocked(findCustomerProfileForUpdate).mockResolvedValue({
+      ...emailProfile,
+      user: { ...emailProfile.user, passwordHash: null },
+    });
+
+    await expect(
+      updateCustomerProfile("customer-id", { email: "new@example.com" }),
+    ).rejects.toMatchObject({
+      code: "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+      status: 409,
+    });
+
+    expect(runCustomerProfileTransaction).not.toHaveBeenCalled();
+  });
+
   test("검증 이후 기존 hash가 바뀐 비밀번호 변경 요청을 transaction에서 거절한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
     jest.mocked(findCustomerProfileByIdInTransaction).mockResolvedValueOnce(emailProfile);
@@ -185,27 +201,53 @@ describe("Customer Profile service", () => {
     expect(updateCustomerUser).not.toHaveBeenCalled();
   });
 
-  test("지역 수정과 함께 전달한 현재 비밀번호가 틀리면 transaction 전에 거절한다", async () => {
+  test("이메일 변경에서 현재 비밀번호를 생략하면 transaction 전에 거절한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
-    jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
 
     await expect(
       updateCustomerProfile("customer-id", {
-        currentPassword: "WrongPassword1!",
-        region: "경기",
+        email: "new@example.com",
       }),
     ).rejects.toMatchObject({
-      code: "INVALID_CURRENT_PASSWORD",
-      status: 401,
+      code: "VALIDATION_ERROR",
+      status: 400,
+      details: [expect.objectContaining({ field: "currentPassword" })],
     });
 
     expect(runCustomerProfileTransaction).not.toHaveBeenCalled();
-    expect(updateCustomerRecord).not.toHaveBeenCalled();
+    expect(bcrypt.compare).not.toHaveBeenCalled();
   });
 
-  test("현재 비밀번호가 맞으면 새 비밀번호 없이 지역만 수정한다", async () => {
+  test("이메일 변경은 현재 비밀번호를 확인하고 기존 hash를 유지한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
     jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+    jest.mocked(updateCustomerUserWithPasswordMatch).mockResolvedValue({ count: 1 });
+    jest.mocked(findCustomerProfileByIdInTransaction)
+      .mockResolvedValueOnce(emailProfile)
+      .mockResolvedValueOnce({
+        ...emailProfile,
+        user: { ...emailProfile.user, email: "new@example.com" },
+      });
+
+    await expect(
+      updateCustomerProfile("customer-id", {
+        email: "new@example.com",
+        currentPassword: "Current1!",
+      }),
+    ).resolves.toMatchObject({ email: "new@example.com" });
+
+    expect(bcrypt.compare).toHaveBeenCalledWith("Current1!", "bcrypt-hash");
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(updateCustomerUserWithPasswordMatch).toHaveBeenCalledWith(
+      transaction,
+      "user-id",
+      "bcrypt-hash",
+      { email: "new@example.com", passwordHash: "bcrypt-hash" },
+    );
+  });
+
+  test("서비스·지역 프로필 정보는 현재 비밀번호 없이 수정한다", async () => {
+    jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
     jest.mocked(findRegionByName).mockResolvedValue({
       id: "region-gyeonggi",
       name: "GYEONGGI",
@@ -213,22 +255,16 @@ describe("Customer Profile service", () => {
     jest.mocked(findCustomerProfileByIdInTransaction)
       .mockResolvedValueOnce(emailProfile)
       .mockResolvedValueOnce(emailProfile);
-    jest.mocked(updateCustomerUserWithPasswordMatch).mockResolvedValue({ count: 1 });
 
     await expect(
       updateCustomerProfile("customer-id", {
-        currentPassword: "Current1!",
         region: "경기",
       }),
     ).resolves.toBeDefined();
 
+    expect(bcrypt.compare).not.toHaveBeenCalled();
     expect(bcrypt.hash).not.toHaveBeenCalled();
-    expect(updateCustomerUserWithPasswordMatch).toHaveBeenCalledWith(
-      transaction,
-      "user-id",
-      "bcrypt-hash",
-      { passwordHash: "bcrypt-hash" },
-    );
+    expect(updateCustomerUserWithPasswordMatch).not.toHaveBeenCalled();
     expect(updateCustomerRecord).toHaveBeenCalledWith(
       transaction,
       "customer-id",

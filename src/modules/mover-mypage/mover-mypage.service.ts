@@ -2,6 +2,7 @@
 import bcrypt from "bcrypt";
 
 import {
+  BadRequestError,
   ConflictError,
   ForbiddenError,
   UnauthorizedError,
@@ -179,7 +180,7 @@ export async function getMoverMyPage(
   return toMoverMyPage(record, ratingGroups);
 }
 
-/** 이름·이메일·전화번호를 수정하고, 전달된 현재 비밀번호를 같은 transaction 경계에 연결합니다. */
+/** 일반 기본정보를 수정하고 이메일·비밀번호 변경만 현재 비밀번호 검증과 같은 transaction에 연결합니다. */
 export async function updateMoverBasicInfo(
   moverId: string,
   input: UpdateMoverBasicInfoRequestDto,
@@ -193,12 +194,34 @@ export async function updateMoverBasicInfo(
   let passwordVerification:
     | { expectedPasswordHash: string; nextPasswordHash: string }
     | undefined;
+  const isEmailChanging =
+    input.email !== undefined && input.email !== current.user.email;
+  const requiresPasswordVerification =
+    isEmailChanging || input.newPassword !== undefined;
 
-  if (input.currentPassword !== undefined) {
-    if (!current.user.passwordHash) {
+  if (!current.user.passwordHash) {
+    if (isEmailChanging) {
       throw new ConflictError(
-        "소셜 로그인 계정은 현재 비밀번호를 확인하거나 변경할 수 없습니다.",
+        "소셜 로그인 계정은 이메일을 변경할 수 없습니다.",
+        "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+      );
+    }
+
+    if (input.currentPassword !== undefined || input.newPassword !== undefined) {
+      throw new ConflictError(
+        "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
         "PASSWORD_CHANGE_NOT_AVAILABLE",
+      );
+    }
+  } else if (requiresPasswordVerification) {
+    if (input.currentPassword === undefined) {
+      throw new BadRequestError(
+        "입력값을 확인해 주세요.",
+        "VALIDATION_ERROR",
+        [{
+          field: "currentPassword",
+          reason: "이메일 또는 비밀번호 변경에는 현재 비밀번호가 필요합니다.",
+        }],
       );
     }
 
