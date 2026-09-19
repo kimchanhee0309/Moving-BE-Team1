@@ -47,10 +47,10 @@ describe("Mover My Page validator", () => {
     );
   });
 
-  test("현재 비밀번호만 전달한 기본정보 수정은 허용한다", () => {
-    expect(
+  test("민감정보 변경 없이 현재 비밀번호만 전달하면 거절한다", () => {
+    expect(() =>
       parseUpdateMoverBasicInfoRequest({ currentPassword: "old-pass1!" }),
-    ).toEqual({ currentPassword: "old-pass1!" });
+    ).toThrow(expect.objectContaining({ status: 400, code: "VALIDATION_ERROR" }));
   });
 
   test("새 비밀번호 변경에는 현재 비밀번호가 필요하다", () => {

@@ -96,7 +96,7 @@ export const moverMyPageRouter = Router();
  *               name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용" }
  *               email: { type: string, format: email }
  *               phone: { type: string, nullable: true, description: "빈 문자열이면 null로 초기화" }
- *               currentPassword: { type: string, format: password, description: "이메일·비밀번호 계정의 이메일 또는 비밀번호 변경 시 필수" }
+ *               currentPassword: { type: string, format: password, description: "이메일·비밀번호 계정의 이메일 또는 비밀번호 변경 시에만 입력하며 해당 변경 시 필수" }
  *               newPassword: { type: string, format: password, minLength: 8, description: "이메일·비밀번호 계정만 지원. currentPassword 필수, 영문·숫자·특수문자 포함, 8~72바이트" }
  *     responses:
  *       200:
