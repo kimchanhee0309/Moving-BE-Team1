@@ -136,14 +136,14 @@ export function findCustomerProfileForUpdate(
   });
 }
 
-/** 수정 transaction 안에서 최신 profile과 비밀번호 hash를 다시 조회합니다. */
+/** 수정 transaction 안에서 최신 profile과 재인증용 비밀번호 hash를 함께 조회합니다. */
 export function findCustomerProfileByIdInTransaction(
   transaction: CustomerProfileTransaction,
   customerId: string,
-): Promise<CustomerProfileRecord | null> {
+): Promise<CustomerProfileWithPasswordRecord | null> {
   return transaction.customer.findUnique({
     where: { id: customerId },
-    select: customerProfileSelect,
+    select: customerProfileWithPasswordSelect,
   });
 }
 
