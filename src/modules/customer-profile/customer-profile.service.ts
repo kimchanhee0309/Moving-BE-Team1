@@ -5,6 +5,7 @@
 import bcrypt from "bcrypt";
 
 import {
+  BadRequestError,
   ConflictError,
   ForbiddenError,
   UnauthorizedError,
@@ -227,7 +228,8 @@ export async function getCustomerProfile(customerId: string): Promise<CustomerPr
 
 /**
  * 현재 프로필의 User·Customer·서비스 연결을 transaction으로 수정합니다.
- * OAuth 전용 계정은 passwordHash가 없으므로 임의 비밀번호 생성 대신 변경 요청을 409로 거절합니다.
+ * 이메일·비밀번호 계정은 이메일 또는 비밀번호 변경에만 현재 비밀번호를 요구하고,
+ * OAuth 계정은 이메일·비밀번호 변경을 지원하지 않으며 일반 프로필 수정만 허용합니다.
  */
 export async function updateCustomerProfile(
   customerId: string,
@@ -239,43 +241,82 @@ export async function updateCustomerProfile(
     throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
   }
 
-  let passwordChange:
-    | { expectedPasswordHash: string; newPasswordHash: string }
-    | undefined;
-
-  if (input.currentPassword !== undefined && input.newPassword !== undefined) {
-    if (!currentProfile.user.passwordHash) {
-      throw new ConflictError(
-        "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
-        "PASSWORD_CHANGE_NOT_AVAILABLE",
-      );
-    }
-
-    const isCurrentPasswordValid = await bcrypt.compare(
-      input.currentPassword,
-      currentProfile.user.passwordHash,
-    );
-
-    if (!isCurrentPasswordValid) {
-      throw new UnauthorizedError("현재 비밀번호가 올바르지 않습니다.", "INVALID_CURRENT_PASSWORD");
-    }
-
-    passwordChange = {
-      expectedPasswordHash: currentProfile.user.passwordHash,
-      newPasswordHash: await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
-    };
-  }
-
   try {
     const updatedProfile = await runCustomerProfileTransaction(async (transaction) => {
-      // 비밀번호 확인 이후 삭제·변경된 profile을 쓰지 않도록 transaction 안에서 최신 상태를 재확인합니다.
+      // 최신 이메일·passwordHash를 기준으로 민감정보 변경 여부와 재인증을 함께 판단합니다.
       const profile = await findCustomerProfileByIdInTransaction(transaction, customerId);
 
       if (!profile) {
         throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
       }
 
-      if (input.email !== undefined && input.email !== profile.user.email) {
+      const isEmailChanging =
+        input.email !== undefined && input.email !== profile.user.email;
+      const isPasswordChanging = input.newPassword !== undefined;
+      const requiresPasswordVerification = isEmailChanging || isPasswordChanging;
+
+      if (input.currentPassword !== undefined && !requiresPasswordVerification) {
+        throw new BadRequestError(
+          "입력값을 확인해 주세요.",
+          "VALIDATION_ERROR",
+          [{
+            field: "currentPassword",
+            reason: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+          }],
+        );
+      }
+
+      let passwordVerification:
+        | { expectedPasswordHash: string; nextPasswordHash: string }
+        | undefined;
+
+      if (!profile.user.passwordHash) {
+        if (isEmailChanging) {
+          throw new ConflictError(
+            "소셜 로그인 계정은 이메일을 변경할 수 없습니다.",
+            "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+          );
+        }
+
+        if (isPasswordChanging) {
+          throw new ConflictError(
+            "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
+            "PASSWORD_CHANGE_NOT_AVAILABLE",
+          );
+        }
+      } else if (requiresPasswordVerification) {
+        if (input.currentPassword === undefined) {
+          throw new BadRequestError(
+            "입력값을 확인해 주세요.",
+            "VALIDATION_ERROR",
+            [{
+              field: "currentPassword",
+              reason: "이메일 또는 비밀번호 변경에는 현재 비밀번호가 필요합니다.",
+            }],
+          );
+        }
+
+        const isCurrentPasswordValid = await bcrypt.compare(
+          input.currentPassword,
+          profile.user.passwordHash,
+        );
+
+        if (!isCurrentPasswordValid) {
+          throw new UnauthorizedError(
+            "현재 비밀번호가 올바르지 않습니다.",
+            "INVALID_CURRENT_PASSWORD",
+          );
+        }
+
+        passwordVerification = {
+          expectedPasswordHash: profile.user.passwordHash,
+          nextPasswordHash: input.newPassword !== undefined
+            ? await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS)
+            : profile.user.passwordHash,
+        };
+      }
+
+      if (isEmailChanging && input.email !== undefined) {
         const emailOwner = await findOtherUserByEmail(transaction, input.email, profile.user.id);
         if (emailOwner) {
           throw new ConflictError("이미 사용 중인 이메일입니다.", "EMAIL_ALREADY_EXISTS");
@@ -292,7 +333,7 @@ export async function updateCustomerProfile(
       const references = await resolveReferenceIds(transaction, input);
       const userChanges = {
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.email !== undefined ? { email: input.email } : {}),
+        ...(isEmailChanging && input.email !== undefined ? { email: input.email } : {}),
         ...(input.phone !== undefined ? { phone: input.phone } : {}),
       };
       const customerChanges = {
@@ -302,12 +343,12 @@ export async function updateCustomerProfile(
           : {}),
       };
 
-      if (passwordChange !== undefined) {
+      if (passwordVerification !== undefined) {
         const result = await updateCustomerUserWithPasswordMatch(
           transaction,
           profile.user.id,
-          passwordChange.expectedPasswordHash,
-          { ...userChanges, passwordHash: passwordChange.newPasswordHash },
+          passwordVerification.expectedPasswordHash,
+          { ...userChanges, passwordHash: passwordVerification.nextPasswordHash },
         );
 
         if (result.count === 0) {

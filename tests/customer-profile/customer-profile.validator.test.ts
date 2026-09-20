@@ -49,7 +49,13 @@ describe("Customer Profile validator", () => {
     },
   );
 
-  test("비밀번호 변경에는 현재 비밀번호와 새 비밀번호가 모두 필요하다", () => {
+  test("민감정보 변경 없이 현재 비밀번호만 전달하면 거절한다", () => {
+    expect(() =>
+      parseUpdateCustomerProfileInput({ currentPassword: "Current1!" }),
+    ).toThrow(BadRequestError);
+  });
+
+  test("새 비밀번호 변경에는 현재 비밀번호가 필요하다", () => {
     expect(() =>
       parseUpdateCustomerProfileInput({ newPassword: "Changed1!" }),
     ).toThrow(BadRequestError);

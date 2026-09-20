@@ -2,6 +2,7 @@
 import bcrypt from "bcrypt";
 
 import {
+  BadRequestError,
   ConflictError,
   ForbiddenError,
   UnauthorizedError,
@@ -179,7 +180,7 @@ export async function getMoverMyPage(
   return toMoverMyPage(record, ratingGroups);
 }
 
-/** 이름·이메일·전화번호와 선택적 비밀번호를 원자적으로 수정합니다. */
+/** 일반 기본정보를 수정하고 이메일·비밀번호 변경만 현재 비밀번호 검증과 같은 transaction에 연결합니다. */
 export async function updateMoverBasicInfo(
   moverId: string,
   input: UpdateMoverBasicInfoRequestDto,
@@ -190,36 +191,6 @@ export async function updateMoverBasicInfo(
     throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
   }
 
-  let passwordChange:
-    | { expectedPasswordHash: string; newPasswordHash: string }
-    | undefined;
-
-  if (input.currentPassword !== undefined && input.newPassword !== undefined) {
-    if (!current.user.passwordHash) {
-      throw new ConflictError(
-        "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
-        "PASSWORD_CHANGE_NOT_AVAILABLE",
-      );
-    }
-
-    const isCurrentPasswordValid = await bcrypt.compare(
-      input.currentPassword,
-      current.user.passwordHash,
-    );
-
-    if (!isCurrentPasswordValid) {
-      throw new UnauthorizedError(
-        "현재 비밀번호가 올바르지 않습니다.",
-        "INVALID_CURRENT_PASSWORD",
-      );
-    }
-
-    passwordChange = {
-      expectedPasswordHash: current.user.passwordHash,
-      newPasswordHash: await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS),
-    };
-  }
-
   try {
     return await runMoverMyPageTransaction(async (transaction) => {
       const profile = await findMoverBasicInfoInTransaction(transaction, moverId);
@@ -228,7 +199,73 @@ export async function updateMoverBasicInfo(
         throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
       }
 
-      if (input.email !== undefined && input.email !== profile.user.email) {
+      const isEmailChanging =
+        input.email !== undefined && input.email !== profile.user.email;
+      const isPasswordChanging = input.newPassword !== undefined;
+      const requiresPasswordVerification = isEmailChanging || isPasswordChanging;
+
+      if (input.currentPassword !== undefined && !requiresPasswordVerification) {
+        throw new BadRequestError(
+          "입력값을 확인해 주세요.",
+          "VALIDATION_ERROR",
+          [{
+            field: "currentPassword",
+            reason: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+          }],
+        );
+      }
+
+      let passwordVerification:
+        | { expectedPasswordHash: string; nextPasswordHash: string }
+        | undefined;
+
+      if (!profile.user.passwordHash) {
+        if (isEmailChanging) {
+          throw new ConflictError(
+            "소셜 로그인 계정은 이메일을 변경할 수 없습니다.",
+            "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+          );
+        }
+
+        if (isPasswordChanging) {
+          throw new ConflictError(
+            "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
+            "PASSWORD_CHANGE_NOT_AVAILABLE",
+          );
+        }
+      } else if (requiresPasswordVerification) {
+        if (input.currentPassword === undefined) {
+          throw new BadRequestError(
+            "입력값을 확인해 주세요.",
+            "VALIDATION_ERROR",
+            [{
+              field: "currentPassword",
+              reason: "이메일 또는 비밀번호 변경에는 현재 비밀번호가 필요합니다.",
+            }],
+          );
+        }
+
+        const isCurrentPasswordValid = await bcrypt.compare(
+          input.currentPassword,
+          profile.user.passwordHash,
+        );
+
+        if (!isCurrentPasswordValid) {
+          throw new UnauthorizedError(
+            "현재 비밀번호가 올바르지 않습니다.",
+            "INVALID_CURRENT_PASSWORD",
+          );
+        }
+
+        passwordVerification = {
+          expectedPasswordHash: profile.user.passwordHash,
+          nextPasswordHash: input.newPassword !== undefined
+            ? await bcrypt.hash(input.newPassword, PASSWORD_SALT_ROUNDS)
+            : profile.user.passwordHash,
+        };
+      }
+
+      if (isEmailChanging && input.email !== undefined) {
         const owner = await findOtherUserByEmail(
           transaction,
           input.email,
@@ -264,16 +301,16 @@ export async function updateMoverBasicInfo(
 
       const userChanges = {
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.email !== undefined ? { email: input.email } : {}),
+        ...(isEmailChanging && input.email !== undefined ? { email: input.email } : {}),
         ...(input.phone !== undefined ? { phone: input.phone } : {}),
       };
 
-      if (passwordChange) {
+      if (passwordVerification) {
         const result = await updateMoverUserWithPasswordMatch(
           transaction,
           profile.user.id,
-          passwordChange.expectedPasswordHash,
-          { ...userChanges, passwordHash: passwordChange.newPasswordHash },
+          passwordVerification.expectedPasswordHash,
+          { ...userChanges, passwordHash: passwordVerification.nextPasswordHash },
         );
 
         if (result.count === 0) {

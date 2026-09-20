@@ -121,15 +121,25 @@ const updateCustomerProfileSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    const hasCurrentPassword = value.currentPassword !== undefined;
     const hasNewPassword = value.newPassword !== undefined;
 
-    if (hasCurrentPassword !== hasNewPassword) {
+    if (
+      value.currentPassword !== undefined &&
+      value.email === undefined &&
+      !hasNewPassword
+    ) {
       context.addIssue({
         code: "custom",
-        path: [hasCurrentPassword ? "newPassword" : "currentPassword"],
-        message:
-          "비밀번호 변경에는 현재 비밀번호와 새 비밀번호가 모두 필요합니다.",
+        path: ["currentPassword"],
+        message: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+      });
+    }
+
+    if (hasNewPassword && value.currentPassword === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["currentPassword"],
+        message: "비밀번호 변경에는 현재 비밀번호가 필요합니다.",
       });
     }
   });
