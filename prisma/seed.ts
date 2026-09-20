@@ -14,6 +14,8 @@ import { hashPassword } from "../src/modules/auth/password";
 const SEED_EMAIL_DOMAIN = "@seed.moving.local";
 const SEED_PASSWORD = "Moving1234!";
 
+const REVIEW_TEST_CUSTOMER_EMAIL = "aaa123@test.com";
+
 const SERVICE_TYPE_NAMES = ["SMALL", "HOME", "OFFICE"] as const;
 
 type ServiceTypeName = (typeof SERVICE_TYPE_NAMES)[number];
@@ -81,6 +83,37 @@ interface CreatedMoveRequest {
   status: MoveRequestStatus;
   selectedMoverIndex: number;
   moveDate: Date;
+}
+
+/**
+ * aaa123@test.com 고객의 리뷰 화면을 확인하기 위한 완료 이사 데이터입니다.
+ *
+ * review가 있으면 WRITTEN 목록에 표시되고,
+ * review가 없으면 WRITABLE 목록에 표시됩니다.
+ */
+interface ReviewTestFixtureSeed {
+  moveRequestId: string;
+  quoteId: string;
+  serviceType: ServiceTypeName;
+  moverIndex: number;
+  moveDateOffset: number;
+  fromAddress: string;
+  toAddress: string;
+  price: number;
+  comment: string;
+  review?: {
+    id: string;
+    rating: number;
+    content: string;
+    createdAtOffset: number;
+  };
+}
+
+interface ReviewTestFixtureSummary {
+  moveRequests: number;
+  quotes: number;
+  writtenReviews: number;
+  writableReviews: number;
 }
 
 const CUSTOMER_SEEDS: CustomerSeed[] = [
@@ -348,6 +381,74 @@ const MOVE_REQUEST_SEEDS = [
   toAddress: string;
   status: MoveRequestStatus;
 }[];
+
+/**
+ * 고정 UUID를 사용하므로 seed를 여러 번 실행해도 같은 테스트 이력을
+ * 계속 생성하지 않고 기존 fixture를 갱신합니다.
+ *
+ * 앞의 두 요청에는 리뷰가 있어 WRITTEN 목록에 표시되고,
+ * 뒤의 두 요청에는 리뷰가 없어 WRITABLE 목록에 표시됩니다.
+ */
+const REVIEW_TEST_FIXTURE_SEEDS = [
+  {
+    moveRequestId: "aa000001-0000-4000-8000-000000000001",
+    quoteId: "aa000002-0000-4000-8000-000000000001",
+    serviceType: "SMALL",
+    moverIndex: 0,
+    moveDateOffset: -40,
+    fromAddress: "서울특별시 마포구 월드컵북로 120",
+    toAddress: "경기도 고양시 일산동구 중앙로 1000",
+    price: 180_000,
+    comment: "소형이사 확정 견적입니다. 안전하고 신속하게 진행했습니다.",
+    review: {
+      id: "aa000003-0000-4000-8000-000000000001",
+      rating: 5,
+      content:
+        "기사님이 시간 약속을 잘 지켜주셨고 짐도 정말 꼼꼼하게 옮겨주셨어요.",
+      createdAtOffset: -39,
+    },
+  },
+  {
+    moveRequestId: "aa000001-0000-4000-8000-000000000002",
+    quoteId: "aa000002-0000-4000-8000-000000000002",
+    serviceType: "HOME",
+    moverIndex: 1,
+    moveDateOffset: -30,
+    fromAddress: "서울특별시 송파구 올림픽로 300",
+    toAddress: "인천광역시 연수구 센트럴로 160",
+    price: 320_000,
+    comment: "가정이사 확정 견적입니다. 포장부터 운반까지 진행했습니다.",
+    review: {
+      id: "aa000003-0000-4000-8000-000000000002",
+      rating: 4,
+      content:
+        "전체적으로 친절하고 안전하게 이사를 진행해 주셔서 만족했습니다.",
+      createdAtOffset: -29,
+    },
+  },
+  {
+    moveRequestId: "aa000001-0000-4000-8000-000000000003",
+    quoteId: "aa000002-0000-4000-8000-000000000003",
+    serviceType: "OFFICE",
+    moverIndex: 2,
+    moveDateOffset: -20,
+    fromAddress: "경기도 성남시 분당구 판교역로 166",
+    toAddress: "서울특별시 강남구 테헤란로 152",
+    price: 550_000,
+    comment: "사무실이사 확정 견적입니다. 사무용 집기 운반을 포함합니다.",
+  },
+  {
+    moveRequestId: "aa000001-0000-4000-8000-000000000004",
+    quoteId: "aa000002-0000-4000-8000-000000000004",
+    serviceType: "HOME",
+    moverIndex: 3,
+    moveDateOffset: -10,
+    fromAddress: "부산광역시 해운대구 센텀중앙로 90",
+    toAddress: "부산광역시 수영구 광안해변로 219",
+    price: 390_000,
+    comment: "가정이사 확정 견적입니다. 포장과 가구 배치를 포함합니다.",
+  },
+] satisfies ReviewTestFixtureSeed[];
 
 function getRequiredId(
   idMap: ReadonlyMap<string, string>,
@@ -811,6 +912,222 @@ async function createReviews(
   return reviewCount;
 }
 
+/**
+ * 리뷰 테스트용 고객을 조회하거나 생성합니다.
+ *
+ * 기존 aaa123@test.com 계정이 있으면 비밀번호와 사용자 정보는 변경하지
+ * 않습니다. 고객 프로필이 없을 때만 프로필을 추가합니다.
+ *
+ * @param serviceTypeIdMap 서비스 유형 이름과 UUID 매핑
+ * @param regionIdMap 지역 이름과 UUID 매핑
+ * @returns 리뷰 테스트용 고객 식별자
+ * @throws Error 같은 이메일이 기사님 계정으로 등록된 경우
+ * @sideeffect 계정 또는 고객 프로필이 없는 경우 새 행을 생성합니다.
+ */
+async function ensureReviewTestCustomer(
+  serviceTypeIdMap: ReadonlyMap<string, string>,
+  regionIdMap: ReadonlyMap<string, string>,
+): Promise<CreatedCustomer> {
+  const passwordHash = await hashPassword(SEED_PASSWORD);
+
+  const user = await prisma.user.upsert({
+    where: {
+      email: REVIEW_TEST_CUSTOMER_EMAIL,
+    },
+    update: {},
+    create: {
+      role: UserRole.CUSTOMER,
+      name: "리뷰테스트",
+      email: REVIEW_TEST_CUSTOMER_EMAIL,
+      passwordHash,
+    },
+    include: {
+      customer: true,
+    },
+  });
+
+  if (user.role !== UserRole.CUSTOMER) {
+    throw new Error(
+      `${REVIEW_TEST_CUSTOMER_EMAIL} 계정은 CUSTOMER 역할이어야 합니다.`,
+    );
+  }
+
+  const customer =
+    user.customer ??
+    (await prisma.customer.create({
+      data: {
+        userId: user.id,
+        regionId: getRequiredId(regionIdMap, "SEOUL"),
+      },
+    }));
+
+  /**
+   * 새로 만든 고객뿐 아니라 기존 고객도 리뷰 테스트 화면에서 서비스
+   * 유형 관련 데이터가 비어 있지 않도록 모든 유형을 연결합니다.
+   */
+  await prisma.customerServiceType.createMany({
+    data: SERVICE_TYPE_NAMES.map((serviceType) => ({
+      customerId: customer.id,
+      serviceTypeId: getRequiredId(serviceTypeIdMap, serviceType),
+    })),
+    skipDuplicates: true,
+  });
+
+  return {
+    userId: user.id,
+    customerId: customer.id,
+    name: user.name,
+  };
+}
+
+/**
+ * aaa123@test.com 고객에게 완료된 이사 4건을 생성합니다.
+ *
+ * 모든 요청에는 CONFIRMED 견적을 한 건씩 연결합니다.
+ * 리뷰가 있는 2건은 WRITTEN 목록에, 리뷰가 없는 2건은 WRITABLE 목록에
+ * 표시됩니다.
+ *
+ * @param movers 완료 이사를 담당한 seed 기사님 목록
+ * @param serviceTypeIdMap 서비스 유형 이름과 UUID 매핑
+ * @param regionIdMap 지역 이름과 UUID 매핑
+ * @returns 추가된 완료 요청·견적·리뷰 개수
+ * @sideeffect MoveRequest, Quote, Review 행을 생성하거나 갱신합니다.
+ */
+async function createReviewTestFixtures(
+  movers: CreatedMover[],
+  serviceTypeIdMap: ReadonlyMap<string, string>,
+  regionIdMap: ReadonlyMap<string, string>,
+): Promise<ReviewTestFixtureSummary> {
+  const customer = await ensureReviewTestCustomer(
+    serviceTypeIdMap,
+    regionIdMap,
+  );
+
+  let writtenReviews = 0;
+  let writableReviews = 0;
+
+  await prisma.$transaction(async (transaction) => {
+    for (const seed of REVIEW_TEST_FIXTURE_SEEDS) {
+      const mover = movers[seed.moverIndex];
+
+      if (!mover) {
+        throw new Error(
+          `${seed.moverIndex}번 리뷰 fixture 기사님을 찾지 못했습니다.`,
+        );
+      }
+
+      const moveDate = createDateFromNow(seed.moveDateOffset);
+      const requestCreatedAt = createDateFromNow(seed.moveDateOffset - 14, 9);
+      const quoteCreatedAt = createDateFromNow(seed.moveDateOffset - 10, 11);
+
+      /**
+       * 고정 UUID로 upsert하여 seed를 재실행해도 완료 요청이 계속
+       * 늘어나지 않도록 합니다.
+       */
+      await transaction.moveRequest.upsert({
+        where: {
+          id: seed.moveRequestId,
+        },
+        update: {
+          customerId: customer.customerId,
+          serviceTypeId: getRequiredId(serviceTypeIdMap, seed.serviceType),
+          moveDate,
+          fromAddress: seed.fromAddress,
+          toAddress: seed.toAddress,
+          status: MoveRequestStatus.COMPLETED,
+        },
+        create: {
+          id: seed.moveRequestId,
+          customerId: customer.customerId,
+          serviceTypeId: getRequiredId(serviceTypeIdMap, seed.serviceType),
+          moveDate,
+          fromAddress: seed.fromAddress,
+          toAddress: seed.toAddress,
+          status: MoveRequestStatus.COMPLETED,
+          createdAt: requestCreatedAt,
+        },
+      });
+
+      /**
+       * 리뷰 작성 가능 조건을 충족하려면 완료 요청에 CONFIRMED 견적이
+       * 반드시 존재해야 합니다.
+       */
+      await transaction.quote.upsert({
+        where: {
+          id: seed.quoteId,
+        },
+        update: {
+          moveRequestId: seed.moveRequestId,
+          moverId: mover.moverId,
+          price: seed.price,
+          comment: seed.comment,
+          status: QuoteStatus.CONFIRMED,
+        },
+        create: {
+          id: seed.quoteId,
+          moveRequestId: seed.moveRequestId,
+          moverId: mover.moverId,
+          price: seed.price,
+          comment: seed.comment,
+          status: QuoteStatus.CONFIRMED,
+          createdAt: quoteCreatedAt,
+        },
+      });
+
+      if (seed.review) {
+        /**
+         * 리뷰가 있는 요청은 고객의 WRITTEN 목록과 기사님의 받은 리뷰
+         * 목록에 표시됩니다.
+         */
+        await transaction.review.upsert({
+          where: {
+            id: seed.review.id,
+          },
+          update: {
+            customerId: customer.customerId,
+            moveRequestId: seed.moveRequestId,
+            moverId: mover.moverId,
+            rating: seed.review.rating,
+            content: seed.review.content,
+          },
+          create: {
+            id: seed.review.id,
+            customerId: customer.customerId,
+            moveRequestId: seed.moveRequestId,
+            moverId: mover.moverId,
+            rating: seed.review.rating,
+            content: seed.review.content,
+            createdAt: createDateFromNow(seed.review.createdAtOffset, 14),
+          },
+        });
+
+        writtenReviews += 1;
+        continue;
+      }
+
+      /**
+       * 리뷰가 없어야 WRITABLE 목록에 표시됩니다.
+       * 이전 seed 실행이나 수동 테스트에서 생성된 리뷰가 있으면 제거하여
+       * 테스트 상태를 항상 동일하게 유지합니다.
+       */
+      await transaction.review.deleteMany({
+        where: {
+          moveRequestId: seed.moveRequestId,
+        },
+      });
+
+      writableReviews += 1;
+    }
+  });
+
+  return {
+    moveRequests: REVIEW_TEST_FIXTURE_SEEDS.length,
+    quotes: REVIEW_TEST_FIXTURE_SEEDS.length,
+    writtenReviews,
+    writableReviews,
+  };
+}
+
 async function main(): Promise<void> {
   console.log("개발용 seed 데이터 생성을 시작합니다.");
 
@@ -849,15 +1166,24 @@ async function main(): Promise<void> {
   const favoriteCount = await createFavorites(customers, movers);
   const reviewCount = await createReviews(moveRequests, movers);
 
+  const reviewTestSummary = await createReviewTestFixtures(
+    movers,
+    serviceTypeIdMap,
+    regionIdMap,
+  );
+
   console.log("개발용 seed 데이터 생성이 완료되었습니다.");
   console.log({
-    users: customers.length + movers.length,
-    customers: customers.length,
+    users: customers.length + movers.length + 1,
+    customers: customers.length + 1,
     movers: movers.length,
-    moveRequests: moveRequests.length,
-    quotes: quoteCount,
+    moveRequests: moveRequests.length + reviewTestSummary.moveRequests,
+    quotes: quoteCount + reviewTestSummary.quotes,
     favorites: favoriteCount,
-    reviews: reviewCount,
+    reviews: reviewCount + reviewTestSummary.writtenReviews,
+    reviewTestAccount: REVIEW_TEST_CUSTOMER_EMAIL,
+    reviewTestWritable: reviewTestSummary.writableReviews,
+    reviewTestWritten: reviewTestSummary.writtenReviews,
   });
 }
 
