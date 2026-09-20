@@ -21,10 +21,14 @@ export interface MoverSearchQuery {
   pageSize: number;
 }
 
-/** 목록 카드. 찜 여부·리뷰 본문은 해당 담당 API 범위입니다. */
+/**
+ * 목록·추천 카드.
+ * serviceType은 대표 1개, serviceTypes는 보유분 전체입니다. 찜 여부·리뷰 본문·지역 배열은 이 DTO 범위가 아닙니다.
+ */
 export interface MoverSearchItemDto {
   id: string;
   serviceType: MoverServiceType;
+  serviceTypes: MoverServiceType[];
   region: string;
   moverName: string;
   introduction: string;
@@ -47,9 +51,11 @@ export interface MoverSearchIdParams {
   id: string;
 }
 
-/** 상세. 목록 카드에 보유 서비스·한글 지역 배열을 더합니다. isFavorite는 포함하지 않습니다. */
+/**
+ * 상세. 목록 카드 필드에 한글 지역 배열만 더합니다.
+ * serviceTypes는 목록과 같고, isFavorite는 포함하지 않습니다.
+ */
 export interface MoverSearchDetailDto extends MoverSearchItemDto {
-  serviceTypes: MoverServiceType[];
   regions: MoverRegion[];
 }
 
