@@ -141,16 +141,15 @@ notificationRouter.patch(
  *     tags: [Notifications]
  *     summary: Stream Notifications (SSE)
  *     description: >
- *       Server-Sent Events로 새 견적(NEW_QUOTE)·견적 확정(QUOTE_CONFIRMED) 알림을 실시간
- *       push합니다. EventSource는 커스텀 헤더를 보낼 수 없으므로 HttpOnly accessToken 쿠키만
- *       으로 인증하며, 클라이언트는 반드시 `new EventSource(url, { withCredentials: true })`로
- *       연결해야 합니다(옵션이 없으면 쿠키가 전송되지 않아 401). event: notification 이름으로
- *       도착하는 data는 화면 캐시 무효화 트리거용 최소 정보이며 Notification row 전체(id,
- *       readAt 포함)가 아닙니다. 최신 상태는 GET /notifications로 다시 조회해야 합니다.
+ *       Server-Sent Events로 새 견적(NEW_QUOTE)·견적 확정(QUOTE_CONFIRMED)·새 이사 요청
+ *       (NEW_MOVE_REQUEST)·이사 당일 리마인드(MOVE_DAY) 알림을 실시간 push합니다. EventSource는
+ *       커스텀 헤더를 보낼 수 없으므로 HttpOnly accessToken 쿠키만으로 인증하며, 클라이언트는
+ *       반드시 `new EventSource(url, { withCredentials: true })`로 연결해야 합니다(옵션이 없으면
+ *       쿠키가 전송되지 않아 401). event: notification 이름으로 도착하는 data는 화면 캐시 무효화
+ *       트리거용 최소 정보이며 Notification row 전체(id, readAt 포함)가 아닙니다. 최신 상태는
+ *       GET /notifications로 다시 조회해야 합니다.
  *       현재 단일 Node 프로세스 메모리 허브로 동작하며, 다중 인스턴스 배포 전에는 이 endpoint가
  *       모든 서버 인스턴스에 연결된 클라이언트에 push된다고 보장하지 않습니다.
- *       NEW_MOVE_REQUEST(기사님의 새 요청 알림)와 MOVE_DAY(이사 당일 알림)는 아직 생성 트리거가
- *       없어 이 스트림으로도 push되지 않습니다.
  *     security: [{ accessTokenCookie: [] }]
  *     responses:
  *       200:

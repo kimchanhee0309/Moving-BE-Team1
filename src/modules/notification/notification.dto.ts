@@ -4,8 +4,9 @@
  * 응답 형태만 담당합니다.
  *
  * 이 module이 다루지 않는 범위:
- * - NEW_MOVE_REQUEST 알림 생성 트리거(대상 기사님 범위 미확정으로 보류, mover-request 담당)
- * - MOVE_DAY 알림 생성(날짜 기반 스케줄러 미도입으로 보류)
+ * - NEW_QUOTE/QUOTE_CONFIRMED/NEW_MOVE_REQUEST/MOVE_DAY 알림 생성 트리거 자체(각각
+ *   mover-request/customer-quote/move-request 모듈과 notification.hub의 move-day
+ *   스케줄러가 담당하며, 이 파일은 그 결과를 담는 DTO만 정의합니다)
  * - 목록 query의 cursor/limit 기본값·unreadOnly, 읽음 처리 단건/전체 여부는 아직 팀이
  *   승인한 Swagger에 확정되지 않아 customer-quote 모듈의 cursor pagination 관례를 따른
  *   잠정 구현이며, 확정 명세가 나오면 함께 갱신해야 합니다.
