@@ -5,6 +5,7 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { ConflictError, NotFoundError } from "../../common/errors/app-error";
 import { prisma } from "../../lib/prisma";
+import { publishNotificationToUser } from "../notification/notification.hub";
 import type {
   CreatedQuoteDto,
   CreatedRequestRejectionDto,
@@ -277,41 +278,72 @@ export async function sendQuoteToReceivedRequest(
   now = new Date(),
 ): Promise<CreatedQuoteDto> {
   try {
-    return await runSerializableTransaction(async (transaction) => {
-      const request = await findReceivedRequestForAction(transaction, {
-        moverId,
-        requestId,
-      });
+    // transaction은 dto와 함께 저장한 알림 내용을 반환한다. 알림 내용을 transaction 밖으로
+    // 가져와야 커밋 이후에만 SSE push를 호출할 수 있다(롤백되면 push도 하지 않아야 한다).
+    const { dto, notification } = await runSerializableTransaction(
+      async (transaction) => {
+        const request = await findReceivedRequestForAction(transaction, {
+          moverId,
+          requestId,
+        });
 
-      assertRequestCanBeHandled(request, moverId, now);
-      assertQuoteCapacity(request, moverId);
+        assertRequestCanBeHandled(request, moverId, now);
+        assertQuoteCapacity(request, moverId);
 
-      const quote = await createQuote(transaction, {
-        moverId,
-        requestId,
-        price: input.price,
-        comment: input.comment,
-      });
+        const quote = await createQuote(transaction, {
+          moverId,
+          requestId,
+          price: input.price,
+          comment: input.comment,
+        });
 
-      await createNewQuoteNotification(transaction, {
-        customerUserId: request.customer.userId,
-        requestId,
-        quoteId: quote.id,
-      });
+        // assertRequestCanBeHandled가 이미 moverServiceTypes.length > 0을 검증했으므로
+        // 실제로는 undefined가 될 수 없다. noUncheckedIndexedAccess 때문에 타입상으로만
+        // optional이라 방어적으로 확인하고, 도달할 수 없는 경우에만 내부 오류로 처리한다.
+        const currentMoverServiceType = request.serviceType.moverServiceTypes[0];
 
-      if (quote.price === null || quote.comment === null) {
-        throw new Error("생성된 견적의 필수값을 확인할 수 없습니다.");
-      }
+        if (!currentMoverServiceType) {
+          throw new Error("기사 서비스 유형 정보를 확인할 수 없습니다.");
+        }
 
-      return {
-        quoteId: quote.id,
-        requestId: quote.moveRequestId,
-        price: quote.price,
-        comment: quote.comment,
-        status: "PROPOSED",
-        createdAt: quote.createdAt.toISOString(),
-      };
+        const notification = await createNewQuoteNotification(transaction, {
+          customerUserId: request.customer.userId,
+          requestId,
+          quoteId: quote.id,
+          moverNickname: currentMoverServiceType.mover.nickname,
+          serviceTypeName: request.serviceType.name,
+        });
+
+        if (quote.price === null || quote.comment === null) {
+          throw new Error("생성된 견적의 필수값을 확인할 수 없습니다.");
+        }
+
+        return {
+          dto: {
+            quoteId: quote.id,
+            requestId: quote.moveRequestId,
+            price: quote.price,
+            comment: quote.comment,
+            status: "PROPOSED" as const,
+            createdAt: quote.createdAt.toISOString(),
+          },
+          notification,
+        };
+      },
+    );
+
+    // transaction이 커밋된 뒤에만 push한다. 커밋 전에 push하면 재시도로 인한 rollback 시
+    // 실제로 저장되지 않은 알림을 클라이언트가 먼저 받을 수 있다.
+    publishNotificationToUser(notification.userId, {
+      type: notification.type,
+      title: notification.title,
+      content: notification.content,
+      moveRequestId: notification.moveRequestId,
+      quoteId: notification.quoteId,
+      createdAt: new Date().toISOString(),
     });
+
+    return dto;
   } catch (error: unknown) {
     return throwActionConflict(error);
   }

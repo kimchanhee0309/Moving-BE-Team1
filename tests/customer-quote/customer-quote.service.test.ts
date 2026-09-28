@@ -23,6 +23,12 @@ jest.mock("../../src/modules/customer-quote/customer-quote.repository", () => ({
   lockMoveRequestForConfirm: jest.fn(),
 }));
 
+// 확정 후 SSE push는 별도 hub 모듈을 통해 이뤄지므로, 이 Service 테스트에서는
+// 실제 연결 없이 호출 여부·인자만 확인할 수 있도록 mock으로 대체합니다.
+jest.mock("../../src/modules/notification/notification.hub", () => ({
+  publishNotificationToUser: jest.fn(),
+}));
+
 import {
   decodeReceivedQuoteCursor,
   decodeReceivedQuoteHistoryCursor,
@@ -55,6 +61,7 @@ import {
   listReceivedQuoteHistory,
   listReceivedQuotes,
 } from "../../src/modules/customer-quote/customer-quote.service";
+import { publishNotificationToUser } from "../../src/modules/notification/notification.hub";
 import { prisma } from "../../src/lib/prisma";
 
 const customerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -509,7 +516,7 @@ describe("confirmReceivedQuote", () => {
     expect(applyQuoteConfirmation).not.toHaveBeenCalled();
   });
 
-  test("확정하면 경쟁 견적 반려·알림 생성 후 CONFIRMED 상세를 반환한다", async () => {
+  test("확정하면 경쟁 견적 반려·알림 생성 후 CONFIRMED 상세를 반환하고 양쪽에 SSE push한다", async () => {
     const owned = createOwnedQuote();
     const confirmedDetail = {
       ...createDetailRecord(),
@@ -519,10 +526,29 @@ describe("confirmReceivedQuote", () => {
         status: "CONFIRMED" as const,
       },
     };
+    const customerNotification = {
+      userId: "customer-user-id",
+      moveRequestId: owned.moveRequest.id,
+      quoteId: owned.id,
+      type: "QUOTE_CONFIRMED" as const,
+      title: "견적이 확정되었습니다.",
+      content: "김코드 기사님의 견적이 확정되었습니다.",
+    };
+    const moverNotification = {
+      userId: "mover-user-id",
+      moveRequestId: owned.moveRequest.id,
+      quoteId: owned.id,
+      type: "QUOTE_CONFIRMED" as const,
+      title: "고객님이 견적을 확정했습니다.",
+      content: "홍길동 고객님이 견적을 확정했습니다.",
+    };
     jest.mocked(findOwnedQuoteForConfirm).mockResolvedValue(owned);
     jest.mocked(lockMoveRequestForConfirm).mockResolvedValue(undefined);
     jest.mocked(applyQuoteConfirmation).mockResolvedValue(undefined);
-    jest.mocked(createQuoteConfirmedNotifications).mockResolvedValue(undefined);
+    jest.mocked(createQuoteConfirmedNotifications).mockResolvedValue({
+      customer: customerNotification,
+      mover: moverNotification,
+    });
     jest.mocked(findOwnedQuoteDetailAfterConfirm).mockResolvedValue(confirmedDetail);
     jest.mocked(findMoverReviewAverages).mockResolvedValue([
       { moverId: owned.moverId, averageRating: 4.76 },
@@ -553,5 +579,28 @@ describe("confirmReceivedQuote", () => {
     expect(result.quote.status).toBe("CONFIRMED");
     expect(result.quote.moveRequest.status).toBe("CONFIRMED");
     expect(result.quote.mover.averageRating).toBe(4.8);
+
+    // transaction 커밋(위 결과 반환) 이후 고객·기사 양쪽에 SSE push가 호출돼야 한다.
+    expect(publishNotificationToUser).toHaveBeenCalledTimes(2);
+    expect(publishNotificationToUser).toHaveBeenCalledWith(
+      "customer-user-id",
+      expect.objectContaining({
+        type: "QUOTE_CONFIRMED",
+        title: customerNotification.title,
+        content: customerNotification.content,
+        moveRequestId: owned.moveRequest.id,
+        quoteId: owned.id,
+      }),
+    );
+    expect(publishNotificationToUser).toHaveBeenCalledWith(
+      "mover-user-id",
+      expect.objectContaining({
+        type: "QUOTE_CONFIRMED",
+        title: moverNotification.title,
+        content: moverNotification.content,
+        moveRequestId: owned.moveRequest.id,
+        quoteId: owned.id,
+      }),
+    );
   });
 });

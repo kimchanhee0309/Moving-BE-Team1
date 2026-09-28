@@ -9,6 +9,7 @@ import {
   NotFoundError,
 } from "../../common/errors/app-error";
 import { prisma } from "../../lib/prisma";
+import { publishNotificationToUser } from "../notification/notification.hub";
 import {
   SERVICE_TYPE_NAMES,
   type CreateDesignatedRequestInput,
@@ -21,12 +22,16 @@ import {
   countDesignatedRequestsByMoveRequestId,
   createDesignatedRequest,
   createMoveRequest,
+  createNewMoveRequestNotifications,
   findActiveMoveRequestByCustomerId,
+  findCustomerRegionId,
   findDesignatedRequestByMoveRequestAndMover,
+  findMoversForNewMoveRequestNotification,
   findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
   lockCustomerRow,
+  type CreatedNewMoveRequestNotificationRecord,
   type DesignatedRequestRecord,
   type MoveRequestRecord,
 } from "./move-request.repository";
@@ -96,6 +101,9 @@ export async function createMoveRequestForCustomer(
   }
 
   // Customer row를 먼저 잠가 같은 고객의 동시 요청을 직렬화한 뒤 활성 요청을 확인·생성한다.
+  // transaction은 dto와 함께 저장한 NEW_MOVE_REQUEST 알림 내용을 반환한다. 알림 내용을
+  // transaction 밖으로 가져와야 커밋 이후에만 SSE push를 호출할 수 있다(롤백되면 push도
+  // 하지 않아야 한다).
   const created = await prisma.$transaction(async (tx) => {
     await lockCustomerRow(customerId, tx);
 
@@ -108,7 +116,16 @@ export async function createMoveRequestForCustomer(
       );
     }
 
-    return createMoveRequest(
+    // 지역 매칭 알림 대상을 찾으려면 고객의 regionId가 필요하다. Customer.regionId는 필수
+    // 컬럼이라 정상 데이터라면 항상 존재해야 하며, 없다면 AppError가 아닌 일반 Error로 던져
+    // 전역 handler가 500으로 처리하게 둔다(seed/DB 정합성 문제로 간주).
+    const customerRegion = await findCustomerRegionId(customerId, tx);
+
+    if (!customerRegion) {
+      throw new Error(`Customer의 지역 정보를 찾을 수 없습니다: ${customerId}`);
+    }
+
+    const moveRequest = await createMoveRequest(
       {
         customerId,
         serviceTypeId: serviceType.id,
@@ -118,9 +135,57 @@ export async function createMoveRequestForCustomer(
       },
       tx,
     );
+
+    // 사용자가 확정한 알림 범위: 요청 지역과 서비스 유형이 모두 일치하는 기사님 전원.
+    // 대상이 0명이어도 정상 흐름이며, 이 경우 createNewMoveRequestNotifications가 빈
+    // 배열을 그대로 반환한다.
+    const matchingMovers = await findMoversForNewMoveRequestNotification(
+      customerRegion.regionId,
+      serviceType.id,
+      tx,
+    );
+
+    const notifications = await createNewMoveRequestNotifications(tx, {
+      moverUserIds: matchingMovers.map((mover) => mover.userId),
+      moveRequestId: moveRequest.id,
+    });
+
+    return { moveRequest, notifications };
   });
 
-  return toMoveRequestDto(created);
+  // transaction이 커밋된 뒤에만 push한다. 커밋 전에 push하면 이후 오류로 rollback될 경우
+  // 실제로 저장되지 않은 알림을 클라이언트가 먼저 받을 수 있다.
+  publishNewMoveRequestNotifications(created.notifications);
+
+  return toMoveRequestDto(created.moveRequest);
+}
+
+/**
+ * NEW_MOVE_REQUEST 알림을 매칭된 기사님 전원에게 SSE push합니다.
+ * 반드시 알림을 생성한 transaction이 커밋된 뒤에만 호출해야 합니다.
+ *
+ * @param notifications transaction 안에서 저장한 알림 내용 목록(0건일 수 있음)
+ * @sideeffect 연결된 각 기사님의 SSE 연결에 notification 이벤트를 write합니다.
+ */
+function publishNewMoveRequestNotifications(
+  notifications: CreatedNewMoveRequestNotificationRecord[],
+): void {
+  if (notifications.length === 0) {
+    return;
+  }
+
+  const createdAt = new Date().toISOString();
+
+  for (const notification of notifications) {
+    publishNotificationToUser(notification.userId, {
+      type: notification.type,
+      title: notification.title,
+      content: notification.content,
+      moveRequestId: notification.moveRequestId,
+      quoteId: notification.quoteId,
+      createdAt,
+    });
+  }
 }
 
 export async function getActiveMoveRequestForCustomer(

@@ -3,6 +3,10 @@ import type { Server } from "node:http";
 import { app } from "./app";
 import { env } from "./config/env";
 import { prisma } from "./lib/prisma";
+import {
+  startMoveDayNotificationScheduler,
+  stopMoveDayNotificationScheduler,
+} from "./modules/notification/move-day.scheduler";
 
 let server: Server | undefined;
 let isShuttingDown = false;
@@ -14,6 +18,10 @@ async function startServer(): Promise<void> {
     console.log(`서버가 ${env.PORT}번 포트에서 실행 중입니다.`);
     console.log(`Swagger 문서: http://localhost:${env.PORT}/api-docs`);
   });
+
+  // MOVE_DAY 알림 cron 스케줄 등록. 실제 대상 판별·발송 로직은
+  // modules/notification/move-day.service.ts가 담당하고 여기서는 lifecycle에만 연결한다.
+  startMoveDayNotificationScheduler();
 }
 
 async function shutdown(signal: string, exitCode = 0): Promise<void> {
@@ -24,6 +32,9 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
   isShuttingDown = true;
 
   console.log(`${signal} 신호를 받아 서버를 종료합니다.`);
+
+  // cron 타이머가 살아있으면 프로세스 종료를 막을 수 있으므로 HTTP 서버를 닫기 전에 정지한다.
+  stopMoveDayNotificationScheduler();
 
   const forceShutdownTimer = setTimeout(() => {
     process.exit(1);

@@ -16,6 +16,7 @@ import { moverProfileRouter } from "../modules/mover-profile/mover-profile.route
 import { moverQuoteRouter } from "../modules/mover-quote/mover-quote.router";
 import { moverRequestRouter } from "../modules/mover-request/mover-request.router";
 import { moverSearchRouter } from "../modules/mover-search/mover-search.router";
+import { notificationRouter } from "../modules/notification/notification.router";
 import {
   customerReviewRouter,
   moverReviewRouter,
@@ -39,6 +40,7 @@ apiRouter.use("/favorites", favoriteRouter);
 apiRouter.use("/movers", moverProfileRouter);
 apiRouter.use("/movers/me", moverQuoteRouter);
 apiRouter.use("/movers/me", moverRequestRouter);
+apiRouter.use("/notifications", notificationRouter);
 
 apiRouter.get("/health", (_request, response) => {
   return sendSuccess(response, HTTP_STATUS.OK, {

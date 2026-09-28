@@ -16,12 +16,21 @@ jest.mock("../../src/modules/move-request/move-request.repository", () => ({
   countDesignatedRequestsByMoveRequestId: jest.fn(),
   createDesignatedRequest: jest.fn(),
   createMoveRequest: jest.fn(),
+  createNewMoveRequestNotifications: jest.fn(),
   findActiveMoveRequestByCustomerId: jest.fn(),
+  findCustomerRegionId: jest.fn(),
   findDesignatedRequestByMoveRequestAndMover: jest.fn(),
+  findMoversForNewMoveRequestNotification: jest.fn(),
   findMoveRequestByIdForUpdate: jest.fn(),
   findMoverById: jest.fn(),
   findServiceTypeIdByName: jest.fn(),
   lockCustomerRow: jest.fn(),
+}));
+
+// NEW_MOVE_REQUEST 알림 push는 transaction 커밋 이후에만 호출돼야 하므로 mock으로 감시한다.
+// push 자체의 payload·시점 검증은 move-request.notification-trigger.test.ts에서 다룬다.
+jest.mock("../../src/modules/notification/notification.hub", () => ({
+  publishNotificationToUser: jest.fn(),
 }));
 
 import { ForbiddenError, NotFoundError } from "../../src/common/errors/app-error";
@@ -30,14 +39,18 @@ import {
   countDesignatedRequestsByMoveRequestId,
   createDesignatedRequest,
   createMoveRequest,
+  createNewMoveRequestNotifications,
   findActiveMoveRequestByCustomerId,
+  findCustomerRegionId,
   findDesignatedRequestByMoveRequestAndMover,
+  findMoversForNewMoveRequestNotification,
   findMoveRequestByIdForUpdate,
   findMoverById,
   findServiceTypeIdByName,
   lockCustomerRow,
   type MoveRequestRecord,
 } from "../../src/modules/move-request/move-request.repository";
+import { publishNotificationToUser } from "../../src/modules/notification/notification.hub";
 import {
   createDesignatedRequestForCustomer,
   createMoveRequestForCustomer,
@@ -81,6 +94,12 @@ describe("Move request service", () => {
     mockTransaction.mockImplementation((callback: (tx: unknown) => unknown) =>
       callback({}),
     );
+
+    // NEW_MOVE_REQUEST 알림 관련 함수의 기본값: 매칭 기사 없음(알림 0건). createMoveRequest를
+    // 검증하는 다른 테스트들이 이 알림 흐름의 영향을 받지 않도록 안전한 기본값을 둔다.
+    jest.mocked(findCustomerRegionId).mockResolvedValue({ regionId: "region-id" });
+    jest.mocked(findMoversForNewMoveRequestNotification).mockResolvedValue([]);
+    jest.mocked(createNewMoveRequestNotifications).mockResolvedValue([]);
   });
 
   describe("createMoveRequestForCustomer", () => {
@@ -120,6 +139,88 @@ describe("Move request service", () => {
       const checkOrder = jest.mocked(findActiveMoveRequestByCustomerId).mock
         .invocationCallOrder[0];
       expect(lockOrder).toBeLessThan(checkOrder as number);
+
+      // 매칭 기사를 찾을 때 고객이 실제로 선택한 지역과 새로 만든 요청의 서비스 유형을
+      // 그대로 넘겨야 한다.
+      expect(findMoversForNewMoveRequestNotification).toHaveBeenCalledWith(
+        "region-id",
+        "service-id",
+        {},
+      );
+      expect(createNewMoveRequestNotifications).toHaveBeenCalledWith(
+        {},
+        { moverUserIds: [], moveRequestId: MOVE_REQUEST_ID },
+      );
+    });
+
+    test("지역·서비스 유형이 일치하는 기사가 있으면 각 기사에게 NEW_MOVE_REQUEST 알림을 push한다", async () => {
+      const FIRST_MOVER_USER_ID = "550e8400-e29b-41d4-a716-446655440010";
+      const SECOND_MOVER_USER_ID = "550e8400-e29b-41d4-a716-446655440011";
+
+      jest.mocked(findServiceTypeIdByName).mockResolvedValue({ id: "service-id" });
+      jest.mocked(findActiveMoveRequestByCustomerId).mockResolvedValue(null);
+      jest.mocked(createMoveRequest).mockResolvedValue(createMoveRequestRecord());
+      jest.mocked(findMoversForNewMoveRequestNotification).mockResolvedValue([
+        { userId: FIRST_MOVER_USER_ID },
+        { userId: SECOND_MOVER_USER_ID },
+      ]);
+
+      const savedNotifications = [
+        {
+          userId: FIRST_MOVER_USER_ID,
+          moveRequestId: MOVE_REQUEST_ID,
+          quoteId: null,
+          type: "NEW_MOVE_REQUEST" as const,
+          title: "새로운 이사 견적 요청이 도착했습니다.",
+          content: "고객님이 새로운 이사 견적을 요청했습니다.",
+        },
+        {
+          userId: SECOND_MOVER_USER_ID,
+          moveRequestId: MOVE_REQUEST_ID,
+          quoteId: null,
+          type: "NEW_MOVE_REQUEST" as const,
+          title: "새로운 이사 견적 요청이 도착했습니다.",
+          content: "고객님이 새로운 이사 견적을 요청했습니다.",
+        },
+      ];
+      jest.mocked(createNewMoveRequestNotifications).mockResolvedValue(savedNotifications);
+
+      await createMoveRequestForCustomer(CUSTOMER_ID, validCreateInput);
+
+      expect(createNewMoveRequestNotifications).toHaveBeenCalledWith(
+        {},
+        { moverUserIds: [FIRST_MOVER_USER_ID, SECOND_MOVER_USER_ID], moveRequestId: MOVE_REQUEST_ID },
+      );
+
+      expect(publishNotificationToUser).toHaveBeenCalledTimes(2);
+      expect(publishNotificationToUser).toHaveBeenNthCalledWith(1, FIRST_MOVER_USER_ID, {
+        type: "NEW_MOVE_REQUEST",
+        title: "새로운 이사 견적 요청이 도착했습니다.",
+        content: "고객님이 새로운 이사 견적을 요청했습니다.",
+        moveRequestId: MOVE_REQUEST_ID,
+        quoteId: null,
+        createdAt: expect.any(String),
+      });
+      expect(publishNotificationToUser).toHaveBeenNthCalledWith(2, SECOND_MOVER_USER_ID, {
+        type: "NEW_MOVE_REQUEST",
+        title: "새로운 이사 견적 요청이 도착했습니다.",
+        content: "고객님이 새로운 이사 견적을 요청했습니다.",
+        moveRequestId: MOVE_REQUEST_ID,
+        quoteId: null,
+        createdAt: expect.any(String),
+      });
+    });
+
+    test("매칭되는 기사가 없으면 알림을 push하지 않는다", async () => {
+      jest.mocked(findServiceTypeIdByName).mockResolvedValue({ id: "service-id" });
+      jest.mocked(findActiveMoveRequestByCustomerId).mockResolvedValue(null);
+      jest.mocked(createMoveRequest).mockResolvedValue(createMoveRequestRecord());
+      jest.mocked(findMoversForNewMoveRequestNotification).mockResolvedValue([]);
+      jest.mocked(createNewMoveRequestNotifications).mockResolvedValue([]);
+
+      await createMoveRequestForCustomer(CUSTOMER_ID, validCreateInput);
+
+      expect(publishNotificationToUser).not.toHaveBeenCalled();
     });
 
     test("moveDate가 오늘(UTC)보다 미래가 아니면 VALIDATION_ERROR를 던지고 조회하지 않는다", async () => {
@@ -170,6 +271,11 @@ describe("Move request service", () => {
       ).rejects.toMatchObject({ code: "ACTIVE_MOVE_REQUEST_EXISTS", status: 409 });
 
       expect(createMoveRequest).not.toHaveBeenCalled();
+      // 요청 생성 자체가 막혔으므로 알림 대상 조회·생성·push도 전혀 일어나면 안 된다.
+      expect(findCustomerRegionId).not.toHaveBeenCalled();
+      expect(findMoversForNewMoveRequestNotification).not.toHaveBeenCalled();
+      expect(createNewMoveRequestNotifications).not.toHaveBeenCalled();
+      expect(publishNotificationToUser).not.toHaveBeenCalled();
     });
   });
 

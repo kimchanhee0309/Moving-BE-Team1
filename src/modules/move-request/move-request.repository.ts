@@ -36,6 +36,25 @@ export type DesignatedRequestRecord = Prisma.DesignatedRequestGetPayload<{
   select: typeof designatedRequestSelect;
 }>;
 
+/** NEW_MOVE_REQUEST 알림 대상으로 매칭된 기사님 한 명입니다. */
+export interface MatchingMoverRecord {
+  userId: string;
+}
+
+/**
+ * NEW_MOVE_REQUEST 알림으로 실제 저장한 내용입니다.
+ * Service가 트랜잭션 커밋 이후 이 값 그대로 SSE push payload를 만들 수 있도록
+ * DB에 쓴 title/content 문구를 다시 조회하지 않고 그대로 반환합니다.
+ */
+export interface CreatedNewMoveRequestNotificationRecord {
+  userId: string;
+  moveRequestId: string;
+  quoteId: null;
+  type: "NEW_MOVE_REQUEST";
+  title: string;
+  content: string;
+}
+
 export function findServiceTypeIdByName(
   name: ServiceTypeName,
   client: PrismaClientOrTx = prisma,
@@ -153,4 +172,103 @@ export function createDesignatedRequest(
   client: PrismaClientOrTx = prisma,
 ): Promise<DesignatedRequestRecord> {
   return client.designatedRequest.create({ data, select: designatedRequestSelect });
+}
+
+/**
+ * 이사 요청을 생성한 고객의 지역을 조회합니다.
+ *
+ * NEW_MOVE_REQUEST 알림 대상("해당 지역을 선택한 기사님")을 찾기 위해 사용하며,
+ * lockCustomerRow로 이미 같은 transaction 안에서 해당 Customer row를 잠근 뒤 호출해야
+ * 다른 요청이 끼어들 여지 없이 일관된 지역 값을 읽을 수 있습니다.
+ *
+ * @param customerId 이사 요청을 생성한 고객의 Customer.id
+ * @param client 현재 transaction client
+ * @returns 고객의 regionId. Customer row가 존재하지 않으면 null(정상 흐름에서는 발생하지
+ * 않아야 하며, 발생하면 Service가 데이터 정합성 오류로 처리합니다)
+ * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
+ */
+export function findCustomerRegionId(
+  customerId: string,
+  client: PrismaClientOrTx = prisma,
+): Promise<{ regionId: string } | null> {
+  return client.customer.findUnique({
+    where: { id: customerId },
+    select: { regionId: true },
+  });
+}
+
+/**
+ * 새 이사 요청과 지역·서비스 유형이 모두 일치하는 기사님의 User.id 목록을 조회합니다.
+ *
+ * mover-request 모듈의 받은 요청 목록 조회(createReceivedRequestWhere)는 서비스 유형만
+ * 매칭하고 지역 필터가 없는 기존 갭이 있지만, 사용자가 확정한 NEW_MOVE_REQUEST 알림 범위
+ * ("해당 지역을 선택한 기사님")를 따르기 위해 이 조회는 지역과 서비스 유형을 모두 매칭합니다.
+ * 대상이 많을 수 있는 broadcast성 조회이므로 기사 수만큼 반복 조회하지 않고 단일 query로
+ * 가져옵니다.
+ *
+ * @param regionId 이사 요청을 생성한 고객의 Customer.regionId
+ * @param serviceTypeId 생성된 MoveRequest.serviceTypeId
+ * @param client 현재 transaction client
+ * @returns 조건에 맞는 기사님들의 User.id 배열(중복 없음, 매칭이 없으면 빈 배열)
+ * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
+ */
+export function findMoversForNewMoveRequestNotification(
+  regionId: string,
+  serviceTypeId: string,
+  client: PrismaClientOrTx = prisma,
+): Promise<MatchingMoverRecord[]> {
+  return client.mover.findMany({
+    where: {
+      regions: {
+        some: { regionId },
+      },
+      serviceTypes: {
+        some: { serviceTypeId },
+      },
+    },
+    select: {
+      userId: true,
+    },
+  });
+}
+
+/**
+ * 매칭된 기사님들에게 새 이사 요청 알림을 일괄 생성합니다.
+ *
+ * 대상이 없으면(빈 배열) `createMany`를 호출하지 않고 빈 배열을 그대로 반환합니다 —
+ * Prisma의 `createMany`는 빈 배열이어도 쿼리 자체는 안전하지만, 대상이 없는 것이 정상
+ * 흐름(매칭 기사 0명)임을 호출부에서 더 명확히 드러내기 위함입니다.
+ *
+ * @param transaction 현재 transaction client
+ * @param input 알림을 받을 기사님들의 User.id 목록과 생성된 MoveRequest.id
+ * @returns 저장한 알림 내용 목록. Service가 transaction 커밋 이후 각 항목을 SSE push합니다.
+ * @sideeffect moverUserIds 수만큼 Notification 레코드를 생성합니다.
+ */
+export async function createNewMoveRequestNotifications(
+  transaction: Prisma.TransactionClient,
+  input: {
+    moverUserIds: string[];
+    moveRequestId: string;
+  },
+): Promise<CreatedNewMoveRequestNotificationRecord[]> {
+  if (input.moverUserIds.length === 0) {
+    return [];
+  }
+
+  const notifications: CreatedNewMoveRequestNotificationRecord[] = input.moverUserIds.map(
+    (moverUserId) => ({
+      userId: moverUserId,
+      moveRequestId: input.moveRequestId,
+      quoteId: null,
+      type: "NEW_MOVE_REQUEST",
+      title: "새로운 이사 견적 요청이 도착했습니다.",
+      content: "고객님이 새로운 이사 견적을 요청했습니다.",
+    }),
+  );
+
+  await transaction.notification.createMany({
+    data: notifications,
+  });
+
+  return notifications;
 }
