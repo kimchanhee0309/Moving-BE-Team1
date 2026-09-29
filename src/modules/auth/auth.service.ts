@@ -52,7 +52,6 @@ import {
 import {
   createEmailUser,
   consumePasswordResetChallenge,
-  deletePasswordResetChallenge,
   deleteRestrictedWithdrawalRelations,
   deleteUserWithAuthState,
   findUserByEmail,
@@ -62,10 +61,11 @@ import {
   findPasswordResetChallengeById,
   findPasswordResetChallengeForCompletion,
   findPasswordResetUserByEmail,
-  incrementPasswordResetCodeFailure,
   markPasswordResetChallengeVerified,
+  reservePasswordResetChallenge,
+  reservePasswordResetCodeAttempt,
+  restorePasswordResetChallenge,
   runAuthTransaction,
-  upsertPasswordResetChallenge,
   updateEmailUserPassword,
 } from "./auth.repository";
 import { hashPassword, verifyPassword } from "./password";
@@ -187,37 +187,41 @@ export async function requestPasswordResetCode(
 
   assertPasswordResetEmailConfigured();
 
-  const previousSentAt = user.passwordResetChallenge?.sentAt.getTime();
-  if (
-    previousSentAt !== undefined &&
-    now.getTime() - previousSentAt < PASSWORD_RESET_CODE_RESEND_AFTER_SECONDS * 1000
-  ) {
+  const code = createPasswordResetCode();
+  const codeHash = hashPasswordResetCode(user.id, code);
+  const expiresAt = new Date(now.getTime() + PASSWORD_RESET_CODE_EXPIRES_IN_MS);
+  const resendAllowedAt = new Date(
+    now.getTime() - PASSWORD_RESET_CODE_RESEND_AFTER_SECONDS * 1000,
+  );
+  const reservation = await reservePasswordResetChallenge(
+    user.id,
+    codeHash,
+    now,
+    expiresAt,
+    resendAllowedAt,
+  );
+
+  if (!reservation) {
     throw new TooManyRequestsError(
       "인증코드는 1분 후 다시 보낼 수 있습니다.",
       "PASSWORD_RESET_CODE_RESEND_TOO_SOON",
     );
   }
 
-  const code = createPasswordResetCode();
-  const codeHash = hashPasswordResetCode(user.id, code);
-  const expiresAt = new Date(now.getTime() + PASSWORD_RESET_CODE_EXPIRES_IN_MS);
-  const challenge = await upsertPasswordResetChallenge(
-    user.id,
-    codeHash,
-    now,
-    expiresAt,
-  );
-
   try {
     await sendPasswordResetCodeEmail(user.email, code);
   } catch (error: unknown) {
-    await deletePasswordResetChallenge(user.id, codeHash);
+    await restorePasswordResetChallenge(
+      user.id,
+      codeHash,
+      reservation.previous,
+    );
     throw error;
   }
 
   return {
     delivery: "EMAIL",
-    challengeId: challenge.id,
+    challengeId: reservation.challengeId,
     expiresInSeconds: PASSWORD_RESET_CODE_EXPIRES_IN_SECONDS,
     resendAfterSeconds: PASSWORD_RESET_CODE_RESEND_AFTER_SECONDS,
   };
@@ -258,9 +262,25 @@ export async function verifyPasswordResetCode(
     );
   }
 
-  if (!matchesPasswordResetCode(challenge.userId, input.code, challenge.codeHash)) {
-    await incrementPasswordResetCodeFailure(challenge.id);
-    if (challenge.failedAttempts + 1 >= PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS) {
+  const reservedAttempt = await reservePasswordResetCodeAttempt(
+    challenge.id,
+    challenge.codeHash,
+    now,
+    PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS,
+  );
+
+  if (!reservedAttempt) {
+    const latestChallenge = await findPasswordResetChallengeById(challenge.id);
+    if (latestChallenge?.expiresAt && latestChallenge.expiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestError(
+        "인증코드가 만료되었습니다. 새 코드를 요청해 주세요.",
+        "PASSWORD_RESET_CODE_EXPIRED",
+      );
+    }
+    if (
+      latestChallenge &&
+      latestChallenge.failedAttempts >= PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS
+    ) {
       throw new TooManyRequestsError(
         "인증코드 확인 횟수를 초과했습니다. 새 코드를 요청해 주세요.",
         "PASSWORD_RESET_CODE_ATTEMPTS_EXCEEDED",
@@ -273,9 +293,34 @@ export async function verifyPasswordResetCode(
     );
   }
 
+  if (!matchesPasswordResetCode(
+    reservedAttempt.userId,
+    input.code,
+    reservedAttempt.codeHash,
+  )) {
+    if (reservedAttempt.failedAttempts >= PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS) {
+      throw new TooManyRequestsError(
+        "인증코드 확인 횟수를 초과했습니다. 새 코드를 요청해 주세요.",
+        "PASSWORD_RESET_CODE_ATTEMPTS_EXCEEDED",
+      );
+    }
+
+    throw new UnauthorizedError(
+      "인증코드가 올바르지 않습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
+    );
+  }
+
+  if (!reservedAttempt.user.passwordHash) {
+    throw new UnauthorizedError(
+      "인증코드가 올바르지 않습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
+    );
+  }
+
   const verification = await markPasswordResetChallengeVerified(
-    challenge.id,
-    challenge.codeHash,
+    reservedAttempt.id,
+    reservedAttempt.codeHash,
     now,
     PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS,
   );
@@ -288,10 +333,10 @@ export async function verifyPasswordResetCode(
 
   return {
     resetToken: createPasswordResetToken(
-      challenge.user.id,
-      challenge.user.role,
-      challenge.user.passwordHash,
-      challenge.id,
+      reservedAttempt.user.id,
+      reservedAttempt.user.role,
+      reservedAttempt.user.passwordHash,
+      reservedAttempt.id,
     ),
   };
 }

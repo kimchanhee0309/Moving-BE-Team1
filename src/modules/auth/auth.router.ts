@@ -292,6 +292,8 @@ authRouter.post(
  *       200: { description: 코드 발송·OAuth·계정 불일치 결과 }
  *       400: { $ref: "#/components/responses/BadRequest" }
  *       429: { $ref: "#/components/responses/TooManyRequests" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
+ *       503: { $ref: "#/components/responses/ServiceUnavailable" }
  */
 authRouter.post(
   "/recovery/password/code",

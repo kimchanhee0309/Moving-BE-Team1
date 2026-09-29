@@ -132,35 +132,97 @@ export type PasswordResetChallengeRecord = Prisma.PasswordResetChallengeGetPaylo
   select: typeof passwordResetChallengeSelect;
 }>;
 
-/** 새 코드 발급 시 이전 코드와 검증 상태를 덮어써 가장 최근 코드만 유효하게 만듭니다. */
-export function upsertPasswordResetChallenge(
+const passwordResetChallengeStateSelect = {
+  id: true,
+  codeHash: true,
+  failedAttempts: true,
+  expiresAt: true,
+  sentAt: true,
+  verifiedAt: true,
+  consumedAt: true,
+} satisfies Prisma.PasswordResetChallengeSelect;
+
+export type PasswordResetChallengeState = Prisma.PasswordResetChallengeGetPayload<{
+  select: typeof passwordResetChallengeStateSelect;
+}>;
+
+export interface PasswordResetChallengeReservation {
+  challengeId: string;
+  previous: PasswordResetChallengeState | null;
+}
+
+async function lockPasswordResetUser(
+  transaction: AuthTransaction,
+  userId: string,
+): Promise<void> {
+  await transaction.$queryRaw<Array<{ id: string }>>`
+    SELECT "id" FROM "User" WHERE "id" = ${userId}::uuid FOR UPDATE
+  `;
+}
+
+/** User row lock 안에서 재발송 간격을 확인하고 새 코드 상태를 한 번만 예약합니다. */
+export function reservePasswordResetChallenge(
   userId: string,
   codeHash: string,
   sentAt: Date,
   expiresAt: Date,
-): Promise<{ id: string }> {
-  return prisma.passwordResetChallenge.upsert({
-    where: { userId },
-    create: { userId, codeHash, sentAt, expiresAt },
-    update: {
-      codeHash,
-      sentAt,
-      expiresAt,
-      failedAttempts: 0,
-      verifiedAt: null,
-      consumedAt: null,
-    },
-    select: { id: true },
+  resendAllowedAt: Date,
+): Promise<PasswordResetChallengeReservation | null> {
+  return prisma.$transaction(async (transaction) => {
+    await lockPasswordResetUser(transaction, userId);
+    const previous = await transaction.passwordResetChallenge.findUnique({
+      where: { userId },
+      select: passwordResetChallengeStateSelect,
+    });
+
+    if (previous && previous.sentAt.getTime() > resendAllowedAt.getTime()) {
+      return null;
+    }
+
+    const challenge = await transaction.passwordResetChallenge.upsert({
+      where: { userId },
+      create: { userId, codeHash, sentAt, expiresAt },
+      update: {
+        codeHash,
+        sentAt,
+        expiresAt,
+        failedAttempts: 0,
+        verifiedAt: null,
+        consumedAt: null,
+      },
+      select: { id: true },
+    });
+
+    return { challengeId: challenge.id, previous };
   });
 }
 
-/** SMTP 실패 시 동일 코드 상태만 제거하며 더 최신 재발송 코드는 보존합니다. */
-export function deletePasswordResetChallenge(
+/** 발송 실패한 예약이 여전히 최신일 때만 직전 challenge를 복원하거나 최초 예약을 삭제합니다. */
+export function restorePasswordResetChallenge(
   userId: string,
-  codeHash: string,
+  failedCodeHash: string,
+  previous: PasswordResetChallengeState | null,
 ): Promise<{ count: number }> {
-  return prisma.passwordResetChallenge.deleteMany({
-    where: { userId, codeHash, verifiedAt: null, consumedAt: null },
+  return prisma.$transaction(async (transaction) => {
+    await lockPasswordResetUser(transaction, userId);
+
+    if (!previous) {
+      return transaction.passwordResetChallenge.deleteMany({
+        where: { userId, codeHash: failedCodeHash },
+      });
+    }
+
+    return transaction.passwordResetChallenge.updateMany({
+      where: { userId, codeHash: failedCodeHash },
+      data: {
+        codeHash: previous.codeHash,
+        failedAttempts: previous.failedAttempts,
+        expiresAt: previous.expiresAt,
+        sentAt: previous.sentAt,
+        verifiedAt: previous.verifiedAt,
+        consumedAt: previous.consumedAt,
+      },
+    });
   });
 }
 
@@ -174,13 +236,32 @@ export function findPasswordResetChallengeById(
   });
 }
 
-/** 잘못된 코드 한 건을 원자적으로 누적해 병렬 대입도 실패 횟수에 포함합니다. */
-export function incrementPasswordResetCodeFailure(
+/** 만료·검증·소비·최대 횟수를 조건으로 검증 시도 한 건을 먼저 원자적으로 예약합니다. */
+export function reservePasswordResetCodeAttempt(
   challengeId: string,
-): Promise<{ count: number }> {
-  return prisma.passwordResetChallenge.updateMany({
-    where: { id: challengeId, verifiedAt: null, consumedAt: null },
-    data: { failedAttempts: { increment: 1 } },
+  expectedCodeHash: string,
+  attemptedAt: Date,
+  maxAttempts: number,
+): Promise<PasswordResetChallengeRecord | null> {
+  return prisma.$transaction(async (transaction) => {
+    const reservation = await transaction.passwordResetChallenge.updateMany({
+      where: {
+        id: challengeId,
+        codeHash: expectedCodeHash,
+        expiresAt: { gt: attemptedAt },
+        failedAttempts: { lt: maxAttempts },
+        verifiedAt: null,
+        consumedAt: null,
+      },
+      data: { failedAttempts: { increment: 1 } },
+    });
+
+    if (reservation.count !== 1) return null;
+
+    return transaction.passwordResetChallenge.findUnique({
+      where: { id: challengeId },
+      select: passwordResetChallengeSelect,
+    });
   });
 }
 
@@ -196,7 +277,7 @@ export function markPasswordResetChallengeVerified(
       id: challengeId,
       codeHash,
       expiresAt: { gt: verifiedAt },
-      failedAttempts: { lt: maxFailedAttempts },
+      failedAttempts: { lte: maxFailedAttempts },
       verifiedAt: null,
       consumedAt: null,
     },
