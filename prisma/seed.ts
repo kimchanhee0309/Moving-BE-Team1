@@ -5,6 +5,7 @@
 import {
   MoveRequestStatus,
   NotificationType,
+  PasswordRecoveryQuestion,
   QuoteStatus,
   UserRole,
 } from "../src/generated/prisma/client";
@@ -13,6 +14,7 @@ import { hashPassword } from "../src/modules/auth/password";
 
 const SEED_EMAIL_DOMAIN = "@seed.moving.local";
 const SEED_PASSWORD = "Moving1234!";
+const SEED_RECOVERY_ANSWER = "moving-recovery";
 
 const REVIEW_TEST_CUSTOMER_EMAIL = "aaa123@test.com";
 
@@ -540,6 +542,7 @@ async function removePreviousSeedData(): Promise<void> {
 
 async function createCustomers(
   passwordHashes: string[],
+  recoveryAnswerHash: string,
   serviceTypeIdMap: ReadonlyMap<string, string>,
   regionIdMap: ReadonlyMap<string, string>,
 ): Promise<CreatedCustomer[]> {
@@ -553,6 +556,12 @@ async function createCustomers(
         email: seed.email,
         phone: seed.phone,
         passwordHash: passwordHashes[index],
+        passwordRecoveryChallenge: {
+          create: {
+            question: PasswordRecoveryQuestion.PERSONAL_PHRASE,
+            answerHash: recoveryAnswerHash,
+          },
+        },
         customer: {
           create: {
             regionId: getRequiredId(regionIdMap, seed.region),
@@ -585,6 +594,7 @@ async function createCustomers(
 
 async function createMovers(
   passwordHashes: string[],
+  recoveryAnswerHash: string,
   serviceTypeIdMap: ReadonlyMap<string, string>,
   regionIdMap: ReadonlyMap<string, string>,
 ): Promise<CreatedMover[]> {
@@ -598,6 +608,12 @@ async function createMovers(
         email: seed.email,
         phone: seed.phone,
         passwordHash: passwordHashes[index],
+        passwordRecoveryChallenge: {
+          create: {
+            question: PasswordRecoveryQuestion.PERSONAL_PHRASE,
+            answerHash: recoveryAnswerHash,
+          },
+        },
         mover: {
           create: {
             nickname: seed.nickname,
@@ -929,6 +945,7 @@ async function ensureReviewTestCustomer(
   regionIdMap: ReadonlyMap<string, string>,
 ): Promise<CreatedCustomer> {
   const passwordHash = await hashPassword(SEED_PASSWORD);
+  const recoveryAnswerHash = await hashPassword(SEED_RECOVERY_ANSWER);
 
   const user = await prisma.user.upsert({
     where: {
@@ -951,6 +968,16 @@ async function ensureReviewTestCustomer(
       `${REVIEW_TEST_CUSTOMER_EMAIL} 계정은 CUSTOMER 역할이어야 합니다.`,
     );
   }
+
+  await prisma.passwordRecoveryChallenge.upsert({
+    where: { userId: user.id },
+    update: {},
+    create: {
+      userId: user.id,
+      question: PasswordRecoveryQuestion.PERSONAL_PHRASE,
+      answerHash: recoveryAnswerHash,
+    },
+  });
 
   const customer =
     user.customer ??
@@ -1143,14 +1170,18 @@ async function main(): Promise<void> {
     MOVER_SEEDS.map(() => hashPassword(SEED_PASSWORD)),
   );
 
+  const recoveryAnswerHash = await hashPassword(SEED_RECOVERY_ANSWER);
+
   const customers = await createCustomers(
     customerPasswordHashes,
+    recoveryAnswerHash,
     serviceTypeIdMap,
     regionIdMap,
   );
 
   const movers = await createMovers(
     moverPasswordHashes,
+    recoveryAnswerHash,
     serviceTypeIdMap,
     regionIdMap,
   );

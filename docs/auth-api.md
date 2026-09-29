@@ -22,7 +22,9 @@
 | POST | `/auth/signup` | 공개 | `201`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `EMAIL_ALREADY_EXISTS`, `PHONE_ALREADY_EXISTS` |
 | POST | `/auth/login` | 공개 | `200`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `INVALID_CREDENTIALS` |
 | GET | `/auth/me` | Access Cookie | `200`, `data.user` | `ACCESS_TOKEN_MISSING`, `ACCESS_TOKEN_INVALID`, `ACCESS_TOKEN_EXPIRED`, `USER_NOT_FOUND` |
+| DELETE | `/auth/me` | Access Cookie | `200`, `data: null`과 계정·연관 데이터·쿠키 삭제 | `CURRENT_PASSWORD_REQUIRED`, `INVALID_CURRENT_PASSWORD`, `ACCOUNT_AUTH_METHOD_INVALID` |
 | POST | `/auth/refresh` | Refresh Cookie | `200`, `data.user`와 회전된 인증 쿠키 | `REFRESH_TOKEN_MISSING`, `REFRESH_TOKEN_INVALID`, `REFRESH_TOKEN_EXPIRED` |
+| POST | `/auth/refresh/session` | 선택적 Access/Refresh Cookie | `200`, `data.user` 또는 정상 비회원 `user: null` | `AUTH_RATE_LIMIT_EXCEEDED` |
 | POST | `/auth/logout` | 공개 | `200`, `data: null`과 쿠키 삭제 | 없음 |
 | GET | `/auth/oauth/:provider` | 공개 | `200`, 공급자 URL 또는 `302` 이동 | `VALIDATION_ERROR`, `OAUTH_NOT_CONFIGURED`, `AUTH_RATE_LIMIT_EXCEEDED` |
 | GET | `/auth/oauth/:provider/callback` | State Cookie | 프론트 `/auth/callback`으로 `302` 이동 | 오류 코드를 포함한 프론트 redirect |
@@ -72,6 +74,39 @@
 | `refreshToken` | `/auth/refresh` | true | 7일 |
 
 Refresh 성공 시 탈취 토큰의 사용 가능 시간을 줄이기 위해 Access Token과 Refresh Token을 함께 재발급하고 최신 `data.user`를 반환합니다. 현재는 Stateless 방식이므로 서버 DB에서 이전 Refresh Token을 즉시 폐기하거나 재사용을 탐지하지는 못합니다.
+
+### 공개 페이지 세션 복구
+
+`POST /auth/refresh/session`은 전역 프론트 Provider가 공개 페이지에서도 사용할 수 있는 선택적 세션 확인 endpoint입니다. 경로가 기존 Refresh Cookie의 `/auth/refresh` 범위 안에 있으므로 Cookie Path를 넓히지 않습니다.
+
+- Access Token이 유효하면 사용자만 반환하고 토큰을 불필요하게 회전하지 않습니다.
+- Access Token이 없거나 만료됐고 Refresh Token이 유효하면 두 토큰을 회전하고 사용자를 반환합니다.
+- 인증 쿠키가 없는 비회원은 오류가 아니라 `200`, `{ "user": null }`로 반환합니다.
+- 만료·위변조 토큰이나 삭제된 사용자 토큰은 쿠키를 지우고 정상 비회원으로 정리합니다.
+- 보호된 `GET /auth/me`, `POST /auth/refresh` 및 다른 보호 API의 기존 401 계약은 그대로 유지합니다.
+
+## 회원 탈퇴
+
+`DELETE /auth/me`는 Access Token으로 확인한 본인의 계정만 삭제합니다.
+
+이메일·비밀번호 계정 요청:
+
+```json
+{
+  "currentPassword": "Password1!"
+}
+```
+
+OAuth 계정 요청은 빈 객체 또는 Body 생략을 허용합니다. OAuth 재인증은 현재 MVP 범위에 포함하지 않습니다.
+
+- 이메일 계정의 비밀번호 누락은 `400 CURRENT_PASSWORD_REQUIRED`, 불일치는 `401 INVALID_CURRENT_PASSWORD`입니다.
+- 최신 User의 비밀번호 hash와 인증 수단을 transaction 안에서 확인하고 같은 인증 상태인 User만 조건부 삭제합니다.
+- `RequestRejection`은 FK가 `Restrict`이므로 먼저 삭제하고, 나머지는 Prisma Schema의 Cascade/SetNull 정책을 따릅니다.
+- Customer 탈퇴는 본인의 MoveRequest와 이에 연결된 Quote·Review·DesignatedRequest 등을 함께 삭제합니다.
+- Mover 탈퇴는 본인의 Quote·Review·Favorite·DesignatedRequest·RequestRejection 등을 함께 삭제합니다.
+- User 소유 Notification은 삭제되며 다른 사용자 알림이 참조하던 삭제 Quote·MoveRequest FK는 `SetNull`로 남습니다.
+- soft-delete 필드가 없는 현재 스키마에 맞춰 hard delete하므로 User의 이메일·전화번호 unique 값은 즉시 해제되어 재가입할 수 있습니다.
+- 성공 후 Access/Refresh Cookie를 모두 삭제합니다. 삭제된 User를 가리키는 기존 토큰은 `/auth/me`와 Refresh에서 각각 `USER_NOT_FOUND`, `REFRESH_TOKEN_INVALID`로 거절됩니다.
 
 ## 공통 오류 details
 
@@ -194,3 +229,20 @@ TRUST_PROXY=실제_AWS_PROXY_HOP_수
 `COOKIE_DOMAIN`은 비워 API host 전용 cookie로 제한합니다. 프론트 fetch는 반드시 `credentials: "include"`를 사용하며 현재 공통 API client에 적용되어 있습니다. OAuth 공급자 Console callback도 `https://api.example.com/auth/oauth/{provider}/callback`으로 등록합니다.
 
 Vercel 기본 도메인과 AWS 기본 도메인을 그대로 사용하면 서로 완전히 다른 site이므로 인증 쿠키에는 `COOKIE_SAME_SITE=none`과 `COOKIE_SECURE=true`가 필요합니다. 이 방식은 브라우저의 third-party cookie 제한 영향을 받을 수 있어 장기 운영에서는 같은 서비스 도메인의 `app`/`api` 하위 도메인 구성을 우선합니다. 어느 방식이든 CORS에는 정확한 Vercel 운영 origin만 등록하고 wildcard와 credentials를 함께 사용하지 않습니다.
+
+## 계정 찾기와 비밀번호 재설정
+
+- `POST /auth/recovery/account`: 이름·이메일·역할이 정확히 일치하는지 확인하고 로그인 ID와 이메일/SNS 계정 방식을 반환합니다.
+- 이메일 회원가입 시 고정 목록의 복구 질문과 답변을 필수로 받으며, 답변은 정규화한 뒤 bcrypt hash로만 저장합니다.
+- `POST /auth/recovery/question`: 이름·이메일·역할이 일치하는 이메일 계정의 복구 질문을 반환합니다. OAuth 계정은 SNS 로그인을 안내합니다.
+- `POST /auth/recovery/question/verify`: 복구 답변 hash를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다. IP별 1시간 5회로 제한합니다.
+- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전을 확인한 뒤 새 비밀번호를 저장합니다. 변경 직후 기존 토큰은 다시 사용할 수 없습니다.
+- 기존 비밀번호와 복구 답변 원문은 저장하거나 응답하지 않으며, 기존 비밀번호를 표시하지 않고 새 비밀번호만 설정합니다.
+- OAuth 계정에는 복구 질문을 등록하지 않으며 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.
+- 로그인은 이메일·역할별 5번째 실패 응답부터 15분 동안 `LOGIN_ATTEMPTS_EXCEEDED`로 제한하며, 별도로 IP별 요청 제한도 적용합니다. 다중 서버 운영 시 공용 rate-limit store를 연결해야 동일한 제한이 전체 인스턴스에 적용됩니다.
+
+재설정 토큰 서명에는 다른 JWT 비밀키와 분리한 환경변수가 필요합니다.
+
+```text
+PASSWORD_RESET_TOKEN_SECRET=32자 이상의 별도 비밀키
+```

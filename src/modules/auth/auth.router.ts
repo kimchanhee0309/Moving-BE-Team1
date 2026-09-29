@@ -6,18 +6,26 @@ import { Router } from "express";
 
 import { authenticate } from "../../common/middleware/auth/authenticate";
 import {
+  accountRecoveryRateLimiter,
   loginRateLimiter,
   oauthCallbackRateLimiter,
   oauthStartRateLimiter,
+  recoveryAnswerRateLimiter,
   refreshRateLimiter,
   signUpRateLimiter,
 } from "./auth-rate-limit";
 import {
+  confirmPasswordResetController,
+  findAccountController,
   loginController,
   logoutController,
   meController,
+  optionalSessionController,
+  recoveryQuestionController,
   refreshController,
   signUpController,
+  verifyRecoveryAnswerController,
+  withdrawAccountController,
 } from "./auth.controller";
 import {
   oauthCallbackController,
@@ -42,13 +50,15 @@ export const authRouter = Router();
  *         profileCompleted: { type: boolean, example: false }
  *     SignUpRequest:
  *       type: object
- *       required: [name, email, phone, password, role]
+ *       required: [name, email, phone, password, role, recoveryQuestion, recoveryAnswer]
  *       properties:
  *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
  *         email: { type: string, format: email, example: "user@example.com" }
  *         phone: { type: string, example: "01012345678" }
  *         password: { type: string, format: password, minLength: 8, example: "Password1!" }
  *         role: { $ref: "#/components/schemas/UserRole" }
+ *         recoveryQuestion: { type: string, enum: [CHILDHOOD_NICKNAME, MEMORABLE_PLACE, PERSONAL_PHRASE] }
+ *         recoveryAnswer: { type: string, minLength: 2, maxLength: 100, description: "복구 답변은 정규화 후 bcrypt hash로만 저장" }
  *     LoginRequest:
  *       type: object
  *       required: [email, password, role]
@@ -56,6 +66,36 @@ export const authRouter = Router();
  *         email: { type: string, format: email, example: "user@example.com" }
  *         password: { type: string, format: password, example: "Password1!" }
  *         role: { $ref: "#/components/schemas/UserRole" }
+ *     RecoveryAnswerVerifyRequest:
+ *       allOf:
+ *         - { $ref: "#/components/schemas/AccountRecoveryRequest" }
+ *         - type: object
+ *           required: [recoveryAnswer]
+ *           properties:
+ *             recoveryAnswer: { type: string, minLength: 2, maxLength: 100 }
+ *     AccountRecoveryRequest:
+ *       type: object
+ *       additionalProperties: false
+ *       required: [name, email, role]
+ *       properties:
+ *         name: { type: string, example: "홍길동" }
+ *         email: { type: string, format: email, example: "user@example.com" }
+ *         role: { $ref: "#/components/schemas/UserRole" }
+ *     PasswordResetConfirmRequest:
+ *       type: object
+ *       additionalProperties: false
+ *       required: [token, newPassword]
+ *       properties:
+ *         token: { type: string, description: "복구 답변 검증 후 발급된 15분 만료 토큰" }
+ *         newPassword: { type: string, format: password, minLength: 8, example: "NextPassword1!" }
+ *     WithdrawAccountRequest:
+ *       type: object
+ *       additionalProperties: false
+ *       properties:
+ *         currentPassword:
+ *           type: string
+ *           format: password
+ *           description: 이메일·비밀번호 계정은 필수이며 OAuth 계정은 생략합니다.
  *     AuthUserResponse:
  *       type: object
  *       required: [success, data]
@@ -72,6 +112,19 @@ export const authRouter = Router();
  *       properties:
  *         success: { type: boolean, example: true }
  *         data: { nullable: true, example: null }
+ *     OptionalAuthSessionResponse:
+ *       type: object
+ *       required: [success, data]
+ *       properties:
+ *         success: { type: boolean, example: true }
+ *         data:
+ *           type: object
+ *           required: [user]
+ *           properties:
+ *             user:
+ *               nullable: true
+ *               allOf:
+ *                 - { $ref: "#/components/schemas/AuthUser" }
  *     OAuthStartResponse:
  *       type: object
  *       required: [success, data]
@@ -202,6 +255,104 @@ authRouter.post("/login", loginRateLimiter, loginController);
 
 /**
  * @openapi
+ * /auth/recovery/account:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Find Login Account
+ *     description: 이름·이메일·역할이 정확히 일치하면 로그인 ID와 이메일/SNS 계정 방식을 반환합니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/AccountRecoveryRequest" }
+ *     responses:
+ *       200: { description: 계정 일치 결과 }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ */
+authRouter.post(
+  "/recovery/account",
+  accountRecoveryRateLimiter,
+  findAccountController,
+);
+
+/**
+ * @openapi
+ * /auth/recovery/question:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Get Password Recovery Question
+ *     description: 이름·이메일·역할이 일치하는 이메일 계정의 복구 질문을 반환합니다. OAuth 계정은 SNS 로그인을 안내합니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/AccountRecoveryRequest" }
+ *     responses:
+ *       200: { description: 복구 질문 조회 결과 }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ */
+authRouter.post(
+  "/recovery/question",
+  accountRecoveryRateLimiter,
+  recoveryQuestionController,
+);
+
+/**
+ * @openapi
+ * /auth/recovery/question/verify:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Verify Password Recovery Answer
+ *     description: 복구 답변 hash를 확인하고 성공하면 15분 만료 비밀번호 재설정 토큰을 반환합니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/RecoveryAnswerVerifyRequest" }
+ *     responses:
+ *       200: { description: 복구 답변 확인 및 재설정 토큰 발급 }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ *       503: { $ref: "#/components/responses/ServiceUnavailable" }
+ */
+authRouter.post(
+  "/recovery/question/verify",
+  recoveryAnswerRateLimiter,
+  verifyRecoveryAnswerController,
+);
+
+/**
+ * @openapi
+ * /auth/recovery/password/confirm:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Confirm Password Reset
+ *     description: 단기 재설정 토큰과 새 비밀번호를 검증해 이메일 계정 비밀번호를 교체합니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/PasswordResetConfirmRequest" }
+ *     responses:
+ *       200:
+ *         description: 비밀번호 재설정 완료
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/EmptySuccessResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ */
+authRouter.post(
+  "/recovery/password/confirm",
+  accountRecoveryRateLimiter,
+  confirmPasswordResetController,
+);
+
+/**
+ * @openapi
  * /auth/me:
  *   get:
  *     tags: [Auth]
@@ -216,6 +367,52 @@ authRouter.post("/login", loginRateLimiter, loginController);
  *       401: { $ref: "#/components/responses/Unauthorized" }
  */
 authRouter.get("/me", authenticate, meController);
+
+/**
+ * @openapi
+ * /auth/me:
+ *   delete:
+ *     tags: [Auth]
+ *     summary: Withdraw Current Account
+ *     description: 이메일 계정은 현재 비밀번호를 다시 확인하고 OAuth 계정은 현재 세션으로 본인 계정과 연관 데이터를 삭제합니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/WithdrawAccountRequest" }
+ *     responses:
+ *       200:
+ *         description: 탈퇴 및 인증 쿠키 삭제 완료
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/EmptySuccessResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       409: { $ref: "#/components/responses/Conflict" }
+ */
+authRouter.delete("/me", authenticate, withdrawAccountController);
+
+/**
+ * @openapi
+ * /auth/refresh/session:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Restore Optional Browser Session
+ *     description: 공개 페이지용 세션 확인입니다. 비회원은 user null로 성공하고, Access가 없거나 만료됐지만 Refresh가 유효하면 두 토큰을 회전합니다. Refresh 쿠키 Path는 넓히지 않습니다.
+ *     responses:
+ *       200:
+ *         description: 로그인 사용자 또는 정상 비회원 상태
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/OptionalAuthSessionResponse" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ */
+authRouter.post(
+  "/refresh/session",
+  refreshRateLimiter,
+  optionalSessionController,
+);
 
 /**
  * @openapi

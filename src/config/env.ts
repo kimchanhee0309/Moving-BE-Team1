@@ -228,6 +228,10 @@ export const env = {
 
   NAVER_CLIENT_SECRET: getOptionalEnvironmentVariable("NAVER_CLIENT_SECRET"),
 
+  PASSWORD_RESET_TOKEN_SECRET: getOptionalEnvironmentVariable(
+    "PASSWORD_RESET_TOKEN_SECRET",
+  ),
+
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
 
   COOKIE_SECURE: cookieSecure,
