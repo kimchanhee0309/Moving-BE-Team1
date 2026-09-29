@@ -23,6 +23,19 @@ function rejectRateLimitedRequest(
   );
 }
 
+function rejectLoginRateLimitedRequest(
+  _request: Request,
+  _response: Response,
+  next: NextFunction,
+): void {
+  next(
+    new TooManyRequestsError(
+      "로그인에 5회 실패해 15분간 로그인이 제한되었습니다. 비밀번호 찾기를 이용해 주세요.",
+      "LOGIN_ATTEMPTS_EXCEEDED",
+    ),
+  );
+}
+
 /** 로그인 실패를 IP별 15분에 5회로 제한해 무차별 대입을 완화합니다. */
 export const loginRateLimiter = rateLimit({
   windowMs: FIFTEEN_MINUTES_MS,
@@ -30,6 +43,24 @@ export const loginRateLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  handler: rejectLoginRateLimitedRequest,
+});
+
+/** 계정 존재 여부 대입을 줄이기 위해 계정 찾기를 IP별 1시간에 10회로 제한합니다. */
+export const accountRecoveryRateLimiter = rateLimit({
+  windowMs: ONE_HOUR_MS,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: rejectRateLimitedRequest,
+});
+
+/** 복구 답변 무차별 대입을 줄이기 위해 검증 요청을 IP별 1시간에 5회로 제한합니다. */
+export const recoveryAnswerRateLimiter = rateLimit({
+  windowMs: ONE_HOUR_MS,
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
   handler: rejectRateLimitedRequest,
 });
 

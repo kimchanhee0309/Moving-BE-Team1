@@ -7,6 +7,7 @@ import type { ParamsDictionary } from "express-serve-static-core";
 
 import {
   clearAuthCookies,
+  getAccessTokenFromCookie,
   getRefreshTokenFromCookie,
   setAuthCookies,
 } from "../../common/cookies/auth-cookie";
@@ -14,8 +15,26 @@ import { UnauthorizedError } from "../../common/errors/app-error";
 import { HTTP_STATUS } from "../../common/constants/http-status";
 import { sendSuccess } from "../../common/response/api-response";
 import { getAuthContext } from "../../common/utils/auth-context";
-import { getCurrentUser, login, refreshAuth, signUp } from "./auth.service";
-import { parseLoginInput, parseSignUpInput } from "./auth.validator";
+import {
+  confirmPasswordReset,
+  findAccount,
+  getRecoveryQuestion,
+  getCurrentUser,
+  login,
+  refreshAuth,
+  verifyRecoveryAnswer,
+  restoreOptionalAuthSession,
+  signUp,
+  withdrawAccount,
+} from "./auth.service";
+import {
+  parseAccountRecoveryInput,
+  parseConfirmPasswordResetInput,
+  parseLoginInput,
+  parseSignUpInput,
+  parseVerifyRecoveryAnswerInput,
+  parseWithdrawAccountInput,
+} from "./auth.validator";
 
 /** Express가 파싱한 외부 body를 Validator 전까지 신뢰하지 않는 Auth Controller 계약입니다. */
 type UnknownBodyRequestHandler = RequestHandler<ParamsDictionary, unknown, unknown>;
@@ -38,6 +57,46 @@ export const loginController: UnknownBodyRequestHandler = async (request, respon
   setAuthCookies(response, result.tokens);
 
   return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
+};
+
+/** 이름·이메일·역할이 일치하는지 확인해 로그인 ID와 계정 방식을 반환합니다. */
+export const findAccountController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const input = parseAccountRecoveryInput(request.body);
+  const result = await findAccount(input);
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/** 본인 정보가 일치하는 이메일 계정의 복구 질문을 반환합니다. */
+export const recoveryQuestionController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const input = parseAccountRecoveryInput(request.body);
+  const result = await getRecoveryQuestion(input);
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/** 복구 답변을 확인해 15분 만료 비밀번호 재설정 토큰을 반환합니다. */
+export const verifyRecoveryAnswerController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const input = parseVerifyRecoveryAnswerInput(request.body);
+  const result = await verifyRecoveryAnswer(input);
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/** 단기 재설정 토큰을 검증한 뒤 새 비밀번호로 교체합니다. */
+export const confirmPasswordResetController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const input = parseConfirmPasswordResetInput(request.body);
+  await confirmPasswordReset(input);
+  return sendSuccess(response, HTTP_STATUS.OK, null);
 };
 
 /** Access Token으로 식별된 사용자의 최신 정보와 profileCompleted를 반환합니다. */
@@ -64,6 +123,41 @@ export const refreshController: RequestHandler = async (request, response) => {
   setAuthCookies(response, result.tokens);
 
   return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
+};
+
+/**
+ * 공개 페이지에서 비회원은 정상 상태로, 남은 Refresh가 있는 사용자는 복구된 상태로 반환합니다.
+ * stale 인증 쿠키는 삭제하고 `/auth/me`와 보호 API의 401 계약은 변경하지 않습니다.
+ */
+export const optionalSessionController: RequestHandler = async (
+  request,
+  response,
+) => {
+  const accessToken = getAccessTokenFromCookie(request);
+  const refreshToken = getRefreshTokenFromCookie(request);
+  const result = await restoreOptionalAuthSession(accessToken, refreshToken);
+
+  if (result.tokens) {
+    setAuthCookies(response, result.tokens);
+  } else if (result.shouldClearCookies) {
+    clearAuthCookies(response);
+  }
+
+  return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
+};
+
+/** 인증 본인의 탈퇴 요청을 검증·삭제하고 성공한 경우 두 인증 쿠키를 만료시킵니다. */
+export const withdrawAccountController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const { userId } = getAuthContext(request);
+  const input = parseWithdrawAccountInput(request.body);
+
+  await withdrawAccount(userId, input);
+  clearAuthCookies(response);
+
+  return sendSuccess(response, HTTP_STATUS.OK, null);
 };
 
 /** Stateless 로그아웃으로 두 쿠키를 만료시키며 이미 만료된 토큰도 동일하게 처리합니다. */

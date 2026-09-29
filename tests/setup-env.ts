@@ -15,6 +15,7 @@ process.env.NAVER_CLIENT_ID = "test-naver-client-id";
 process.env.NAVER_CLIENT_SECRET = "test-naver-client-secret";
 process.env.ACCESS_TOKEN_SECRET = "test-access-token-secret-at-least-32-characters";
 process.env.REFRESH_TOKEN_SECRET = "test-refresh-token-secret-at-least-32-characters";
+process.env.PASSWORD_RESET_TOKEN_SECRET = "test-password-reset-secret-at-least-32-characters";
 process.env.ACCESS_TOKEN_MAX_AGE_MS = "1800000";
 process.env.REFRESH_TOKEN_MAX_AGE_MS = "604800000";
 process.env.COOKIE_SECURE = "false";

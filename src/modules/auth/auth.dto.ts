@@ -1,8 +1,8 @@
 /**
- * 이메일 인증 API의 입력과 외부 응답 DTO를 정의합니다.
+ * 이메일 인증·선택 세션·회원 탈퇴 API의 입력과 외부 응답 DTO를 정의합니다.
  * passwordHash와 토큰 원문 같은 내부 인증 정보는 응답 DTO에 포함하지 않습니다.
  */
-import type { UserRole } from "../../generated/prisma/enums";
+import type { PasswordRecoveryQuestion, UserRole } from "../../generated/prisma/enums";
 import type { AuthTokens } from "../../common/utils/auth-token";
 
 /** POST /auth/signup에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
@@ -17,6 +17,9 @@ export interface SignUpRequestDto {
   password: string;
   /** 가입할 계정 유형이며 CUSTOMER 또는 MOVER입니다. */
   role: UserRole;
+  recoveryQuestion: PasswordRecoveryQuestion;
+  /** 정규화된 복구 답변이며 저장 전 반드시 hash 처리합니다. */
+  recoveryAnswer: string;
 }
 
 /** POST /auth/login에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
@@ -27,6 +30,45 @@ export interface LoginRequestDto {
   password: string;
   /** 로그인 화면에서 선택한 계정 유형입니다. */
   role: UserRole;
+}
+
+/** DELETE /auth/me에서 이메일 계정 재인증에 사용하는 요청 DTO입니다. */
+export interface WithdrawAccountRequestDto {
+  /** 이메일 계정은 필수이며 OAuth 계정은 생략할 수 있는 현재 비밀번호입니다. */
+  currentPassword?: string;
+}
+
+/** 계정 찾기와 비밀번호 재설정 요청에서 공통으로 확인하는 본인 입력입니다. */
+export interface AccountRecoveryRequestDto {
+  name: string;
+  email: string;
+  role: UserRole;
+}
+
+/** 만료 전 재설정 토큰으로 새 비밀번호를 저장하는 요청입니다. */
+export interface ConfirmPasswordResetRequestDto {
+  token: string;
+  newPassword: string;
+}
+
+export interface VerifyRecoveryAnswerRequestDto extends AccountRecoveryRequestDto {
+  recoveryAnswer: string;
+}
+
+export interface RecoveryQuestionResultDto {
+  available: boolean;
+  question: PasswordRecoveryQuestion | null;
+  loginMethod: "EMAIL" | "SOCIAL" | null;
+}
+
+export interface RecoveryVerificationResultDto {
+  resetToken: string;
+}
+
+export interface AccountLookupResultDto {
+  found: boolean;
+  loginId: string | null;
+  loginMethod: "EMAIL" | "SOCIAL" | null;
 }
 
 /** Auth API가 외부에 공개하는 사용자 정보이며 내부 hash와 token은 포함하지 않습니다. */
@@ -51,4 +93,14 @@ export interface AuthResult {
   user: AuthUserDto;
   /** Controller가 cookie로만 전달하며 JSON에 포함하지 않는 Access/Refresh Token입니다. */
   tokens: AuthTokens;
+}
+
+/** 선택적 세션 복구가 비회원과 로그인 사용자를 같은 200 계약으로 반환하기 위한 결과입니다. */
+export interface OptionalAuthSessionResult {
+  /** 유효한 Access 또는 Refresh Token으로 확인한 사용자이며 비회원은 null입니다. */
+  user: AuthUserDto | null;
+  /** Refresh Token으로 복구했을 때만 Controller가 새 쿠키를 발급합니다. */
+  tokens: AuthTokens | null;
+  /** 만료·위변조·삭제 사용자 쿠키가 있었다면 브라우저에서 정리해야 합니다. */
+  shouldClearCookies: boolean;
 }

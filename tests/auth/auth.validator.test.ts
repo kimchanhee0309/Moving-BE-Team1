@@ -3,8 +3,12 @@
  */
 import { BadRequestError } from "../../src/common/errors/app-error";
 import {
+  parseAccountRecoveryInput,
+  parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
+  parseVerifyRecoveryAnswerInput,
+  parseWithdrawAccountInput,
 } from "../../src/modules/auth/auth.validator";
 
 describe("Auth validator", () => {
@@ -15,6 +19,8 @@ describe("Auth validator", () => {
       phone: "010-1234-5678",
       password: "Password1!",
       role: "CUSTOMER",
+      recoveryQuestion: "PERSONAL_PHRASE",
+      recoveryAnswer: " My Answer ",
     });
 
     expect(input).toEqual({
@@ -23,6 +29,8 @@ describe("Auth validator", () => {
       phone: "01012345678",
       password: "Password1!",
       role: "CUSTOMER",
+      recoveryQuestion: "PERSONAL_PHRASE",
+      recoveryAnswer: "my answer",
     });
   });
 
@@ -36,6 +44,8 @@ describe("Auth validator", () => {
           phone: "01012345678",
           password: "Password1!",
           role: "CUSTOMER",
+          recoveryQuestion: "PERSONAL_PHRASE",
+          recoveryAnswer: "answer",
         }).name,
       ).toBe(name);
     },
@@ -82,5 +92,40 @@ describe("Auth validator", () => {
     expect(() => parseLoginInput({ email: "user@example.com" })).toThrow(
       BadRequestError,
     );
+  });
+
+  test("계정 복구 입력을 정규화하고 새 비밀번호 정책을 검증한다", () => {
+    expect(parseAccountRecoveryInput({
+      name: " 홍길동 ",
+      email: " USER@Example.com ",
+      role: "CUSTOMER",
+    })).toEqual({ name: "홍길동", email: "user@example.com", role: "CUSTOMER" });
+
+    expect(parseConfirmPasswordResetInput({
+      token: "reset-token",
+      newPassword: "NextPassword1!",
+    })).toEqual({ token: "reset-token", newPassword: "NextPassword1!" });
+
+    expect(() => parseConfirmPasswordResetInput({ token: "reset-token", newPassword: "weak" })).toThrow(BadRequestError);
+
+    expect(parseVerifyRecoveryAnswerInput({
+      name: " 홍길동 ", email: " USER@Example.com ", role: "CUSTOMER", recoveryAnswer: " My Answer ",
+    })).toEqual({ name: "홍길동", email: "user@example.com", role: "CUSTOMER", recoveryAnswer: "my answer" });
+  });
+
+  test("OAuth 탈퇴는 빈 Body를 허용하고 이메일 계정 비밀번호는 원문을 보존한다", () => {
+    expect(parseWithdrawAccountInput(undefined)).toEqual({});
+    expect(
+      parseWithdrawAccountInput({ currentPassword: " Password1! " }),
+    ).toEqual({ currentPassword: " Password1! " });
+  });
+
+  test("탈퇴 요청의 빈 비밀번호와 임의 필드를 거절한다", () => {
+    expect(() =>
+      parseWithdrawAccountInput({ currentPassword: "" }),
+    ).toThrow(BadRequestError);
+    expect(() =>
+      parseWithdrawAccountInput({ userId: "other-user-id" }),
+    ).toThrow(BadRequestError);
   });
 });
