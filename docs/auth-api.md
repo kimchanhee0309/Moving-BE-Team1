@@ -83,6 +83,8 @@ Refresh 성공 시 탈취 토큰의 사용 가능 시간을 줄이기 위해 Acc
 - Access Token이 없거나 만료됐고 Refresh Token이 유효하면 두 토큰을 회전하고 사용자를 반환합니다.
 - 인증 쿠키가 없는 비회원은 오류가 아니라 `200`, `{ "user": null }`로 반환합니다.
 - 만료·위변조 토큰이나 삭제된 사용자 토큰은 쿠키를 지우고 정상 비회원으로 정리합니다.
+- 정상 비회원 확인, 유효한 Access 확인, 유효한 Refresh 복원은 요청 제한 횟수에서 제외하며 잘못된 Refresh Token 시도만 IP별 15분에 30회로 제한합니다.
+- 선택 세션과 강제 Refresh는 서로 다른 요청 제한 저장소를 사용하므로 한 경로의 호출이 다른 경로의 제한 횟수를 소비하지 않습니다.
 - 보호된 `GET /auth/me`, `POST /auth/refresh` 및 다른 보호 API의 기존 401 계약은 그대로 유지합니다.
 
 ## 회원 탈퇴
@@ -191,7 +193,7 @@ http://localhost:4000/auth/oauth/naver/callback
 - production의 `FRONTEND_URL`, `OAUTH_CALLBACK_BASE_URL`은 HTTPS만 허용됩니다.
 - production 평문 요청은 설정된 백엔드 HTTPS origin으로 `308` 이동합니다. 실제 TLS 인증서와 종료는 배포 프록시에서 설정합니다.
 - `TRUST_PROXY`는 `true`가 아니라 `false` 또는 실제 reverse proxy hop 수를 사용해 위조된 IP 헤더로 요청 제한을 우회하지 못하게 합니다.
-- 로그인은 IP별 15분에 실패 5회, 회원가입은 1시간에 10회, OAuth 시작은 15분에 20회, callback과 Refresh는 각각 15분에 30회로 제한합니다.
+- 로그인은 IP별 15분에 실패 5회, 회원가입은 1시간에 10회, OAuth 시작은 15분에 20회, callback은 15분에 30회로 제한합니다. Refresh와 선택 세션은 별도 저장소에서 실패 요청만 각각 15분에 30회로 제한합니다.
 - 현재 요청 제한 저장소는 단일 Node 프로세스 메모리입니다. 서버를 여러 인스턴스로 확장할 때는 팀이 승인한 Redis 등 공유 store로 교체해야 합니다.
 - 소비된 OAuth State 기록도 단일 프로세스 메모리이므로 여러 인스턴스 배포에서는 같은 공유 store로 옮겨야 완전한 전역 일회성을 보장합니다.
 
@@ -233,16 +235,26 @@ Vercel 기본 도메인과 AWS 기본 도메인을 그대로 사용하면 서로
 ## 계정 찾기와 비밀번호 재설정
 
 - `POST /auth/recovery/account`: 이름·이메일·역할이 정확히 일치하는지 확인하고 로그인 ID와 이메일/SNS 계정 방식을 반환합니다.
-- 이메일 회원가입 시 고정 목록의 복구 질문과 답변을 필수로 받으며, 답변은 정규화한 뒤 bcrypt hash로만 저장합니다.
-- `POST /auth/recovery/question`: 이름·이메일·역할이 일치하는 이메일 계정의 복구 질문을 반환합니다. OAuth 계정은 SNS 로그인을 안내합니다.
-- `POST /auth/recovery/question/verify`: 복구 답변 hash를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다. IP별 1시간 5회로 제한합니다.
-- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전을 확인한 뒤 새 비밀번호를 저장합니다. 변경 직후 기존 토큰은 다시 사용할 수 없습니다.
-- 기존 비밀번호와 복구 답변 원문은 저장하거나 응답하지 않으며, 기존 비밀번호를 표시하지 않고 새 비밀번호만 설정합니다.
-- OAuth 계정에는 복구 질문을 등록하지 않으며 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.
+- 회원가입에는 별도의 복구 질문·답변을 받지 않습니다.
+- `POST /auth/recovery/password/code`: 이름·이메일·역할이 일치하는 이메일 계정에 6자리 인증코드를 보냅니다. 코드는 5분간 유효하고 60초 뒤 재발송할 수 있으며 IP별 1시간 5회로 제한합니다.
+- 위 endpoint는 이메일 계정에 `delivery: EMAIL`과 challenge ID를, OAuth 계정에 `delivery: SOCIAL`을, 불일치 계정에 `delivery: NONE`을 반환합니다. OAuth 계정은 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.
+- `POST /auth/recovery/password/code/verify`: challenge ID와 6자리 코드를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다. challenge별 5회 및 IP별 1시간 5회로 대입을 제한합니다.
+- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전·검증된 challenge를 확인한 뒤 새 비밀번호를 저장합니다. challenge와 토큰은 한 번만 사용할 수 있습니다.
+- 인증코드 원문은 메일로만 전송하고 DB에는 사용자 ID와 별도 Secret으로 생성한 HMAC만 저장합니다. 기존 비밀번호는 표시하지 않고 새 비밀번호만 설정합니다.
 - 로그인은 이메일·역할별 5번째 실패 응답부터 15분 동안 `LOGIN_ATTEMPTS_EXCEEDED`로 제한하며, 별도로 IP별 요청 제한도 적용합니다. 다중 서버 운영 시 공용 rate-limit store를 연결해야 동일한 제한이 전체 인스턴스에 적용됩니다.
 
 재설정 토큰 서명에는 다른 JWT 비밀키와 분리한 환경변수가 필요합니다.
 
 ```text
 PASSWORD_RESET_TOKEN_SECRET=32자 이상의 별도 비밀키
+PASSWORD_RESET_CODE_SECRET=32자 이상의 별도 비밀키
+PASSWORD_RESET_DELIVERY=console 또는 smtp
+SMTP_HOST=smtp 공급자 host
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=smtp 사용자
+SMTP_PASS=smtp 비밀번호
+SMTP_FROM=발신자 표시명과 주소
 ```
+
+로컬 개발에서는 `PASSWORD_RESET_DELIVERY=console`로 설정해 인증코드를 백엔드 터미널에서 확인할 수 있습니다. 이 모드는 production 환경에서 서버 시작 단계에 거절됩니다. 실제 발송 환경에서는 `smtp`로 설정하고 모든 `SMTP_*` 값을 연결합니다.

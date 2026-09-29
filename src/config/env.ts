@@ -8,6 +8,7 @@ import "dotenv/config";
 type NodeEnvironment = "development" | "test" | "production";
 
 type CookieSameSite = "lax" | "strict" | "none";
+type PasswordResetDelivery = "console" | "smtp";
 
 function getRequiredEnvironmentVariable(name: string): string {
   const value = process.env[name]?.trim();
@@ -90,6 +91,23 @@ function parseCookieSameSite(value: string | undefined): CookieSameSite {
   }
 
   return sameSite;
+}
+
+function parsePasswordResetDelivery(
+  value: string | undefined,
+  nodeEnvironment: NodeEnvironment,
+): PasswordResetDelivery {
+  const delivery = value?.trim().toLowerCase() || "smtp";
+
+  if (delivery !== "console" && delivery !== "smtp") {
+    throw new Error("PASSWORD_RESET_DELIVERY는 console 또는 smtp여야 합니다.");
+  }
+
+  if (nodeEnvironment === "production" && delivery === "console") {
+    throw new Error("production 환경에서는 PASSWORD_RESET_DELIVERY=console을 사용할 수 없습니다.");
+  }
+
+  return delivery;
 }
 
 function parseCorsOrigins(
@@ -231,6 +249,27 @@ export const env = {
   PASSWORD_RESET_TOKEN_SECRET: getOptionalEnvironmentVariable(
     "PASSWORD_RESET_TOKEN_SECRET",
   ),
+
+  PASSWORD_RESET_CODE_SECRET: getOptionalEnvironmentVariable(
+    "PASSWORD_RESET_CODE_SECRET",
+  ),
+
+  PASSWORD_RESET_DELIVERY: parsePasswordResetDelivery(
+    process.env.PASSWORD_RESET_DELIVERY,
+    nodeEnvironment,
+  ),
+
+  SMTP_HOST: getOptionalEnvironmentVariable("SMTP_HOST"),
+
+  SMTP_PORT: parsePositiveInteger(process.env.SMTP_PORT, 587, "SMTP_PORT"),
+
+  SMTP_SECURE: parseBoolean(process.env.SMTP_SECURE, false),
+
+  SMTP_USER: getOptionalEnvironmentVariable("SMTP_USER"),
+
+  SMTP_PASS: getOptionalEnvironmentVariable("SMTP_PASS"),
+
+  SMTP_FROM: getOptionalEnvironmentVariable("SMTP_FROM"),
 
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
 

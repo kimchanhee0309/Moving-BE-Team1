@@ -11,7 +11,7 @@ import type {
   ConfirmPasswordResetRequestDto,
   LoginRequestDto,
   SignUpRequestDto,
-  VerifyRecoveryAnswerRequestDto,
+  VerifyPasswordResetCodeRequestDto,
   WithdrawAccountRequestDto,
 } from "./auth.dto";
 
@@ -27,17 +27,6 @@ const requiredString = z
 const roleSchema = z.enum(["CUSTOMER", "MOVER"], {
   error: "CUSTOMER 또는 MOVER만 사용할 수 있습니다.",
 });
-
-const recoveryQuestionSchema = z.enum([
-  "CHILDHOOD_NICKNAME",
-  "MEMORABLE_PLACE",
-  "PERSONAL_PHRASE",
-]);
-
-const recoveryAnswerSchema = z
-  .string({ error: "복구 답변은 문자열이어야 합니다." })
-  .transform((value) => value.normalize("NFKC").trim().toLowerCase())
-  .pipe(z.string().min(2, { error: "복구 답변은 2자 이상 입력해 주세요." }).max(100, { error: "복구 답변은 100자 이내로 입력해 주세요." }));
 
 const emailSchema = requiredString
   .transform((value) => value.toLowerCase())
@@ -69,8 +58,6 @@ const signUpSchema = z
       ),
     password: passwordSchema,
     role: roleSchema,
-    recoveryQuestion: recoveryQuestionSchema,
-    recoveryAnswer: recoveryAnswerSchema,
   })
   .strict();
 
@@ -106,9 +93,14 @@ const confirmPasswordResetSchema = z
   })
   .strict();
 
-const verifyRecoveryAnswerSchema = accountRecoverySchema.extend({
-  recoveryAnswer: recoveryAnswerSchema,
-}).strict();
+const verifyPasswordResetCodeSchema = z
+  .object({
+    challengeId: z.uuid({ error: "비밀번호 재설정 요청 ID가 올바르지 않습니다." }),
+    code: z.string({ error: "인증코드는 문자열이어야 합니다." }).regex(/^\d{6}$/, {
+      error: "인증코드는 6자리 숫자여야 합니다.",
+    }),
+  })
+  .strict();
 
 /**
  * 회원가입 필수값과 길이·형식을 검증하고 이메일과 전화번호를 정규화합니다.
@@ -161,10 +153,10 @@ export function parseConfirmPasswordResetInput(
   });
 }
 
-export function parseVerifyRecoveryAnswerInput(
+export function parseVerifyPasswordResetCodeInput(
   value: unknown,
-): VerifyRecoveryAnswerRequestDto {
-  return parseWithZod(verifyRecoveryAnswerSchema, value, {
+): VerifyPasswordResetCodeRequestDto {
+  return parseWithZod(verifyPasswordResetCodeSchema, value, {
     fallbackField: "body",
   });
 }

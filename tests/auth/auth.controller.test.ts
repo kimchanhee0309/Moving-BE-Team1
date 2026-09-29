@@ -6,18 +6,18 @@ jest.mock("../../src/modules/auth/auth.validator", () => ({
   parseConfirmPasswordResetInput: jest.fn(),
   parseLoginInput: jest.fn(),
   parseSignUpInput: jest.fn(),
-  parseVerifyRecoveryAnswerInput: jest.fn(),
+  parseVerifyPasswordResetCodeInput: jest.fn(),
   parseWithdrawAccountInput: jest.fn(),
 }));
 
 jest.mock("../../src/modules/auth/auth.service", () => ({
   confirmPasswordReset: jest.fn(),
   findAccount: jest.fn(),
-  getRecoveryQuestion: jest.fn(),
+  requestPasswordResetCode: jest.fn(),
   getCurrentUser: jest.fn(),
   login: jest.fn(),
   refreshAuth: jest.fn(),
-  verifyRecoveryAnswer: jest.fn(),
+  verifyPasswordResetCode: jest.fn(),
   restoreOptionalAuthSession: jest.fn(),
   signUp: jest.fn(),
   withdrawAccount: jest.fn(),
@@ -32,6 +32,10 @@ jest.mock("../../src/common/cookies/auth-cookie", () => ({
 
 jest.mock("../../src/common/utils/auth-context", () => ({
   getAuthContext: jest.fn(),
+}));
+
+jest.mock("../../src/modules/auth/auth-rate-limit", () => ({
+  markOptionalSessionRefreshFailure: jest.fn(),
 }));
 
 import type { NextFunction, Request, Response } from "express";
@@ -53,20 +57,21 @@ import {
   logoutController,
   meController,
   optionalSessionController,
-  recoveryQuestionController,
+  requestPasswordResetCodeController,
   refreshController,
   signUpController,
-  verifyRecoveryAnswerController,
+  verifyPasswordResetCodeController,
   withdrawAccountController,
 } from "../../src/modules/auth/auth.controller";
+import { markOptionalSessionRefreshFailure } from "../../src/modules/auth/auth-rate-limit";
 import {
   confirmPasswordReset,
   findAccount,
-  getRecoveryQuestion,
+  requestPasswordResetCode,
   getCurrentUser,
   login,
   refreshAuth,
-  verifyRecoveryAnswer,
+  verifyPasswordResetCode,
   restoreOptionalAuthSession,
   signUp,
   withdrawAccount,
@@ -76,7 +81,7 @@ import {
   parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
-  parseVerifyRecoveryAnswerInput,
+  parseVerifyPasswordResetCodeInput,
   parseWithdrawAccountInput,
 } from "../../src/modules/auth/auth.validator";
 
@@ -115,8 +120,6 @@ describe("Auth controller response contract", () => {
       phone: "01012345678",
       password: "Password1!",
       role: "CUSTOMER" as const,
-      recoveryQuestion: "PERSONAL_PHRASE" as const,
-      recoveryAnswer: "moving answer",
     };
     jest.mocked(parseSignUpInput).mockReturnValue(input);
     jest.mocked(signUp).mockResolvedValue({ user, tokens });
@@ -188,24 +191,30 @@ describe("Auth controller response contract", () => {
     expect(response.json).toHaveBeenCalledWith({ success: true, data: { found: true, loginId: input.email, loginMethod: "EMAIL" } });
   });
 
-  test("복구 질문 조회 결과를 반환한다", async () => {
+  test("비밀번호 재설정 코드를 발송하고 challenge 정보를 반환한다", async () => {
     const input = { name: "홍길동", email: "user@example.com", role: "CUSTOMER" as const };
     jest.mocked(parseAccountRecoveryInput).mockReturnValue(input);
-    jest.mocked(getRecoveryQuestion).mockResolvedValue({ available: true, question: "PERSONAL_PHRASE", loginMethod: "EMAIL" });
+    const result = {
+      delivery: "EMAIL" as const,
+      challengeId: "11111111-1111-4111-8111-111111111111",
+      expiresInSeconds: 300,
+      resendAfterSeconds: 60,
+    };
+    jest.mocked(requestPasswordResetCode).mockResolvedValue(result);
     const response = createResponse();
 
-    await recoveryQuestionController({ body: input } as Request, response, jest.fn() as NextFunction);
+    await requestPasswordResetCodeController({ body: input } as Request, response, jest.fn() as NextFunction);
 
     expect(response.status).toHaveBeenCalledWith(200);
-    expect(response.json).toHaveBeenCalledWith({ success: true, data: { available: true, question: "PERSONAL_PHRASE", loginMethod: "EMAIL" } });
+    expect(response.json).toHaveBeenCalledWith({ success: true, data: result });
   });
 
-  test("복구 답변 확인 성공 시 단기 토큰을 반환한다", async () => {
-    const input = { name: "홍길동", email: "user@example.com", role: "CUSTOMER" as const, recoveryAnswer: "moving answer" };
-    jest.mocked(parseVerifyRecoveryAnswerInput).mockReturnValue(input);
-    jest.mocked(verifyRecoveryAnswer).mockResolvedValue({ resetToken: "reset-token" });
+  test("인증코드 확인 성공 시 단기 토큰을 반환한다", async () => {
+    const input = { challengeId: "11111111-1111-4111-8111-111111111111", code: "123456" };
+    jest.mocked(parseVerifyPasswordResetCodeInput).mockReturnValue(input);
+    jest.mocked(verifyPasswordResetCode).mockResolvedValue({ resetToken: "reset-token" });
     const response = createResponse();
-    await verifyRecoveryAnswerController({ body: input } as Request, response, jest.fn() as NextFunction);
+    await verifyPasswordResetCodeController({ body: input } as Request, response, jest.fn() as NextFunction);
     expect(response.json).toHaveBeenCalledWith({ success: true, data: { resetToken: "reset-token" } });
   });
 
@@ -253,6 +262,7 @@ describe("Auth controller response contract", () => {
 
     expect(setAuthCookies).not.toHaveBeenCalled();
     expect(clearAuthCookies).not.toHaveBeenCalled();
+    expect(markOptionalSessionRefreshFailure).not.toHaveBeenCalled();
     expect(response.json).toHaveBeenCalledWith({
       success: true,
       data: { user: null },
@@ -276,9 +286,35 @@ describe("Auth controller response contract", () => {
     );
 
     expect(setAuthCookies).toHaveBeenCalledWith(response, tokens);
+    expect(markOptionalSessionRefreshFailure).not.toHaveBeenCalled();
     expect(response.json).toHaveBeenCalledWith({
       success: true,
       data: { user },
+    });
+  });
+
+  test("선택 세션의 잘못된 Refresh 결과를 limiter 실패로 표시한다", async () => {
+    jest.mocked(getAccessTokenFromCookie).mockReturnValue(null);
+    jest.mocked(getRefreshTokenFromCookie).mockReturnValue("invalid-refresh-token");
+    jest.mocked(restoreOptionalAuthSession).mockResolvedValue({
+      user: null,
+      tokens: null,
+      shouldClearCookies: true,
+    });
+    const request = {} as Request;
+    const response = createResponse();
+
+    await optionalSessionController(
+      request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(markOptionalSessionRefreshFailure).toHaveBeenCalledWith(request);
+    expect(clearAuthCookies).toHaveBeenCalledWith(response);
+    expect(response.json).toHaveBeenCalledWith({
+      success: true,
+      data: { user: null },
     });
   });
 
