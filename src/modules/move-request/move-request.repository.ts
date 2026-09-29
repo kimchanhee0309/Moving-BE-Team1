@@ -3,6 +3,7 @@
  * 각 함수는 `client`를 선택적으로 받아 `$transaction` 콜백 안팎에서 동일한 쿼리를 재사용합니다.
  */
 import type { Prisma } from "../../generated/prisma/client";
+import type { QuoteStatus } from "../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
 import type { ServiceTypeName } from "./move-request.dto";
 
@@ -115,6 +116,25 @@ export function createMoveRequest(
   return client.moveRequest.create({ data, select: moveRequestSelect });
 }
 
+interface UpdateMoveRequestData {
+  serviceTypeId: string;
+  moveDate: Date;
+  fromAddress: string;
+  toAddress: string;
+}
+
+/**
+ * WAITING 상태인 MoveRequest의 서비스 유형·이사일·출발지·도착지를 덮어씁니다.
+ * status는 이 함수가 바꾸지 않습니다(호출부인 Service가 WAITING인지 이미 확인한 뒤 호출).
+ */
+export function updateMoveRequest(
+  id: string,
+  data: UpdateMoveRequestData,
+  client: PrismaClientOrTx = prisma,
+): Promise<MoveRequestRecord> {
+  return client.moveRequest.update({ where: { id }, data, select: moveRequestSelect });
+}
+
 export function findMoveRequestById(
   id: string,
   client: PrismaClientOrTx = prisma,
@@ -140,6 +160,46 @@ export async function findMoveRequestByIdForUpdate(
   }
 
   return findMoveRequestById(id, client);
+}
+
+/** DELETE에서 취소 알림 문구에 필요한 고객 이름까지 함께 조회하기 위한 select입니다. */
+const moveRequestForCancelSelect = {
+  id: true,
+  customerId: true,
+  status: true,
+  customer: {
+    select: {
+      user: { select: { name: true } },
+    },
+  },
+} satisfies Prisma.MoveRequestSelect;
+
+export type MoveRequestForCancelRecord = Prisma.MoveRequestGetPayload<{
+  select: typeof moveRequestForCancelSelect;
+}>;
+
+/**
+ * DELETE endpoint 전용으로 MoveRequest row를 `FOR UPDATE`로 잠근 뒤 취소 알림에 필요한
+ * 고객 이름까지 함께 조회합니다. `findMoveRequestByIdForUpdate`와 잠금 방식은 동일하지만,
+ * 알림 문구(`{customerName} 고객님이...`)를 만들려면 `customer.user.name`이 필요해서 select가
+ * 다릅니다. 반드시 `$transaction` 콜백의 `tx`로만 호출해야 합니다.
+ */
+export async function findMoveRequestForCancelByIdForUpdate(
+  id: string,
+  client: Prisma.TransactionClient,
+): Promise<MoveRequestForCancelRecord | null> {
+  const locked = await client.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "MoveRequest" WHERE id = ${id} FOR UPDATE
+  `;
+
+  if (locked.length === 0) {
+    return null;
+  }
+
+  return client.moveRequest.findUnique({
+    where: { id },
+    select: moveRequestForCancelSelect,
+  });
 }
 
 export function findMoverById(
@@ -271,4 +331,152 @@ export async function createNewMoveRequestNotifications(
   });
 
   return notifications;
+}
+
+/** 요청 취소 알림을 받을 기사님 한 명(quote 한 건)입니다. */
+export interface QuoteRecipientRecord {
+  quoteId: string;
+  moverUserId: string;
+}
+
+/**
+ * 취소되는 MoveRequest에 특정 Quote 상태로 연결된 기사님들의 User.id를 조회합니다.
+ *
+ * WAITING 요청 삭제 시에는 `status: "PROPOSED"`로 호출해 대기 중인 견적을 보낸 기사님 전원을,
+ * CONFIRMED 요청 삭제 시에는 `status: "CONFIRMED"`로 호출해 확정 기사님(정상적으로는 1명)을
+ * 찾는다. REJECTED 견적을 보낸 기사님에게는 취소 알림을 보내지 않는다(이미 반려되어 이 요청과
+ * 무관하다고 통지받았기 때문).
+ *
+ * @param moveRequestId 취소되는 MoveRequest.id
+ * @param status 대상 Quote.status(PROPOSED 또는 CONFIRMED)
+ * @param client 현재 transaction client
+ * @returns quoteId·moverUserId 목록(대상이 없으면 빈 배열)
+ * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
+ */
+export async function findQuoteRecipientsByMoveRequestIdAndStatus(
+  moveRequestId: string,
+  status: QuoteStatus,
+  client: PrismaClientOrTx = prisma,
+): Promise<QuoteRecipientRecord[]> {
+  const quotes = await client.quote.findMany({
+    where: { moveRequestId, status },
+    select: {
+      id: true,
+      mover: { select: { userId: true } },
+    },
+  });
+
+  return quotes.map((quote) => ({
+    quoteId: quote.id,
+    moverUserId: quote.mover.userId,
+  }));
+}
+
+/** MOVE_REQUEST_CANCELED 또는 CONFIRMED_MOVE_CANCELED 알림으로 저장한 내용입니다. */
+export interface CreatedMoveRequestCancelNotificationRecord {
+  userId: string;
+  moveRequestId: string;
+  quoteId: string;
+  type: "MOVE_REQUEST_CANCELED" | "CONFIRMED_MOVE_CANCELED";
+  title: string;
+  content: string;
+}
+
+/**
+ * 고객이 이사 요청을 삭제(취소)할 때, 그 요청에 견적을 보낸 기사님들에게 취소 알림을
+ * 일괄 생성합니다.
+ *
+ * 반드시 `deleteMoveRequestById`로 MoveRequest를 지우기 **전에** 호출해야 합니다.
+ * Notification.moveRequestId/quoteId는 MoveRequest/Quote를 참조하는 FK이므로, 참조 대상이
+ * 아직 존재할 때 insert해야 제약을 통과할 수 있습니다. 이후 같은 transaction 안에서
+ * MoveRequest가 삭제되면(Quote까지 cascade 삭제) `onDelete: SetNull` 설정에 따라 이미 생성된
+ * 이 알림 row들의 moveRequestId/quoteId는 트랜잭션 안에서 즉시 NULL로 바뀐다 — title/content
+ * 문구는 이 시점 값 그대로 저장되어 있으므로 알림 내용 자체는 보존되며, SSE push는 이 함수가
+ * 반환한 값(삭제 전 실제 id)을 그대로 사용한다.
+ *
+ * @param transaction 현재 transaction client
+ * @param input 알림 유형, 대상 MoveRequest.id, 알림 문구에 넣을 고객 이름, 받을 기사님 목록
+ * @returns 저장한 알림 내용 목록(0건일 수 있음). Service가 transaction 커밋 이후 각 항목을 SSE push한다.
+ * @sideeffect recipients 수만큼 Notification 레코드를 생성합니다.
+ */
+export async function createMoveRequestCancelNotifications(
+  transaction: Prisma.TransactionClient,
+  input: {
+    type: "MOVE_REQUEST_CANCELED" | "CONFIRMED_MOVE_CANCELED";
+    moveRequestId: string;
+    customerName: string;
+    recipients: QuoteRecipientRecord[];
+  },
+): Promise<CreatedMoveRequestCancelNotificationRecord[]> {
+  if (input.recipients.length === 0) {
+    return [];
+  }
+
+  // 문구는 사용자가 이미 확정한 카피를 그대로 사용한다("계정을 탈퇴하여"라는 표현은 지금은
+  // 고객이 요청을 직접 삭제하는 경로에서 재사용하는 것이며, 추후 계정 탈퇴 기능이 이 브랜치에
+  // 합쳐지면 같은 알림을 그 경로에서도 재사용할 계획이라 문구를 이렇게 미리 정했다).
+  const isWaitingCancel = input.type === "MOVE_REQUEST_CANCELED";
+  const title = isWaitingCancel
+    ? "견적 요청이 취소되었습니다."
+    : "확정된 이사가 취소되었습니다.";
+  const content = isWaitingCancel
+    ? `${input.customerName} 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.`
+    : `${input.customerName} 고객님이 계정을 탈퇴하여 확정된 이사 일정이 취소되었습니다.`;
+
+  const notifications: CreatedMoveRequestCancelNotificationRecord[] = input.recipients.map(
+    (recipient) => ({
+      userId: recipient.moverUserId,
+      moveRequestId: input.moveRequestId,
+      quoteId: recipient.quoteId,
+      type: input.type,
+      title,
+      content,
+    }),
+  );
+
+  await transaction.notification.createMany({
+    data: notifications,
+  });
+
+  return notifications;
+}
+
+/**
+ * 삭제할 MoveRequest에 걸린 RequestRejection(기사님이 남긴 반려 기록)을 먼저 지웁니다.
+ *
+ * `RequestRejection.moveRequestId` FK는 `ON DELETE RESTRICT`로 걸려 있어(Prisma schema에
+ * onDelete를 지정하지 않은 필수 관계의 기본값), 반려 기록이 남아 있는 상태로 MoveRequest를
+ * 바로 지우면 Postgres가 참조 무결성 위반으로 삭제 자체를 막는다. DesignatedRequest/Quote/
+ * Review처럼 CASCADE가 걸린 다른 자식 테이블과 달리 이 테이블만 명시적으로 먼저 지워야
+ * `deleteMoveRequestById`가 안전하게 성공한다.
+ *
+ * @param moveRequestId 삭제할 MoveRequest.id
+ * @param client 현재 transaction client
+ * @sideeffect 해당 moveRequestId의 RequestRejection row를 모두 삭제합니다.
+ */
+export function deleteRequestRejectionsByMoveRequestId(
+  moveRequestId: string,
+  client: PrismaClientOrTx = prisma,
+): Promise<Prisma.BatchPayload> {
+  return client.requestRejection.deleteMany({ where: { moveRequestId } });
+}
+
+/**
+ * MoveRequest row를 실제로 삭제합니다(hard delete).
+ *
+ * DesignatedRequest/Quote/Review는 schema의 `onDelete: Cascade`로 함께 삭제되고,
+ * Notification.moveRequestId/quoteId는 `onDelete: SetNull`로 참조만 끊긴 채 알림 row 자체는
+ * 남는다. RequestRejection은 `ON DELETE RESTRICT`라서 이 함수를 호출하기 전에
+ * `deleteRequestRejectionsByMoveRequestId`로 먼저 지워야 한다(호출부인 Service가 순서를
+ * 보장한다).
+ *
+ * @param id 삭제할 MoveRequest.id(호출 전 소유권·상태 검증이 끝난 값)
+ * @param client 현재 transaction client
+ * @sideeffect MoveRequest row와 그 자식(DesignatedRequest/Quote/Review)을 삭제합니다.
+ */
+export function deleteMoveRequestById(
+  id: string,
+  client: PrismaClientOrTx = prisma,
+): Promise<{ id: string }> {
+  return client.moveRequest.delete({ where: { id }, select: { id: true } });
 }

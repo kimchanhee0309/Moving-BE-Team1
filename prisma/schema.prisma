@@ -40,6 +40,8 @@ enum NotificationType {
   QUOTE_CONFIRMED
   NEW_MOVE_REQUEST
   MOVE_DAY
+  MOVE_REQUEST_CANCELED // 신규: WAITING 요청이 취소됨(대기 중이던 PROPOSED 견적 기사님들에게)
+  CONFIRMED_MOVE_CANCELED // 신규: CONFIRMED 요청이 취소됨(확정 기사님에게)
 }
 
 model User {

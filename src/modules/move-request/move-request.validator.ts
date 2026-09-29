@@ -29,6 +29,13 @@ export const createMoveRequestBodySchema = z.object({
 
 export type CreateMoveRequestInput = z.infer<typeof createMoveRequestBodySchema>;
 
+// PATCH(수정) body는 생성과 필드·검증 규칙이 완전히 동일하다(서비스 유형/이사일/출발지/도착지).
+// 별도 스키마를 새로 정의하면 두 규칙이 시간이 지나며 어긋날 위험이 있어 생성 스키마를 그대로
+// 재사용한다.
+export const updateMoveRequestBodySchema = createMoveRequestBodySchema;
+
+export type UpdateMoveRequestInput = z.infer<typeof updateMoveRequestBodySchema>;
+
 export const createDesignatedRequestBodySchema = z.object({
   moverId: z
     .string({ message: "moverId는 필수 문자열입니다." })
@@ -49,6 +56,13 @@ export function parseCreateDesignatedRequestInput(
   value: unknown,
 ): CreateDesignatedRequestInput {
   return parseWithZod(createDesignatedRequestBodySchema, value, {
+    fallbackField: "body",
+  });
+}
+
+/** PATCH body를 생성과 동일한 규칙으로 검증합니다. */
+export function parseUpdateMoveRequestInput(value: unknown): UpdateMoveRequestInput {
+  return parseWithZod(updateMoveRequestBodySchema, value, {
     fallbackField: "body",
   });
 }
