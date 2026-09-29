@@ -2,7 +2,7 @@
  * Auth Service에 필요한 User 조회·생성·회원 탈퇴 transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
-import type { PasswordRecoveryQuestion, Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
+import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 
 const authUserSelect = {
@@ -43,8 +43,6 @@ interface CreateEmailUserData {
   phone: string;
   passwordHash: string;
   role: UserRole;
-  recoveryQuestion: PasswordRecoveryQuestion;
-  recoveryAnswerHash: string;
 }
 
 interface CreateOAuthUserData {
@@ -70,18 +68,6 @@ export function findUserById(userId: string): Promise<AuthUserRecord | null> {
   return prisma.user.findUnique({ where: { id: userId }, select: authUserSelect });
 }
 
-/** 재설정 토큰 발급 뒤 기존 password hash가 바뀌지 않은 이메일 계정만 갱신합니다. */
-export function updateEmailUserPassword(
-  userId: string,
-  currentPasswordHash: string,
-  nextPasswordHash: string,
-): Promise<{ count: number }> {
-  return prisma.user.updateMany({
-    where: { id: userId, passwordHash: currentPasswordHash },
-    data: { passwordHash: nextPasswordHash },
-  });
-}
-
 /** 공급자와 공급자 고유 ID의 복합 식별자로 기존 OAuth 사용자를 조회합니다. */
 export function findUserBySocialAccount(
   socialProvider: SocialProvider,
@@ -95,34 +81,250 @@ export function findUserBySocialAccount(
 
 /** 검증·해싱이 끝난 일반 이메일 사용자를 생성하며 역할별 profile은 별도 기능에서 만듭니다. */
 export function createEmailUser(data: CreateEmailUserData): Promise<AuthUserRecord> {
-  const { recoveryQuestion, recoveryAnswerHash, ...userData } = data;
-  return prisma.user.create({
-    data: {
-      ...userData,
-      passwordRecoveryChallenge: {
-        create: { question: recoveryQuestion, answerHash: recoveryAnswerHash },
-      },
-    },
-    select: authUserSelect,
-  });
+  return prisma.user.create({ data, select: authUserSelect });
 }
 
-const recoveryUserSelect = {
+const passwordResetUserSelect = {
   id: true,
   name: true,
   email: true,
   role: true,
   passwordHash: true,
   socialProvider: true,
-  passwordRecoveryChallenge: {
-    select: { question: true, answerHash: true },
+  passwordResetChallenge: {
+    select: { id: true, sentAt: true },
   },
 } satisfies Prisma.UserSelect;
 
-export type RecoveryUserRecord = Prisma.UserGetPayload<{ select: typeof recoveryUserSelect }>;
+export type PasswordResetUserRecord = Prisma.UserGetPayload<{
+  select: typeof passwordResetUserSelect;
+}>;
 
-export function findRecoveryUserByEmail(email: string): Promise<RecoveryUserRecord | null> {
-  return prisma.user.findUnique({ where: { email }, select: recoveryUserSelect });
+/** 이름·역할·인증 수단 확인과 코드 재발송 제한에 필요한 사용자를 조회합니다. */
+export function findPasswordResetUserByEmail(
+  email: string,
+): Promise<PasswordResetUserRecord | null> {
+  return prisma.user.findUnique({
+    where: { email },
+    select: passwordResetUserSelect,
+  });
+}
+
+const passwordResetChallengeSelect = {
+  id: true,
+  userId: true,
+  codeHash: true,
+  failedAttempts: true,
+  expiresAt: true,
+  sentAt: true,
+  verifiedAt: true,
+  consumedAt: true,
+  user: {
+    select: {
+      id: true,
+      role: true,
+      passwordHash: true,
+    },
+  },
+} satisfies Prisma.PasswordResetChallengeSelect;
+
+export type PasswordResetChallengeRecord = Prisma.PasswordResetChallengeGetPayload<{
+  select: typeof passwordResetChallengeSelect;
+}>;
+
+const passwordResetChallengeStateSelect = {
+  id: true,
+  codeHash: true,
+  failedAttempts: true,
+  expiresAt: true,
+  sentAt: true,
+  verifiedAt: true,
+  consumedAt: true,
+} satisfies Prisma.PasswordResetChallengeSelect;
+
+export type PasswordResetChallengeState = Prisma.PasswordResetChallengeGetPayload<{
+  select: typeof passwordResetChallengeStateSelect;
+}>;
+
+export interface PasswordResetChallengeReservation {
+  challengeId: string;
+  previous: PasswordResetChallengeState | null;
+}
+
+async function lockPasswordResetUser(
+  transaction: AuthTransaction,
+  userId: string,
+): Promise<void> {
+  await transaction.$queryRaw<Array<{ id: string }>>`
+    SELECT "id" FROM "User" WHERE "id" = ${userId}::uuid FOR UPDATE
+  `;
+}
+
+/** User row lock 안에서 재발송 간격을 확인하고 새 코드 상태를 한 번만 예약합니다. */
+export function reservePasswordResetChallenge(
+  userId: string,
+  codeHash: string,
+  sentAt: Date,
+  expiresAt: Date,
+  resendAllowedAt: Date,
+): Promise<PasswordResetChallengeReservation | null> {
+  return prisma.$transaction(async (transaction) => {
+    await lockPasswordResetUser(transaction, userId);
+    const previous = await transaction.passwordResetChallenge.findUnique({
+      where: { userId },
+      select: passwordResetChallengeStateSelect,
+    });
+
+    if (previous && previous.sentAt.getTime() > resendAllowedAt.getTime()) {
+      return null;
+    }
+
+    const challenge = await transaction.passwordResetChallenge.upsert({
+      where: { userId },
+      create: { userId, codeHash, sentAt, expiresAt },
+      update: {
+        codeHash,
+        sentAt,
+        expiresAt,
+        failedAttempts: 0,
+        verifiedAt: null,
+        consumedAt: null,
+      },
+      select: { id: true },
+    });
+
+    return { challengeId: challenge.id, previous };
+  });
+}
+
+/** 발송 실패한 예약이 여전히 최신일 때만 직전 challenge를 복원하거나 최초 예약을 삭제합니다. */
+export function restorePasswordResetChallenge(
+  userId: string,
+  failedCodeHash: string,
+  previous: PasswordResetChallengeState | null,
+): Promise<{ count: number }> {
+  return prisma.$transaction(async (transaction) => {
+    await lockPasswordResetUser(transaction, userId);
+
+    if (!previous) {
+      return transaction.passwordResetChallenge.deleteMany({
+        where: { userId, codeHash: failedCodeHash },
+      });
+    }
+
+    return transaction.passwordResetChallenge.updateMany({
+      where: { userId, codeHash: failedCodeHash },
+      data: {
+        codeHash: previous.codeHash,
+        failedAttempts: previous.failedAttempts,
+        expiresAt: previous.expiresAt,
+        sentAt: previous.sentAt,
+        verifiedAt: previous.verifiedAt,
+        consumedAt: previous.consumedAt,
+      },
+    });
+  });
+}
+
+/** 입력 코드 검증과 재설정 토큰 발급에 필요한 challenge와 현재 User 인증 상태를 조회합니다. */
+export function findPasswordResetChallengeById(
+  challengeId: string,
+): Promise<PasswordResetChallengeRecord | null> {
+  return prisma.passwordResetChallenge.findUnique({
+    where: { id: challengeId },
+    select: passwordResetChallengeSelect,
+  });
+}
+
+/** 만료·검증·소비·최대 횟수를 조건으로 검증 시도 한 건을 먼저 원자적으로 예약합니다. */
+export function reservePasswordResetCodeAttempt(
+  challengeId: string,
+  expectedCodeHash: string,
+  attemptedAt: Date,
+  maxAttempts: number,
+): Promise<PasswordResetChallengeRecord | null> {
+  return prisma.$transaction(async (transaction) => {
+    const reservation = await transaction.passwordResetChallenge.updateMany({
+      where: {
+        id: challengeId,
+        codeHash: expectedCodeHash,
+        expiresAt: { gt: attemptedAt },
+        failedAttempts: { lt: maxAttempts },
+        verifiedAt: null,
+        consumedAt: null,
+      },
+      data: { failedAttempts: { increment: 1 } },
+    });
+
+    if (reservation.count !== 1) return null;
+
+    return transaction.passwordResetChallenge.findUnique({
+      where: { id: challengeId },
+      select: passwordResetChallengeSelect,
+    });
+  });
+}
+
+/** 현재 코드 hash와 제한 상태가 그대로인 challenge 한 건만 검증 완료 처리합니다. */
+export function markPasswordResetChallengeVerified(
+  challengeId: string,
+  codeHash: string,
+  verifiedAt: Date,
+  maxFailedAttempts: number,
+): Promise<{ count: number }> {
+  return prisma.passwordResetChallenge.updateMany({
+    where: {
+      id: challengeId,
+      codeHash,
+      expiresAt: { gt: verifiedAt },
+      failedAttempts: { lte: maxFailedAttempts },
+      verifiedAt: null,
+      consumedAt: null,
+    },
+    data: { verifiedAt },
+  });
+}
+
+/** 비밀번호 변경 transaction에서 검증 완료·미사용 challenge와 현재 password hash를 조회합니다. */
+export function findPasswordResetChallengeForCompletion(
+  transaction: AuthTransaction,
+  challengeId: string,
+): Promise<PasswordResetChallengeRecord | null> {
+  return transaction.passwordResetChallenge.findUnique({
+    where: { id: challengeId },
+    select: passwordResetChallengeSelect,
+  });
+}
+
+/** 검증 완료 challenge를 한 번만 소비해 같은 재설정 토큰의 병렬 사용을 차단합니다. */
+export function consumePasswordResetChallenge(
+  transaction: AuthTransaction,
+  challengeId: string,
+  userId: string,
+  consumedAt: Date,
+): Promise<{ count: number }> {
+  return transaction.passwordResetChallenge.updateMany({
+    where: {
+      id: challengeId,
+      userId,
+      verifiedAt: { not: null },
+      consumedAt: null,
+    },
+    data: { consumedAt },
+  });
+}
+
+/** challenge 소비 transaction 안에서 조회한 기존 hash가 같은 이메일 계정만 갱신합니다. */
+export function updateEmailUserPassword(
+  transaction: AuthTransaction,
+  userId: string,
+  currentPasswordHash: string,
+  nextPasswordHash: string,
+): Promise<{ count: number }> {
+  return transaction.user.updateMany({
+    where: { id: userId, passwordHash: currentPasswordHash },
+    data: { passwordHash: nextPasswordHash },
+  });
 }
 
 /** OAuth 최초 가입에서는 User만 만들며 password와 역할 profile은 생성하지 않습니다. */

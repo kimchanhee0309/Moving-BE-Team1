@@ -1,4 +1,4 @@
-/** 복구 답변 검증 뒤 발급하는 단기 비밀번호 재설정 토큰을 담당합니다. */
+/** 이메일 코드 검증 뒤 발급하는 단기 비밀번호 재설정 토큰을 담당합니다. */
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import jwt from "jsonwebtoken";
@@ -14,19 +14,21 @@ interface PasswordResetPayload {
   userId: string;
   role: UserRole;
   credentialVersion: string;
+  challengeId: string;
 }
 
 const RESET_TOKEN_TYPE = "password-reset";
 const RESET_TOKEN_MAX_AGE_SECONDS = 15 * 60;
 
 function getRecoverySecret(): string {
-  if ((env.PASSWORD_RESET_TOKEN_SECRET?.length ?? 0) < 32) {
+  const secret = env.PASSWORD_RESET_TOKEN_SECRET;
+  if (!secret || secret.length < 32) {
     throw new ServiceUnavailableError(
       "비밀번호 재설정 보안 설정이 필요합니다.",
       "PASSWORD_RECOVERY_NOT_CONFIGURED",
     );
   }
-  return env.PASSWORD_RESET_TOKEN_SECRET!;
+  return secret;
 }
 
 function credentialVersion(passwordHash: string): string {
@@ -37,6 +39,7 @@ export function createPasswordResetToken(
   userId: string,
   role: UserRole,
   passwordHash: string,
+  challengeId: string,
 ): string {
   const secret = getRecoverySecret();
   return jwt.sign(
@@ -47,6 +50,7 @@ export function createPasswordResetToken(
       expiresIn: RESET_TOKEN_MAX_AGE_SECONDS,
       issuer: env.JWT_ISSUER,
       subject: userId,
+      jwtid: challengeId,
     },
   );
 }
@@ -63,7 +67,8 @@ export function verifyPasswordResetToken(token: string): PasswordResetPayload {
       typeof payload.sub !== "string" ||
       (payload.role !== "CUSTOMER" && payload.role !== "MOVER") ||
       payload.tokenType !== RESET_TOKEN_TYPE ||
-      typeof payload.credentialVersion !== "string"
+      typeof payload.credentialVersion !== "string" ||
+      typeof payload.jti !== "string"
     ) {
       throw new Error("invalid reset token payload");
     }
@@ -71,6 +76,7 @@ export function verifyPasswordResetToken(token: string): PasswordResetPayload {
       userId: payload.sub,
       role: payload.role,
       credentialVersion: payload.credentialVersion,
+      challengeId: payload.jti,
     };
   } catch (error) {
     if (error instanceof ServiceUnavailableError) throw error;

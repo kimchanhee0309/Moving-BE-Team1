@@ -10,8 +10,10 @@ import {
   loginRateLimiter,
   oauthCallbackRateLimiter,
   oauthStartRateLimiter,
-  recoveryAnswerRateLimiter,
+  passwordResetCodeSendRateLimiter,
+  passwordResetCodeVerifyRateLimiter,
   refreshRateLimiter,
+  sessionRefreshRateLimiter,
   signUpRateLimiter,
 } from "./auth-rate-limit";
 import {
@@ -21,10 +23,10 @@ import {
   logoutController,
   meController,
   optionalSessionController,
-  recoveryQuestionController,
   refreshController,
+  requestPasswordResetCodeController,
   signUpController,
-  verifyRecoveryAnswerController,
+  verifyPasswordResetCodeController,
   withdrawAccountController,
 } from "./auth.controller";
 import {
@@ -50,15 +52,13 @@ export const authRouter = Router();
  *         profileCompleted: { type: boolean, example: false }
  *     SignUpRequest:
  *       type: object
- *       required: [name, email, phone, password, role, recoveryQuestion, recoveryAnswer]
+ *       required: [name, email, phone, password, role]
  *       properties:
  *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
  *         email: { type: string, format: email, example: "user@example.com" }
  *         phone: { type: string, example: "01012345678" }
  *         password: { type: string, format: password, minLength: 8, example: "Password1!" }
  *         role: { $ref: "#/components/schemas/UserRole" }
- *         recoveryQuestion: { type: string, enum: [CHILDHOOD_NICKNAME, MEMORABLE_PLACE, PERSONAL_PHRASE] }
- *         recoveryAnswer: { type: string, minLength: 2, maxLength: 100, description: "복구 답변은 정규화 후 bcrypt hash로만 저장" }
  *     LoginRequest:
  *       type: object
  *       required: [email, password, role]
@@ -66,13 +66,13 @@ export const authRouter = Router();
  *         email: { type: string, format: email, example: "user@example.com" }
  *         password: { type: string, format: password, example: "Password1!" }
  *         role: { $ref: "#/components/schemas/UserRole" }
- *     RecoveryAnswerVerifyRequest:
- *       allOf:
- *         - { $ref: "#/components/schemas/AccountRecoveryRequest" }
- *         - type: object
- *           required: [recoveryAnswer]
- *           properties:
- *             recoveryAnswer: { type: string, minLength: 2, maxLength: 100 }
+ *     PasswordResetCodeVerifyRequest:
+ *       type: object
+ *       additionalProperties: false
+ *       required: [challengeId, code]
+ *       properties:
+ *         challengeId: { type: string, format: uuid }
+ *         code: { type: string, pattern: "^[0-9]{6}$", example: "012345" }
  *     AccountRecoveryRequest:
  *       type: object
  *       additionalProperties: false
@@ -86,7 +86,7 @@ export const authRouter = Router();
  *       additionalProperties: false
  *       required: [token, newPassword]
  *       properties:
- *         token: { type: string, description: "복구 답변 검증 후 발급된 15분 만료 토큰" }
+ *         token: { type: string, description: "이메일 코드 검증 후 발급된 15분 만료 토큰" }
  *         newPassword: { type: string, format: password, minLength: 8, example: "NextPassword1!" }
  *     WithdrawAccountRequest:
  *       type: object
@@ -278,50 +278,52 @@ authRouter.post(
 
 /**
  * @openapi
- * /auth/recovery/question:
+ * /auth/recovery/password/code:
  *   post:
  *     tags: [Auth]
- *     summary: Get Password Recovery Question
- *     description: 이름·이메일·역할이 일치하는 이메일 계정의 복구 질문을 반환합니다. OAuth 계정은 SNS 로그인을 안내합니다.
+ *     summary: Send Password Reset Code
+ *     description: 이름·이메일·역할이 일치하는 일반 계정에 5분 만료 코드를 발송합니다. OAuth 계정은 SNS 로그인 안내 결과를 반환합니다.
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema: { $ref: "#/components/schemas/AccountRecoveryRequest" }
  *     responses:
- *       200: { description: 복구 질문 조회 결과 }
+ *       200: { description: 코드 발송·OAuth·계정 불일치 결과 }
  *       400: { $ref: "#/components/responses/BadRequest" }
  *       429: { $ref: "#/components/responses/TooManyRequests" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
+ *       503: { $ref: "#/components/responses/ServiceUnavailable" }
  */
 authRouter.post(
-  "/recovery/question",
-  accountRecoveryRateLimiter,
-  recoveryQuestionController,
+  "/recovery/password/code",
+  passwordResetCodeSendRateLimiter,
+  requestPasswordResetCodeController,
 );
 
 /**
  * @openapi
- * /auth/recovery/question/verify:
+ * /auth/recovery/password/code/verify:
  *   post:
  *     tags: [Auth]
- *     summary: Verify Password Recovery Answer
- *     description: 복구 답변 hash를 확인하고 성공하면 15분 만료 비밀번호 재설정 토큰을 반환합니다.
+ *     summary: Verify Password Reset Code
+ *     description: 6자리 코드의 HMAC·5분 만료·실패 횟수를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다.
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
- *           schema: { $ref: "#/components/schemas/RecoveryAnswerVerifyRequest" }
+ *           schema: { $ref: "#/components/schemas/PasswordResetCodeVerifyRequest" }
  *     responses:
- *       200: { description: 복구 답변 확인 및 재설정 토큰 발급 }
+ *       200: { description: 이메일 코드 확인 및 재설정 토큰 발급 }
  *       400: { $ref: "#/components/responses/BadRequest" }
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       429: { $ref: "#/components/responses/TooManyRequests" }
  *       503: { $ref: "#/components/responses/ServiceUnavailable" }
  */
 authRouter.post(
-  "/recovery/question/verify",
-  recoveryAnswerRateLimiter,
-  verifyRecoveryAnswerController,
+  "/recovery/password/code/verify",
+  passwordResetCodeVerifyRateLimiter,
+  verifyPasswordResetCodeController,
 );
 
 /**
@@ -410,7 +412,7 @@ authRouter.delete("/me", authenticate, withdrawAccountController);
  */
 authRouter.post(
   "/refresh/session",
-  refreshRateLimiter,
+  sessionRefreshRateLimiter,
   optionalSessionController,
 );
 

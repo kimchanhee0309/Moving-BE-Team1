@@ -7,7 +7,7 @@ import {
   parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
-  parseVerifyRecoveryAnswerInput,
+  parseVerifyPasswordResetCodeInput,
   parseWithdrawAccountInput,
 } from "../../src/modules/auth/auth.validator";
 
@@ -19,8 +19,6 @@ describe("Auth validator", () => {
       phone: "010-1234-5678",
       password: "Password1!",
       role: "CUSTOMER",
-      recoveryQuestion: "PERSONAL_PHRASE",
-      recoveryAnswer: " My Answer ",
     });
 
     expect(input).toEqual({
@@ -29,8 +27,6 @@ describe("Auth validator", () => {
       phone: "01012345678",
       password: "Password1!",
       role: "CUSTOMER",
-      recoveryQuestion: "PERSONAL_PHRASE",
-      recoveryAnswer: "my answer",
     });
   });
 
@@ -44,8 +40,6 @@ describe("Auth validator", () => {
           phone: "01012345678",
           password: "Password1!",
           role: "CUSTOMER",
-          recoveryQuestion: "PERSONAL_PHRASE",
-          recoveryAnswer: "answer",
         }).name,
       ).toBe(name);
     },
@@ -108,9 +102,17 @@ describe("Auth validator", () => {
 
     expect(() => parseConfirmPasswordResetInput({ token: "reset-token", newPassword: "weak" })).toThrow(BadRequestError);
 
-    expect(parseVerifyRecoveryAnswerInput({
-      name: " 홍길동 ", email: " USER@Example.com ", role: "CUSTOMER", recoveryAnswer: " My Answer ",
-    })).toEqual({ name: "홍길동", email: "user@example.com", role: "CUSTOMER", recoveryAnswer: "my answer" });
+    expect(parseVerifyPasswordResetCodeInput({
+      challengeId: "11111111-1111-4111-8111-111111111111",
+      code: "123456",
+    })).toEqual({
+      challengeId: "11111111-1111-4111-8111-111111111111",
+      code: "123456",
+    });
+    expect(() => parseVerifyPasswordResetCodeInput({
+      challengeId: "not-a-uuid",
+      code: "12345",
+    })).toThrow(BadRequestError);
   });
 
   test("OAuth 탈퇴는 빈 Body를 허용하고 이메일 계정 비밀번호는 원문을 보존한다", () => {

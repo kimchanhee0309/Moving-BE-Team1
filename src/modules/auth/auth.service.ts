@@ -5,6 +5,7 @@
 import {
   BadRequestError,
   ConflictError,
+  TooManyRequestsError,
   UnauthorizedError,
 } from "../../common/errors/app-error";
 import { createAuthTokens, verifyToken } from "../../common/utils/auth-token";
@@ -18,10 +19,10 @@ import type {
   ConfirmPasswordResetRequestDto,
   LoginRequestDto,
   OptionalAuthSessionResult,
+  PasswordResetCodeRequestResultDto,
   SignUpRequestDto,
-  RecoveryQuestionResultDto,
   RecoveryVerificationResultDto,
-  VerifyRecoveryAnswerRequestDto,
+  VerifyPasswordResetCodeRequestDto,
   WithdrawAccountRequestDto,
 } from "./auth.dto";
 import {
@@ -29,6 +30,19 @@ import {
   matchesCredentialVersion,
   verifyPasswordResetToken,
 } from "./auth-recovery";
+import {
+  PASSWORD_RESET_CODE_EXPIRES_IN_MS,
+  PASSWORD_RESET_CODE_EXPIRES_IN_SECONDS,
+  PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS,
+  PASSWORD_RESET_CODE_RESEND_AFTER_SECONDS,
+  createPasswordResetCode,
+  hashPasswordResetCode,
+  matchesPasswordResetCode,
+} from "./auth-password-reset-code";
+import {
+  assertPasswordResetEmailConfigured,
+  sendPasswordResetCodeEmail,
+} from "./auth-email";
 import { toAuthUserDto } from "./auth.mapper";
 import {
   assertLoginAttemptAllowed,
@@ -37,13 +51,20 @@ import {
 } from "./auth-login-attempt";
 import {
   createEmailUser,
+  consumePasswordResetChallenge,
   deleteRestrictedWithdrawalRelations,
   deleteUserWithAuthState,
   findUserByEmail,
   findUserById,
   findUserByPhone,
   findUserForWithdrawal,
-  findRecoveryUserByEmail,
+  findPasswordResetChallengeById,
+  findPasswordResetChallengeForCompletion,
+  findPasswordResetUserByEmail,
+  markPasswordResetChallengeVerified,
+  reservePasswordResetChallenge,
+  reservePasswordResetCodeAttempt,
+  restorePasswordResetChallenge,
   runAuthTransaction,
   updateEmailUserPassword,
 } from "./auth.repository";
@@ -70,18 +91,13 @@ export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
     throw new ConflictError("이미 사용 중인 전화번호입니다.", "PHONE_ALREADY_EXISTS");
   }
 
-  const [passwordHash, recoveryAnswerHash] = await Promise.all([
-    hashPassword(input.password),
-    hashPassword(input.recoveryAnswer),
-  ]);
+  const passwordHash = await hashPassword(input.password);
   const user = await createEmailUser({
     name: input.name,
     email: input.email,
     phone: input.phone,
     passwordHash,
     role: input.role,
-    recoveryQuestion: input.recoveryQuestion,
-    recoveryAnswerHash,
   });
 
   return {
@@ -137,46 +153,191 @@ export async function findAccount(
   };
 }
 
-/** 본인 정보가 일치하는 이메일 계정의 복구 질문을 반환합니다. OAuth는 SNS 로그인을 안내합니다. */
-export async function getRecoveryQuestion(
+/**
+ * 본인 정보가 일치하는 이메일 계정에 5분 만료 숫자 코드를 발송합니다.
+ * @param input 이름·이메일·역할을 포함한 계정 확인 입력
+ * @param now 만료·재발송 시간을 계산할 서버 시각
+ * @returns EMAIL이면 challenge 정보, OAuth와 불일치는 각각 SOCIAL/NONE
+ * @throws 60초 내 재발송 시 PASSWORD_RESET_CODE_RESEND_TOO_SOON
+ * @remarks 코드 HMAC을 DB에 저장하고 코드 원문은 SMTP로만 전송합니다.
+ */
+export async function requestPasswordResetCode(
   input: AccountRecoveryRequestDto,
-): Promise<RecoveryQuestionResultDto> {
-  const user = await findRecoveryUserByEmail(input.email);
+  now = new Date(),
+): Promise<PasswordResetCodeRequestResultDto> {
+  const user = await findPasswordResetUserByEmail(input.email);
+
   if (!user || user.name !== input.name || user.role !== input.role) {
-    return { available: false, question: null, loginMethod: null };
+    return {
+      delivery: "NONE",
+      challengeId: null,
+      expiresInSeconds: null,
+      resendAfterSeconds: null,
+    };
   }
+
   if (!user.passwordHash) {
-    return { available: false, question: null, loginMethod: "SOCIAL" };
+    return {
+      delivery: "SOCIAL",
+      challengeId: null,
+      expiresInSeconds: null,
+      resendAfterSeconds: null,
+    };
   }
+
+  assertPasswordResetEmailConfigured();
+
+  const code = createPasswordResetCode();
+  const codeHash = hashPasswordResetCode(user.id, code);
+  const expiresAt = new Date(now.getTime() + PASSWORD_RESET_CODE_EXPIRES_IN_MS);
+  const resendAllowedAt = new Date(
+    now.getTime() - PASSWORD_RESET_CODE_RESEND_AFTER_SECONDS * 1000,
+  );
+  const reservation = await reservePasswordResetChallenge(
+    user.id,
+    codeHash,
+    now,
+    expiresAt,
+    resendAllowedAt,
+  );
+
+  if (!reservation) {
+    throw new TooManyRequestsError(
+      "인증코드는 1분 후 다시 보낼 수 있습니다.",
+      "PASSWORD_RESET_CODE_RESEND_TOO_SOON",
+    );
+  }
+
+  try {
+    await sendPasswordResetCodeEmail(user.email, code);
+  } catch (error: unknown) {
+    await restorePasswordResetChallenge(
+      user.id,
+      codeHash,
+      reservation.previous,
+    );
+    throw error;
+  }
+
   return {
-    available: user.passwordRecoveryChallenge !== null,
-    question: user.passwordRecoveryChallenge?.question ?? null,
-    loginMethod: "EMAIL",
+    delivery: "EMAIL",
+    challengeId: reservation.challengeId,
+    expiresInSeconds: PASSWORD_RESET_CODE_EXPIRES_IN_SECONDS,
+    resendAfterSeconds: PASSWORD_RESET_CODE_RESEND_AFTER_SECONDS,
   };
 }
 
-/** 복구 답변 hash를 확인하고 성공한 경우에만 15분 만료 재설정 토큰을 발급합니다. */
-export async function verifyRecoveryAnswer(
-  input: VerifyRecoveryAnswerRequestDto,
+/**
+ * 6자리 코드의 HMAC·만료·실패 횟수를 확인하고 challenge를 한 번만 검증 완료 처리합니다.
+ * @param input 공개 challenge ID와 사용자가 입력한 6자리 코드
+ * @param now 만료와 검증 완료 시각에 사용할 서버 시각
+ * @returns 기존 비밀번호 hash에 연결된 15분 만료 재설정 토큰
+ * @throws 코드 불일치·만료·실패 횟수 초과·재사용 시 인증 오류
+ * @remarks 실패 횟수와 verifiedAt을 DB에 원자적으로 갱신합니다.
+ */
+export async function verifyPasswordResetCode(
+  input: VerifyPasswordResetCodeRequestDto,
+  now = new Date(),
 ): Promise<RecoveryVerificationResultDto> {
-  const user = await findRecoveryUserByEmail(input.email);
-  const challenge = user?.passwordRecoveryChallenge;
-  const isValid = challenge
-    ? await verifyPassword(input.recoveryAnswer, challenge.answerHash)
-    : false;
-  if (
-    !user?.passwordHash ||
-    user.name !== input.name ||
-    user.role !== input.role ||
-    !isValid
-  ) {
+  const challenge = await findPasswordResetChallengeById(input.challengeId);
+
+  if (!challenge?.user.passwordHash || challenge.consumedAt || challenge.verifiedAt) {
     throw new UnauthorizedError(
-      "입력한 정보 또는 복구 답변이 올바르지 않습니다.",
-      "INVALID_RECOVERY_ANSWER",
+      "인증코드가 올바르지 않습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
     );
   }
+
+  if (challenge.expiresAt.getTime() <= now.getTime()) {
+    throw new BadRequestError(
+      "인증코드가 만료되었습니다. 새 코드를 요청해 주세요.",
+      "PASSWORD_RESET_CODE_EXPIRED",
+    );
+  }
+
+  if (challenge.failedAttempts >= PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS) {
+    throw new TooManyRequestsError(
+      "인증코드 확인 횟수를 초과했습니다. 새 코드를 요청해 주세요.",
+      "PASSWORD_RESET_CODE_ATTEMPTS_EXCEEDED",
+    );
+  }
+
+  const reservedAttempt = await reservePasswordResetCodeAttempt(
+    challenge.id,
+    challenge.codeHash,
+    now,
+    PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS,
+  );
+
+  if (!reservedAttempt) {
+    const latestChallenge = await findPasswordResetChallengeById(challenge.id);
+    if (latestChallenge?.expiresAt && latestChallenge.expiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestError(
+        "인증코드가 만료되었습니다. 새 코드를 요청해 주세요.",
+        "PASSWORD_RESET_CODE_EXPIRED",
+      );
+    }
+    if (
+      latestChallenge &&
+      latestChallenge.failedAttempts >= PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS
+    ) {
+      throw new TooManyRequestsError(
+        "인증코드 확인 횟수를 초과했습니다. 새 코드를 요청해 주세요.",
+        "PASSWORD_RESET_CODE_ATTEMPTS_EXCEEDED",
+      );
+    }
+
+    throw new UnauthorizedError(
+      "인증코드가 올바르지 않습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
+    );
+  }
+
+  if (!matchesPasswordResetCode(
+    reservedAttempt.userId,
+    input.code,
+    reservedAttempt.codeHash,
+  )) {
+    if (reservedAttempt.failedAttempts >= PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS) {
+      throw new TooManyRequestsError(
+        "인증코드 확인 횟수를 초과했습니다. 새 코드를 요청해 주세요.",
+        "PASSWORD_RESET_CODE_ATTEMPTS_EXCEEDED",
+      );
+    }
+
+    throw new UnauthorizedError(
+      "인증코드가 올바르지 않습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
+    );
+  }
+
+  if (!reservedAttempt.user.passwordHash) {
+    throw new UnauthorizedError(
+      "인증코드가 올바르지 않습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
+    );
+  }
+
+  const verification = await markPasswordResetChallengeVerified(
+    reservedAttempt.id,
+    reservedAttempt.codeHash,
+    now,
+    PASSWORD_RESET_CODE_MAX_FAILED_ATTEMPTS,
+  );
+  if (verification.count !== 1) {
+    throw new BadRequestError(
+      "인증코드가 만료되었거나 이미 사용되었습니다.",
+      "PASSWORD_RESET_CODE_INVALID",
+    );
+  }
+
   return {
-    resetToken: createPasswordResetToken(user.id, user.role, user.passwordHash),
+    resetToken: createPasswordResetToken(
+      reservedAttempt.user.id,
+      reservedAttempt.user.role,
+      reservedAttempt.user.passwordHash,
+      reservedAttempt.id,
+    ),
   };
 }
 
@@ -185,29 +346,49 @@ export async function confirmPasswordReset(
   input: ConfirmPasswordResetRequestDto,
 ): Promise<void> {
   const payload = verifyPasswordResetToken(input.token);
-  const user = await findUserById(payload.userId);
-  if (
-    !user?.passwordHash ||
-    user.role !== payload.role ||
-    !matchesCredentialVersion(user.passwordHash, payload.credentialVersion)
-  ) {
-    throw new BadRequestError(
-      "비밀번호 재설정 인증이 만료되었거나 올바르지 않습니다.",
-      "PASSWORD_RESET_TOKEN_INVALID",
-    );
-  }
   const nextPasswordHash = await hashPassword(input.newPassword);
-  const result = await updateEmailUserPassword(
-    user.id,
-    user.passwordHash,
-    nextPasswordHash,
-  );
-  if (result.count !== 1) {
-    throw new BadRequestError(
-      "비밀번호 재설정 인증이 이미 사용되었습니다.",
-      "PASSWORD_RESET_TOKEN_INVALID",
+
+  await runAuthTransaction(async (transaction) => {
+    const challenge = await findPasswordResetChallengeForCompletion(
+      transaction,
+      payload.challengeId,
     );
-  }
+    const user = challenge?.user;
+
+    if (
+      !challenge?.verifiedAt ||
+      challenge.consumedAt ||
+      !user?.passwordHash ||
+      user.id !== payload.userId ||
+      user.role !== payload.role ||
+      !matchesCredentialVersion(user.passwordHash, payload.credentialVersion)
+    ) {
+      throw new BadRequestError(
+        "비밀번호 재설정 인증이 만료되었거나 올바르지 않습니다.",
+        "PASSWORD_RESET_TOKEN_INVALID",
+      );
+    }
+
+    const consumed = await consumePasswordResetChallenge(
+      transaction,
+      challenge.id,
+      user.id,
+      new Date(),
+    );
+    const updated = await updateEmailUserPassword(
+      transaction,
+      user.id,
+      user.passwordHash,
+      nextPasswordHash,
+    );
+
+    if (consumed.count !== 1 || updated.count !== 1) {
+      throw new BadRequestError(
+        "비밀번호 재설정 인증이 이미 사용되었습니다.",
+        "PASSWORD_RESET_TOKEN_INVALID",
+      );
+    }
+  });
 }
 
 /** 인증된 ID를 DB에서 다시 조회해 삭제된 사용자와 최신 profile 등록 상태를 확인합니다. */

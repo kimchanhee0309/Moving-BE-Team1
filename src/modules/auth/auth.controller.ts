@@ -18,11 +18,11 @@ import { getAuthContext } from "../../common/utils/auth-context";
 import {
   confirmPasswordReset,
   findAccount,
-  getRecoveryQuestion,
   getCurrentUser,
   login,
+  requestPasswordResetCode,
   refreshAuth,
-  verifyRecoveryAnswer,
+  verifyPasswordResetCode,
   restoreOptionalAuthSession,
   signUp,
   withdrawAccount,
@@ -32,9 +32,10 @@ import {
   parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
-  parseVerifyRecoveryAnswerInput,
+  parseVerifyPasswordResetCodeInput,
   parseWithdrawAccountInput,
 } from "./auth.validator";
+import { markOptionalSessionRefreshFailure } from "./auth-rate-limit";
 
 /** Express가 파싱한 외부 body를 Validator 전까지 신뢰하지 않는 Auth Controller 계약입니다. */
 type UnknownBodyRequestHandler = RequestHandler<ParamsDictionary, unknown, unknown>;
@@ -69,23 +70,23 @@ export const findAccountController: UnknownBodyRequestHandler = async (
   return sendSuccess(response, HTTP_STATUS.OK, result);
 };
 
-/** 본인 정보가 일치하는 이메일 계정의 복구 질문을 반환합니다. */
-export const recoveryQuestionController: UnknownBodyRequestHandler = async (
+/** 이메일 계정에는 숫자 코드를 발송하고 OAuth 계정에는 SNS 안내 결과를 반환합니다. */
+export const requestPasswordResetCodeController: UnknownBodyRequestHandler = async (
   request,
   response,
 ) => {
   const input = parseAccountRecoveryInput(request.body);
-  const result = await getRecoveryQuestion(input);
+  const result = await requestPasswordResetCode(input);
   return sendSuccess(response, HTTP_STATUS.OK, result);
 };
 
-/** 복구 답변을 확인해 15분 만료 비밀번호 재설정 토큰을 반환합니다. */
-export const verifyRecoveryAnswerController: UnknownBodyRequestHandler = async (
+/** 이메일로 받은 숫자 코드를 확인해 15분 만료 비밀번호 재설정 토큰을 반환합니다. */
+export const verifyPasswordResetCodeController: UnknownBodyRequestHandler = async (
   request,
   response,
 ) => {
-  const input = parseVerifyRecoveryAnswerInput(request.body);
-  const result = await verifyRecoveryAnswer(input);
+  const input = parseVerifyPasswordResetCodeInput(request.body);
+  const result = await verifyPasswordResetCode(input);
   return sendSuccess(response, HTTP_STATUS.OK, result);
 };
 
@@ -136,6 +137,11 @@ export const optionalSessionController: RequestHandler = async (
   const accessToken = getAccessTokenFromCookie(request);
   const refreshToken = getRefreshTokenFromCookie(request);
   const result = await restoreOptionalAuthSession(accessToken, refreshToken);
+
+  // 선택 세션은 잘못된 Refresh도 200 비회원으로 정리하므로 limiter에만 실패 결과를 명시합니다.
+  if (refreshToken !== null && result.user === null) {
+    markOptionalSessionRefreshFailure(request);
+  }
 
   if (result.tokens) {
     setAuthCookies(response, result.tokens);

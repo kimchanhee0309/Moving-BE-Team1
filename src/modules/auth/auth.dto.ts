@@ -2,7 +2,7 @@
  * 이메일 인증·선택 세션·회원 탈퇴 API의 입력과 외부 응답 DTO를 정의합니다.
  * passwordHash와 토큰 원문 같은 내부 인증 정보는 응답 DTO에 포함하지 않습니다.
  */
-import type { PasswordRecoveryQuestion, UserRole } from "../../generated/prisma/enums";
+import type { UserRole } from "../../generated/prisma/enums";
 import type { AuthTokens } from "../../common/utils/auth-token";
 
 /** POST /auth/signup에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
@@ -17,9 +17,6 @@ export interface SignUpRequestDto {
   password: string;
   /** 가입할 계정 유형이며 CUSTOMER 또는 MOVER입니다. */
   role: UserRole;
-  recoveryQuestion: PasswordRecoveryQuestion;
-  /** 정규화된 복구 답변이며 저장 전 반드시 hash 처리합니다. */
-  recoveryAnswer: string;
 }
 
 /** POST /auth/login에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
@@ -51,14 +48,18 @@ export interface ConfirmPasswordResetRequestDto {
   newPassword: string;
 }
 
-export interface VerifyRecoveryAnswerRequestDto extends AccountRecoveryRequestDto {
-  recoveryAnswer: string;
+/** POST /auth/recovery/password/code/verify에서 검증할 challenge와 숫자 코드입니다. */
+export interface VerifyPasswordResetCodeRequestDto {
+  challengeId: string;
+  code: string;
 }
 
-export interface RecoveryQuestionResultDto {
-  available: boolean;
-  question: PasswordRecoveryQuestion | null;
-  loginMethod: "EMAIL" | "SOCIAL" | null;
+/** 코드 발송 요청 결과이며 OAuth·불일치에는 challenge를 발급하지 않습니다. */
+export interface PasswordResetCodeRequestResultDto {
+  delivery: "EMAIL" | "SOCIAL" | "NONE";
+  challengeId: string | null;
+  expiresInSeconds: number | null;
+  resendAfterSeconds: number | null;
 }
 
 export interface RecoveryVerificationResultDto {
