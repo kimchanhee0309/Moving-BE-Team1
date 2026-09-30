@@ -10,7 +10,14 @@ import {
 } from "../../common/errors/app-error";
 import { createAuthTokens, verifyToken } from "../../common/utils/auth-token";
 import { removeReplacedLocalProfileImage } from "../customer-profile/customer-profile.image";
+import {
+  createMoveRequestCancelNotifications,
+  findCancelableMoveRequestsByCustomerId,
+  findQuoteRecipientsByMoveRequestIdAndStatus,
+  type CreatedMoveRequestCancelNotificationRecord,
+} from "../move-request/move-request.repository";
 import { removeReplacedMoverProfileImage } from "../mover-profile/mover-profile.image";
+import { publishNotificationToUser } from "../notification/notification.hub";
 import type {
   AccountLookupResultDto,
   AccountRecoveryRequestDto,
@@ -472,19 +479,35 @@ export async function restoreOptionalAuthSession(
   };
 }
 
+/** withdrawAccount transaction이 반환하는 정리 대상(로컬 프로필 이미지 경로와 이사 요청 취소 알림)입니다. */
+interface WithdrawalTransactionResult {
+  profileImages: {
+    customer: string | null;
+    mover: string | null;
+  };
+  cancelNotifications: CreatedMoveRequestCancelNotificationRecord[];
+}
+
 /**
  * 최신 User 인증 수단으로 본인을 재확인하고 Restrict 관계와 User를 한 transaction에서 삭제합니다.
  * @param userId Access Token으로 검증된 요청 사용자 ID
  * @param input 이메일 계정의 현재 비밀번호 또는 OAuth 계정의 빈 요청
  * @returns 삭제 완료 후 반환값이 없는 Promise
  * @throws 이메일 계정 비밀번호 누락 시 CURRENT_PASSWORD_REQUIRED, 불일치 시 INVALID_CURRENT_PASSWORD
- * @remarks Customer/Mover cascade 데이터와 알림이 삭제되고 transaction 성공 후 소유한 로컬 프로필 이미지도 정리합니다.
+ * @remarks Customer/Mover cascade 데이터와 알림이 삭제되고 transaction 성공 후 소유한 로컬 프로필 이미지도
+ * 정리합니다. 탈퇴하는 사용자가 CUSTOMER 역할(Customer profile 보유)이면, User를 삭제하기 전에 그 고객의
+ * 진행 중인(WAITING/CONFIRMED) 이사 요청에 견적을 보낸 기사님들에게 move-request 모듈의 DELETE endpoint와
+ * 동일한 MOVE_REQUEST_CANCELED/CONFIRMED_MOVE_CANCELED 알림을 만든다(문구도 그대로 재사용 — "계정을
+ * 탈퇴하여"라는 표현이 원래 이 경로를 염두에 두고 만들어진 문구다). MoveRequest 자체의 상태는 바꾸지
+ * 않는다 — 어차피 User→Customer cascade로 곧 삭제되므로 상태 전이는 의미가 없다. MOVER 역할 탈퇴(기사님이
+ * 받은 요청·견적에 대한 알림)는 이 함수의 범위 밖이다 — 사용자가 확정한 범위는 "이사 요청을 보낸 고객"의
+ * 탈퇴이며, MOVER 탈퇴 흐름은 바꾸지 않는다.
  */
 export async function withdrawAccount(
   userId: string,
   input: WithdrawAccountRequestDto,
 ): Promise<void> {
-  const deletedProfileImages = await runAuthTransaction(async (transaction) => {
+  const result = await runAuthTransaction(async (transaction) => {
     const user = await findUserForWithdrawal(transaction, userId);
 
     // 서명된 이전 토큰으로 동시에 재요청한 경우 이미 달성된 삭제를 멱등 성공으로 처리합니다.
@@ -520,7 +543,41 @@ export async function withdrawAccount(
       );
     }
 
+    // CUSTOMER 역할(Customer profile 보유)이면, User·Customer가 곧 cascade로 삭제되기 전에
+    // 진행 중인 이사 요청마다 견적 상태에 맞는 취소 알림을 만든다. "고객은 활성 요청을 하나만
+    // 가진다"는 규칙상 보통 0건 또는 1건이다.
+    const cancelNotifications: CreatedMoveRequestCancelNotificationRecord[] = [];
+
+    if (user.customer) {
+      const cancelableMoveRequests = await findCancelableMoveRequestsByCustomerId(
+        user.customer.id,
+        new Date(),
+        transaction,
+      );
+
+      for (const moveRequest of cancelableMoveRequests) {
+        const isWaitingCancel = moveRequest.status === "WAITING";
+        const recipients = await findQuoteRecipientsByMoveRequestIdAndStatus(
+          moveRequest.id,
+          isWaitingCancel ? "PROPOSED" : "CONFIRMED",
+          transaction,
+        );
+
+        const notifications = await createMoveRequestCancelNotifications(transaction, {
+          type: isWaitingCancel ? "MOVE_REQUEST_CANCELED" : "CONFIRMED_MOVE_CANCELED",
+          reason: "WITHDRAWAL",
+          moveRequestId: moveRequest.id,
+          customerName: moveRequest.customer.user.name,
+          recipients,
+        });
+
+        cancelNotifications.push(...notifications);
+      }
+    }
+
     // RequestRejection만 Cascade가 아니므로 먼저 지우며 이후 실패하면 transaction 전체가 rollback됩니다.
+    // 위에서 만든 취소 알림도 이 rollback 대상에 포함되므로, 알림 생성과 User 삭제 성공이 항상 함께
+    // 커밋되거나 함께 되돌아간다(불일치가 생기지 않는다).
     await deleteRestrictedWithdrawalRelations(transaction, user);
     const deletion = await deleteUserWithAuthState(transaction, user);
 
@@ -543,16 +600,36 @@ export async function withdrawAccount(
     }
 
     return {
-      customer: user.customer?.profileImageUrl ?? null,
-      mover: user.mover?.profileImageUrl ?? null,
-    };
+      profileImages: {
+        customer: user.customer?.profileImageUrl ?? null,
+        mover: user.mover?.profileImageUrl ?? null,
+      },
+      cancelNotifications,
+    } satisfies WithdrawalTransactionResult;
   });
 
-  if (!deletedProfileImages) return;
+  if (!result) return;
+
+  // transaction이 커밋된 뒤에만 push한다(다른 도메인의 취소·확정 알림과 동일한 관례). 커밋 전에
+  // push하면 이후 오류로 rollback될 경우 실제로 저장되지 않은 알림을 클라이언트가 먼저 받을 수 있다.
+  if (result.cancelNotifications.length > 0) {
+    const createdAt = new Date().toISOString();
+
+    for (const notification of result.cancelNotifications) {
+      publishNotificationToUser(notification.userId, {
+        type: notification.type,
+        title: notification.title,
+        content: notification.content,
+        moveRequestId: notification.moveRequestId,
+        quoteId: notification.quoteId,
+        createdAt,
+      });
+    }
+  }
 
   // DB 삭제는 확정됐으므로 파일 정리 실패가 탈퇴 성공을 되돌리지는 않습니다.
   await Promise.all([
-    removeReplacedLocalProfileImage(deletedProfileImages.customer),
-    removeReplacedMoverProfileImage(deletedProfileImages.mover),
+    removeReplacedLocalProfileImage(result.profileImages.customer),
+    removeReplacedMoverProfileImage(result.profileImages.mover),
   ]);
 }
