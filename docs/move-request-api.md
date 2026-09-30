@@ -64,6 +64,8 @@ URI는 이미 병합된 `customer-quote` 모듈(`GET /customers/me/quotes`)과 `
 | POST | `/customers/me/move-requests` | Create Move Request | 이사 견적 요청 생성 | 필요 | `CUSTOMER` | 본인 |
 | GET | `/customers/me/move-requests/active` | Get Active Move Request | 현재 활성 요청 조회 | 필요 | `CUSTOMER` | 본인 |
 | POST | `/customers/me/move-requests/:moveRequestId/designated-requests` | Create Designated Request | 특정 기사님에게 지정 요청 추가 | 필요 | `CUSTOMER` | 본인 |
+| PATCH | `/customers/me/move-requests/:moveRequestId` | Update Move Request | 대기(WAITING) 중인 요청 수정 | 필요 | `CUSTOMER` | 본인 |
+| DELETE | `/customers/me/move-requests/:moveRequestId` | Delete Move Request | 대기(WAITING) 중인 요청 삭제(hard delete) + 취소 알림 | 필요 | `CUSTOMER` | 본인 |
 
 ---
 
@@ -351,6 +353,162 @@ Cookie: accessToken={HttpOnly Cookie}
 
 ---
 
+## API 이름: Update Move Request
+
+### 기본 정보
+
+| 항목 | 작성 내용 |
+| --- | --- |
+| API 이름 | Update Move Request |
+| Method | PATCH |
+| URI | `/customers/me/move-requests/:moveRequestId` |
+| 설명 | 대기(WAITING) 중인 내 이사 견적 요청의 이사 종류·날짜·출발지·도착지를 수정한다. 이미 확정·완료된 요청은 수정할 수 없다. |
+| 인증 | Access Token 필요 |
+| 허용 역할 | `CUSTOMER` |
+| 프로필 등록 | 필요 |
+| 담당자 | 본인 |
+| 관련 화면 | 미정(대기 중 견적 화면에서의 수정 진입점은 FE 담당자와 별도 협의 필요) |
+
+Body 검증 규칙은 Create Move Request와 완전히 동일하다(같은 Zod 스키마 재사용). 소유권 검증은 Create Designated Request(403 `MOVE_REQUEST_FORBIDDEN`)와 다르게, `customer-quote`/`favorite`/`review` 모듈의 기존 관례를 따라 **다른 고객 소유 요청이면 존재 여부를 구분하지 않고 동일하게 404 `MOVE_REQUEST_NOT_FOUND`**로 응답한다. 이미 받은 `PROPOSED` 견적은 이 API로 무효화되지 않고 그대로 유지된다(자동 무효화 여부는 팀 결정 대기).
+
+### Path Parameters
+
+| 이름 | 타입 | 필수 | 설명 | 예시 |
+| --- | --- | --- | --- | --- |
+| `moveRequestId` | UUID string | 필수 | 수정할 MoveRequest | `"00000000-0000-0000-0000-000000000000"` |
+
+### Query Parameters
+
+| 이름 | 타입 | 필수 | 기본값 | 허용값 | 설명 | 예시 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 없음 | - | - | - | - | - | - |
+
+### Request Headers·Cookies
+
+| 구분 | 이름 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| Header | `Content-Type: application/json` | 필수 | JSON 요청 형식 |
+| Cookie | `accessToken` | 필수 | 로그인 상태에서 발급된 HttpOnly Access Token |
+
+### Request Body
+
+Create Move Request와 동일하다(§4 "Create Move Request" > Request Body 참고): `serviceType`/`moveDate`/`fromAddress`/`toAddress` 4개 필드 모두 필수.
+
+### 성공 응답
+
+| 항목 | 작성 내용 |
+| --- | --- |
+| HTTP Status | `200 OK` |
+| 응답 형식 | `data.moveRequest` 단건 |
+| 설명 | 수정된 이사 견적 요청 정보를 반환한다. |
+
+### 요청 예시
+
+```
+PATCH /customers/me/move-requests/00000000-0000-0000-0000-000000000000
+Content-Type: application/json
+Cookie: accessToken={HttpOnly Cookie}
+```
+
+```json
+{
+  "serviceType": "HOME",
+  "moveDate": "2026-11-05",
+  "fromAddress": "[04538] 서울시 강남구 테헤란로 123 101동 202호 (테헤란로1가 25-3)",
+  "toAddress": "[13529] 경기도 성남시 분당구 판교역로 456 3층 (백현동 532-2)"
+}
+```
+
+### 성공 응답 예시
+
+Create Move Request 성공 응답 예시(§4)와 동일한 `data.moveRequest` 형태다.
+
+### 가능한 오류
+
+| HTTP Status | error.code | 발생 조건 |
+| --- | --- | --- |
+| 400 | `VALIDATION_ERROR` | Body가 JSON 객체가 아니거나 필수값·형식이 올바르지 않은 경우 |
+| 401 | `ACCESS_TOKEN_MISSING` | Access Token Cookie가 없는 경우 |
+| 401 | `ACCESS_TOKEN_INVALID` | Access Token이 유효하지 않은 경우 |
+| 401 | `ACCESS_TOKEN_EXPIRED` | Access Token이 만료된 경우 |
+| 403 | `PROFILE_NOT_REGISTERED` | Customer 프로필을 등록하지 않은 경우 |
+| 404 | `MOVE_REQUEST_NOT_FOUND` | `moveRequestId`가 없거나 본인 소유가 아닌 경우 |
+| 409 | `MOVE_REQUEST_NOT_EDITABLE` | 대기(WAITING) 중이 아니어서(CONFIRMED/COMPLETED) 수정할 수 없는 경우 |
+| 500 | `INTERNAL_SERVER_ERROR` | 처리되지 않은 서버 또는 DB 오류가 발생한 경우 |
+
+---
+
+## API 이름: Delete Move Request
+
+### 기본 정보
+
+| 항목 | 작성 내용 |
+| --- | --- |
+| API 이름 | Delete Move Request |
+| Method | DELETE |
+| URI | `/customers/me/move-requests/:moveRequestId` |
+| 설명 | 대기(WAITING) 중인 내 이사 견적 요청을 실제로 삭제(hard delete)한다. 대기 중(PROPOSED)이던 견적을 보낸 기사님 전원에게 `MOVE_REQUEST_CANCELED` 알림을 보낸다. 이미 확정·완료된 요청은 삭제할 수 없다. |
+| 인증 | Access Token 필요 |
+| 허용 역할 | `CUSTOMER` |
+| 프로필 등록 | 필요 |
+| 담당자 | 본인 |
+| 관련 화면 | 미정(대기 중 견적 화면에서의 취소 진입점은 FE 담당자와 별도 협의 필요) |
+
+hard delete이므로 `DesignatedRequest`/`Quote`/`Review`는 schema의 `onDelete: Cascade`로 함께 삭제되고, `RequestRejection`은 `onDelete: RESTRICT`라 삭제 전 명시적으로 먼저 제거한다. 취소 알림 row는 `MoveRequest`를 지우기 전에 생성해 FK 제약을 통과시키고, 이후 cascade로 삭제되어도 알림의 `moveRequestId`/`quoteId`는 `onDelete: SetNull`로 즉시 `NULL`이 될 뿐 title/content 문구 자체는 보존된다. 소유권 검증은 Update Move Request와 동일하게 다른 고객 소유면 404로 응답한다. **CONFIRMED 상태는 이 API로 삭제할 수 없다** — 확정된 요청이 취소되는 유일한 경로는 계정 탈퇴(`DELETE /auth/me`, `auth` 모듈 담당)이며, 그때는 `CONFIRMED_MOVE_CANCELED` 알림과 별도 문구(`reason: WITHDRAWAL`)를 사용한다.
+
+### Path Parameters
+
+| 이름 | 타입 | 필수 | 설명 | 예시 |
+| --- | --- | --- | --- | --- |
+| `moveRequestId` | UUID string | 필수 | 삭제할 MoveRequest | `"00000000-0000-0000-0000-000000000000"` |
+
+### Query Parameters
+
+| 이름 | 타입 | 필수 | 기본값 | 허용값 | 설명 | 예시 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 없음 | - | - | - | - | - | - |
+
+### Request Headers·Cookies
+
+| 구분 | 이름 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| Cookie | `accessToken` | 필수 | 로그인 상태에서 발급된 HttpOnly Access Token |
+
+### Request Body
+
+| 필드 | 타입 | 필수 | nullable | 제약조건 | 설명 | 예시 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 없음 | - | - | - | - | - | - |
+
+### 성공 응답
+
+| 항목 | 작성 내용 |
+| --- | --- |
+| HTTP Status | `204 No Content` |
+| 응답 형식 | 본문 없음 |
+| 설명 | 삭제 성공 시 본문 없이 204만 반환한다. |
+
+### 요청 예시
+
+```
+DELETE /customers/me/move-requests/00000000-0000-0000-0000-000000000000
+Cookie: accessToken={HttpOnly Cookie}
+```
+
+### 가능한 오류
+
+| HTTP Status | error.code | 발생 조건 |
+| --- | --- | --- |
+| 401 | `ACCESS_TOKEN_MISSING` | Access Token Cookie가 없는 경우 |
+| 401 | `ACCESS_TOKEN_INVALID` | Access Token이 유효하지 않은 경우 |
+| 401 | `ACCESS_TOKEN_EXPIRED` | Access Token이 만료된 경우 |
+| 403 | `PROFILE_NOT_REGISTERED` | Customer 프로필을 등록하지 않은 경우 |
+| 404 | `MOVE_REQUEST_NOT_FOUND` | `moveRequestId`가 없거나 본인 소유가 아닌 경우 |
+| 409 | `MOVE_REQUEST_NOT_DELETABLE` | 대기(WAITING) 중이 아니어서(CONFIRMED/COMPLETED) 삭제할 수 없는 경우 |
+| 500 | `INTERNAL_SERVER_ERROR` | 처리되지 않은 서버 또는 DB 오류가 발생한 경우 |
+
+---
+
 ## 5. 프론트엔드 연동 흐름
 
 실제 FE 구현(`src/app/(customer)/move-request/page.tsx`, `MoveRequestForm`)을 기준으로 정리한다.
@@ -441,6 +599,6 @@ FE는 breakpoint별로 서로 다른 두 레이아웃을 함께 렌더링하고 
 | 공통 인증 코드 | `src/common/cookies`, `src/common/middleware`, `src/common/utils` |
 | 공유 enum 근거 | `src/config/swagger.ts`(`ServiceType`, `MoveRequestStatus`), `src/modules/customer-quote/customer-quote.dto.ts`(`SERVICE_TYPE_NAMES`) |
 | Swagger 위치 | `/api-docs`, `/api-docs.json` |
-| Prisma Schema 변경 | 없음 |
-| Migration 변경 | 없음 |
+| Prisma Schema 변경 | 있음 — `NotificationType` enum에 `MOVE_REQUEST_CANCELED`, `CONFIRMED_MOVE_CANCELED` 추가(취소 알림 트리거용, 사용자 승인됨) |
+| Migration 변경 | 있음 — `prisma/migrations/20260929022359_add_move_request_cancel_notification_types/` |
 | Seed 변경 | 없음 |
