@@ -23,7 +23,7 @@
 | POST | `/auth/login` | 공개 | `200`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `INVALID_CREDENTIALS` |
 | GET | `/auth/me` | Access Cookie | `200`, `data.user` | `ACCESS_TOKEN_MISSING`, `ACCESS_TOKEN_INVALID`, `ACCESS_TOKEN_EXPIRED`, `USER_NOT_FOUND` |
 | DELETE | `/auth/me` | Access Cookie | `200`, `data: null`과 계정·연관 데이터·쿠키 삭제 | `CURRENT_PASSWORD_REQUIRED`, `INVALID_CURRENT_PASSWORD`, `ACCOUNT_AUTH_METHOD_INVALID` |
-| POST | `/auth/refresh` | 선택적 Access + Refresh Cookie | `200`, `data.user`; 필요한 경우에만 회전된 인증 쿠키 | `ACCESS_TOKEN_INVALID`, `REFRESH_TOKEN_MISSING`, `REFRESH_TOKEN_INVALID`, `REFRESH_TOKEN_EXPIRED`, `REFRESH_TOKEN_REUSED` |
+| POST | `/auth/refresh` | 선택적 Access + Refresh Cookie | `200`, `data.user`; 필요한 경우에만 회전된 인증 쿠키 | `ACCESS_TOKEN_INVALID`, `REFRESH_TOKEN_MISSING`, `REFRESH_TOKEN_INVALID`, `REFRESH_TOKEN_EXPIRED` |
 | POST | `/auth/refresh/session` | 선택적 Access/Refresh Cookie | `200`, `data.user` 또는 정상 비회원 `user: null` | `AUTH_RATE_LIMIT_EXCEEDED` |
 | POST | `/auth/logout` | 공개 | `200`, `data: null`과 쿠키 삭제 | 없음 |
 | GET | `/auth/oauth/:provider` | 공개 | `200`, 공급자 URL 또는 `302` 이동 | `VALIDATION_ERROR`, `OAUTH_NOT_CONFIGURED`, `AUTH_RATE_LIMIT_EXCEEDED` |
@@ -73,7 +73,9 @@
 | `accessToken` | `/` | true | 30분 |
 | `refreshToken` | `/auth/refresh` | true | 7일 |
 
-로그인·회원가입·OAuth 성공 시 서버는 Refresh 원문이 아니라 세션 ID, 현재 Refresh 회전 ID, 만료·폐기 상태만 DB에 저장합니다. Refresh 성공 시 현재 회전 ID를 원자적으로 소비하고 Access/Refresh Token을 함께 재발급합니다. 이미 소비된 Refresh가 재사용되면 `REFRESH_TOKEN_REUSED`로 거절하고 해당 세션 전체를 폐기합니다.
+로그인·회원가입·OAuth와 Refresh는 승인된 MVP 계약대로 DB session/token을 저장하지 않는 stateless JWT 방식입니다. 각 JWT에는 DB에 저장하지 않는 임의 `jti`를 넣어 같은 초에 재발급해도 새 문자열로 회전합니다. 다만 서버 저장소가 없으므로 이미 발급된 Refresh Token의 재사용 감지와 즉시 폐기는 보장하지 않습니다. 이 보장이 필요해지면 공유 세션 저장소, 배포 마이그레이션, 다중 인스턴스 동시성 정책을 먼저 팀 계약으로 승인해야 합니다.
+
+이번 변경 이전에 발급된 JWT에는 `sessionId`, `refreshTokenId`가 없습니다. 서버는 `sub`, `role`, `tokenType`, 서명, issuer, 만료만 필수로 검증하고 알 수 없는 추가 claim은 무시하므로 기존 Access/Refresh Token은 각각 남은 30분/7일 수명 동안 호환됩니다.
 
 `POST /auth/refresh`는 유효한 Access가 함께 오면 토큰을 재발급하지 않고 현재 `data.user`만 반환합니다. Access가 없거나 `ACCESS_TOKEN_EXPIRED`인 경우에만 Refresh를 사용합니다. 위조·서명 오류·잘못된 payload의 Access는 유효한 Refresh가 함께 있어도 `ACCESS_TOKEN_INVALID`로 거절합니다.
 
@@ -84,7 +86,7 @@
 - Access Token이 유효하면 사용자만 반환하고 토큰을 불필요하게 회전하지 않습니다.
 - Access Token이 없거나 만료됐고 Refresh Token이 유효하면 두 토큰을 회전하고 사용자를 반환합니다.
 - 인증 쿠키가 없는 비회원은 오류가 아니라 `200`, `{ "user": null }`로 반환합니다.
-- 만료 Access만 유효한 Refresh로 복구합니다. 위조·서명 오류 Access, 만료·위조·재사용 Refresh, 삭제된 사용자 토큰은 쿠키를 지우고 정상 비회원으로 정리하며 로그인 상태를 만들지 않습니다.
+- 만료 Access만 유효한 Refresh로 복구합니다. 위조·서명 오류 Access, 만료·위조 Refresh, 삭제된 사용자 토큰은 쿠키를 지우고 정상 비회원으로 정리하며 로그인 상태를 만들지 않습니다.
 - 정상 비회원 확인, 유효한 Access 확인, 유효한 Refresh 복원은 요청 제한 횟수에서 제외하며 잘못된 Refresh Token 시도만 IP별 15분에 30회로 제한합니다.
 - 선택 세션과 강제 Refresh는 서로 다른 요청 제한 저장소를 사용하므로 한 경로의 호출이 다른 경로의 제한 횟수를 소비하지 않습니다.
 - 보호된 `GET /auth/me`, `POST /auth/refresh` 및 다른 보호 API의 기존 401 계약은 그대로 유지합니다.
@@ -116,7 +118,9 @@ OAuth 계정 요청은 빈 객체 또는 Body 생략을 허용합니다. OAuth �
 - Mover 탈퇴는 본인의 Quote·Review·Favorite·DesignatedRequest·RequestRejection 등을 함께 삭제합니다.
 - User 소유 Notification은 삭제되며 다른 사용자 알림이 참조하던 삭제 Quote·MoveRequest FK는 `SetNull`로 남습니다.
 - soft-delete 필드가 없는 현재 스키마에 맞춰 hard delete하므로 User의 이메일·전화번호 unique 값은 즉시 해제되어 재가입할 수 있습니다.
-- 성공 후 Access/Refresh Cookie와 User에 cascade된 서버 AuthSession을 모두 삭제합니다. 삭제된 User를 가리키는 기존 토큰은 `/auth/me`와 Refresh에서 각각 `USER_NOT_FOUND`, `REFRESH_TOKEN_INVALID`로 거절됩니다.
+- 성공 후 Access/Refresh Cookie를 삭제합니다. 삭제된 User를 가리키는 기존 토큰은 `/auth/me`와 Refresh에서 각각 `USER_NOT_FOUND`, `REFRESH_TOKEN_INVALID`로 거절됩니다.
+
+`POST /auth/logout`도 stateless 계약에 따라 현재 브라우저의 두 HttpOnly Cookie만 만료시킵니다. Refresh Cookie는 요청 경로가 `/auth/refresh`라 로그아웃 요청에는 포함되지 않지만, 응답은 발급 때와 같은 Path로 해당 Cookie를 삭제합니다. 서버 폐기 저장소가 없으므로 로그아웃 전에 별도로 복사된 Refresh Token의 즉시 무효화는 보장하지 않습니다.
 
 ## 공통 오류 details
 

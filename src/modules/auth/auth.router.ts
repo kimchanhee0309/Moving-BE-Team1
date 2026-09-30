@@ -445,7 +445,7 @@ authRouter.post("/refresh", refreshRateLimiter, refreshController);
  *   post:
  *     tags: [Auth]
  *     summary: Log Out
- *     description: Access가 연결된 서버 Refresh 세션을 폐기하고 브라우저의 Access/Refresh 쿠키를 만료시킵니다. 손상되거나 없는 Access에서도 쿠키 삭제는 멱등 성공합니다.
+ *     description: Stateless 인증 계약에 따라 브라우저의 Access/Refresh 쿠키를 만료시킵니다. 토큰이나 쿠키가 없어도 멱등 성공하며 서버 DB 세션은 사용하지 않습니다.
  *     responses:
  *       200:
  *         description: 로그아웃 처리 완료

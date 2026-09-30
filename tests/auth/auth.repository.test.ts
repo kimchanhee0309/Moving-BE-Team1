@@ -14,89 +14,9 @@ import {
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
   restorePasswordResetChallenge,
-  rotateAuthSession,
   type AuthTransaction,
   type WithdrawalUserRecord,
 } from "../../src/modules/auth/auth.repository";
-
-describe("Auth refresh session repository", () => {
-  beforeEach(() => jest.resetAllMocks());
-
-  test("현재 Refresh 식별자만 원자적으로 다음 식별자로 회전한다", async () => {
-    const now = new Date("2026-09-30T00:00:00.000Z");
-    const expiresAt = new Date("2026-10-07T00:00:00.000Z");
-    const findUnique = jest.fn().mockResolvedValue({
-      userId: "user-id",
-      currentRefreshTokenId: "old-refresh-id",
-      expiresAt,
-      revokedAt: null,
-    });
-    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const transaction = { authSession: { findUnique, updateMany } };
-    jest.mocked(prisma.$transaction).mockImplementation(async (operation) =>
-      operation(transaction as never),
-    );
-
-    await expect(
-      rotateAuthSession(
-        "session-id",
-        "user-id",
-        "old-refresh-id",
-        "next-refresh-id",
-        expiresAt,
-        now,
-      ),
-    ).resolves.toBe("ROTATED");
-    expect(updateMany).toHaveBeenCalledWith({
-      where: {
-        id: "session-id",
-        userId: "user-id",
-        currentRefreshTokenId: "old-refresh-id",
-        revokedAt: null,
-        expiresAt: { gt: now },
-      },
-      data: {
-        currentRefreshTokenId: "next-refresh-id",
-        expiresAt,
-      },
-    });
-  });
-
-  test("이미 소비한 Refresh 식별자가 재사용되면 세션 family를 폐기한다", async () => {
-    const now = new Date("2026-09-30T00:00:00.000Z");
-    const expiresAt = new Date("2026-10-07T00:00:00.000Z");
-    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const transaction = {
-      authSession: {
-        findUnique: jest.fn().mockResolvedValue({
-          userId: "user-id",
-          currentRefreshTokenId: "already-rotated-id",
-          expiresAt,
-          revokedAt: null,
-        }),
-        updateMany,
-      },
-    };
-    jest.mocked(prisma.$transaction).mockImplementation(async (operation) =>
-      operation(transaction as never),
-    );
-
-    await expect(
-      rotateAuthSession(
-        "session-id",
-        "user-id",
-        "reused-refresh-id",
-        "next-refresh-id",
-        expiresAt,
-        now,
-      ),
-    ).resolves.toBe("REUSED");
-    expect(updateMany).toHaveBeenCalledWith({
-      where: { id: "session-id", revokedAt: null },
-      data: { revokedAt: now },
-    });
-  });
-});
 
 const withdrawalUser: WithdrawalUserRecord = {
   id: "user-id",

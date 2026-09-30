@@ -16,7 +16,6 @@ jest.mock("../../src/modules/auth/auth.service", () => ({
   requestPasswordResetCode: jest.fn(),
   getCurrentUser: jest.fn(),
   login: jest.fn(),
-  logoutAuthSession: jest.fn(),
   refreshAuth: jest.fn(),
   verifyPasswordResetCode: jest.fn(),
   restoreOptionalAuthSession: jest.fn(),
@@ -71,7 +70,6 @@ import {
   requestPasswordResetCode,
   getCurrentUser,
   login,
-  logoutAuthSession,
   refreshAuth,
   verifyPasswordResetCode,
   restoreOptionalAuthSession,
@@ -357,9 +355,7 @@ describe("Auth controller response contract", () => {
     expect(response.json).toHaveBeenCalledWith({ success: true, data: null });
   });
 
-  test("로그아웃은 연결 세션을 폐기하고 쿠키를 지운 뒤 공통 빈 응답을 반환한다", async () => {
-    jest.mocked(getAccessTokenFromCookie).mockReturnValue("access-token");
-    jest.mocked(logoutAuthSession).mockResolvedValue();
+  test("로그아웃은 인증 쿠키가 없어도 두 쿠키를 지우고 공통 빈 응답을 반환한다", async () => {
     const response = createResponse();
 
     await logoutController(
@@ -368,7 +364,6 @@ describe("Auth controller response contract", () => {
       jest.fn() as NextFunction,
     );
 
-    expect(logoutAuthSession).toHaveBeenCalledWith("access-token");
     expect(clearAuthCookies).toHaveBeenCalledWith(response);
     expect(response.json).toHaveBeenCalledWith({ success: true, data: null });
   });

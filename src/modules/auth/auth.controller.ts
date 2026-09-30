@@ -19,7 +19,6 @@ import {
   findAccount,
   getCurrentUser,
   login,
-  logoutAuthSession,
   requestPasswordResetCode,
   refreshAuth,
   verifyPasswordResetCode,
@@ -162,9 +161,8 @@ export const withdrawAccountController: UnknownBodyRequestHandler = async (
   return sendSuccess(response, HTTP_STATUS.OK, null);
 };
 
-/** 연결된 서버 세션을 폐기하고 두 쿠키를 만료시키며 손상된 토큰도 멱등 처리합니다. */
-export const logoutController: RequestHandler = async (request, response) => {
-  await logoutAuthSession(getAccessTokenFromCookie(request));
+/** Stateless 인증 계약에 따라 서버 상태 없이 두 HttpOnly 인증 쿠키를 멱등 만료시킵니다. */
+export const logoutController: RequestHandler = async (_request, response) => {
   clearAuthCookies(response);
 
   return sendSuccess(response, HTTP_STATUS.OK, null);
