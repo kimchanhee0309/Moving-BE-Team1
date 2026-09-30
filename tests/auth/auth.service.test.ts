@@ -3,6 +3,7 @@
  * Repository, bcrypt, JWT 경계는 mock으로 분리하여 비즈니스 분기만 확인합니다.
  */
 jest.mock("../../src/modules/auth/auth.repository", () => ({
+  createAuthSession: jest.fn(),
   createEmailUser: jest.fn(),
   deleteRestrictedWithdrawalRelations: jest.fn(),
   deleteUserWithAuthState: jest.fn(),
@@ -19,6 +20,8 @@ jest.mock("../../src/modules/auth/auth.repository", () => ({
   findPasswordResetChallengeForCompletion: jest.fn(),
   consumePasswordResetChallenge: jest.fn(),
   runAuthTransaction: jest.fn(),
+  revokeAuthSession: jest.fn(),
+  rotateAuthSession: jest.fn(),
   updateEmailUserPassword: jest.fn(),
 }));
 
@@ -49,7 +52,9 @@ jest.mock("../../src/modules/auth/auth-password-reset-code", () => ({
 }));
 
 jest.mock("../../src/common/utils/auth-token", () => ({
+  createAuthTokenIdentifiers: jest.fn(),
   createAuthTokens: jest.fn(),
+  verifyAccessTokenForLogout: jest.fn(),
   verifyToken: jest.fn(),
 }));
 
@@ -61,7 +66,12 @@ jest.mock("../../src/modules/mover-profile/mover-profile.image", () => ({
   removeReplacedMoverProfileImage: jest.fn(),
 }));
 
-import { createAuthTokens, verifyToken } from "../../src/common/utils/auth-token";
+import {
+  createAuthTokenIdentifiers,
+  createAuthTokens,
+  verifyAccessTokenForLogout,
+  verifyToken,
+} from "../../src/common/utils/auth-token";
 import { UnauthorizedError } from "../../src/common/errors/app-error";
 import { sendPasswordResetCodeEmail } from "../../src/modules/auth/auth-email";
 import {
@@ -75,6 +85,7 @@ import {
   verifyPasswordResetToken,
 } from "../../src/modules/auth/auth-recovery";
 import {
+  createAuthSession,
   createEmailUser,
   deleteRestrictedWithdrawalRelations,
   deleteUserWithAuthState,
@@ -91,6 +102,8 @@ import {
   findPasswordResetChallengeForCompletion,
   consumePasswordResetChallenge,
   runAuthTransaction,
+  revokeAuthSession,
+  rotateAuthSession,
   updateEmailUserPassword,
   type AuthUserRecord,
   type AuthTransaction,
@@ -101,6 +114,7 @@ import {
   findAccount,
   getCurrentUser,
   login,
+  logoutAuthSession,
   refreshAuth,
   requestPasswordResetCode,
   verifyPasswordResetCode,
@@ -161,6 +175,9 @@ const tokens = {
   accessToken: "access-token",
   refreshToken: "refresh-token",
 };
+const sessionId = "11111111-1111-4111-8111-111111111111";
+const refreshTokenId = "22222222-2222-4222-8222-222222222222";
+const nextRefreshTokenId = "33333333-3333-4333-8333-333333333333";
 
 const transaction = {} as AuthTransaction;
 const emailWithdrawalUser: WithdrawalUserRecord = {
@@ -190,7 +207,14 @@ const oauthWithdrawalUser: WithdrawalUserRecord = {
 describe("Auth service", () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    jest.mocked(createAuthTokenIdentifiers).mockReturnValue({
+      sessionId,
+      refreshTokenId: nextRefreshTokenId,
+    });
     jest.mocked(createAuthTokens).mockReturnValue(tokens);
+    jest.mocked(createAuthSession).mockResolvedValue();
+    jest.mocked(rotateAuthSession).mockResolvedValue("ROTATED");
+    jest.mocked(revokeAuthSession).mockResolvedValue();
     jest.mocked(createPasswordResetCode).mockReturnValue("123456");
     jest.mocked(hashPasswordResetCode).mockReturnValue("code-hash");
     jest.mocked(runAuthTransaction).mockImplementation((operation) =>
@@ -225,6 +249,8 @@ describe("Auth service", () => {
     expect(createAuthTokens).toHaveBeenCalledWith(
       "customer-user-id",
       "CUSTOMER",
+      sessionId,
+      nextRefreshTokenId,
     );
   });
 
@@ -498,14 +524,73 @@ describe("Auth service", () => {
       userId: "mover-user-id",
       role: "MOVER",
       tokenType: "refresh",
+      sessionId,
+      refreshTokenId,
     });
     jest.mocked(findUserById).mockResolvedValue(moverWithProfile);
 
-    await expect(refreshAuth("old-refresh-token")).resolves.toEqual({
+    await expect(refreshAuth(null, "old-refresh-token")).resolves.toEqual({
       user: expect.objectContaining({ id: "mover-user-id" }),
       tokens,
     });
-    expect(createAuthTokens).toHaveBeenCalledWith("mover-user-id", "MOVER");
+    expect(createAuthTokens).toHaveBeenCalledWith(
+      "mover-user-id",
+      "MOVER",
+      sessionId,
+      nextRefreshTokenId,
+    );
+  });
+
+  test("유효한 Access가 있으면 명시적 Refresh에서도 토큰을 재발급하지 않는다", async () => {
+    jest.mocked(verifyToken).mockReturnValue({
+      userId: "customer-user-id",
+      role: "CUSTOMER",
+      tokenType: "access",
+      sessionId,
+      refreshTokenId: null,
+    });
+    jest.mocked(findUserById).mockResolvedValue(customerWithoutProfile);
+
+    await expect(
+      refreshAuth("access-token", "refresh-token"),
+    ).resolves.toEqual({
+      user: expect.objectContaining({ id: "customer-user-id" }),
+      tokens: null,
+    });
+    expect(rotateAuthSession).not.toHaveBeenCalled();
+    expect(createAuthTokens).not.toHaveBeenCalled();
+  });
+
+  test("위조된 Access는 유효한 Refresh가 있어도 복구하지 않는다", async () => {
+    jest.mocked(verifyToken).mockImplementation(() => {
+      throw new UnauthorizedError(
+        "Access Token이 유효하지 않습니다.",
+        "ACCESS_TOKEN_INVALID",
+      );
+    });
+
+    await expect(
+      refreshAuth("forged-access-token", "refresh-token"),
+    ).rejects.toMatchObject({ code: "ACCESS_TOKEN_INVALID", status: 401 });
+    expect(findUserById).not.toHaveBeenCalled();
+    expect(rotateAuthSession).not.toHaveBeenCalled();
+  });
+
+  test("이미 회전된 Refresh Token 재사용은 세션 복구를 거절한다", async () => {
+    jest.mocked(verifyToken).mockReturnValue({
+      userId: "mover-user-id",
+      role: "MOVER",
+      tokenType: "refresh",
+      sessionId,
+      refreshTokenId,
+    });
+    jest.mocked(findUserById).mockResolvedValue(moverWithProfile);
+    jest.mocked(rotateAuthSession).mockResolvedValue("REUSED");
+
+    await expect(
+      refreshAuth(null, "reused-refresh-token"),
+    ).rejects.toMatchObject({ code: "REFRESH_TOKEN_REUSED", status: 401 });
+    expect(createAuthTokens).not.toHaveBeenCalled();
   });
 
   test("탈퇴 후 같은 Refresh Token은 REFRESH_TOKEN_INVALID로 거절한다", async () => {
@@ -513,10 +598,12 @@ describe("Auth service", () => {
       userId: "deleted-user-id",
       role: "CUSTOMER",
       tokenType: "refresh",
+      sessionId,
+      refreshTokenId,
     });
     jest.mocked(findUserById).mockResolvedValue(null);
 
-    await expect(refreshAuth("old-refresh-token")).rejects.toMatchObject({
+    await expect(refreshAuth(null, "old-refresh-token")).rejects.toMatchObject({
       code: "REFRESH_TOKEN_INVALID",
       status: 401,
     });
@@ -536,6 +623,8 @@ describe("Auth service", () => {
       userId: "customer-user-id",
       role: "CUSTOMER",
       tokenType: "access",
+      sessionId,
+      refreshTokenId: null,
     });
     jest.mocked(findUserById).mockResolvedValue(customerWithoutProfile);
 
@@ -554,6 +643,8 @@ describe("Auth service", () => {
       userId: "mover-user-id",
       role: "MOVER",
       tokenType: "refresh",
+      sessionId,
+      refreshTokenId,
     });
     jest.mocked(findUserById).mockResolvedValue(moverWithProfile);
 
@@ -578,6 +669,8 @@ describe("Auth service", () => {
         userId: "mover-user-id",
         role: "MOVER",
         tokenType: "refresh",
+        sessionId,
+        refreshTokenId,
       });
     jest.mocked(findUserById).mockResolvedValue(moverWithProfile);
 
@@ -588,7 +681,12 @@ describe("Auth service", () => {
       tokens,
       shouldClearCookies: false,
     });
-    expect(createAuthTokens).toHaveBeenCalledWith("mover-user-id", "MOVER");
+    expect(createAuthTokens).toHaveBeenCalledWith(
+      "mover-user-id",
+      "MOVER",
+      sessionId,
+      nextRefreshTokenId,
+    );
   });
 
   test("잘못된 Refresh Token은 선택 세션에서 비회원으로 정리한다", async () => {
@@ -608,11 +706,81 @@ describe("Auth service", () => {
     });
   });
 
+  test("위조된 Access는 선택 세션에서도 Refresh하지 않고 비회원으로 정리한다", async () => {
+    jest.mocked(verifyToken).mockImplementation(() => {
+      throw new UnauthorizedError(
+        "Access Token이 유효하지 않습니다.",
+        "ACCESS_TOKEN_INVALID",
+      );
+    });
+
+    await expect(
+      restoreOptionalAuthSession("forged-access-token", "refresh-token"),
+    ).resolves.toEqual({
+      user: null,
+      tokens: null,
+      shouldClearCookies: true,
+    });
+    expect(verifyToken).toHaveBeenCalledTimes(1);
+    expect(rotateAuthSession).not.toHaveBeenCalled();
+  });
+
+  test("로그아웃은 Access가 연결된 Refresh 세션을 폐기한다", async () => {
+    jest.mocked(verifyAccessTokenForLogout).mockReturnValue({
+      userId: "customer-user-id",
+      role: "CUSTOMER",
+      tokenType: "access",
+      sessionId,
+      refreshTokenId: null,
+    });
+
+    await expect(logoutAuthSession("access-token")).resolves.toBeUndefined();
+    expect(revokeAuthSession).toHaveBeenCalledWith(
+      sessionId,
+      "customer-user-id",
+      expect.any(Date),
+    );
+  });
+
+  test("로그아웃 후 같은 세션의 기존 Refresh Token으로 복구할 수 없다", async () => {
+    let isRevoked = false;
+    jest.mocked(verifyAccessTokenForLogout).mockReturnValue({
+      userId: "customer-user-id",
+      role: "CUSTOMER",
+      tokenType: "access",
+      sessionId,
+      refreshTokenId: null,
+    });
+    jest.mocked(verifyToken).mockReturnValue({
+      userId: "customer-user-id",
+      role: "CUSTOMER",
+      tokenType: "refresh",
+      sessionId,
+      refreshTokenId,
+    });
+    jest.mocked(findUserById).mockResolvedValue(customerWithoutProfile);
+    jest.mocked(revokeAuthSession).mockImplementation(async () => {
+      isRevoked = true;
+    });
+    jest.mocked(rotateAuthSession).mockImplementation(async () =>
+      isRevoked ? "INVALID" : "ROTATED",
+    );
+
+    await logoutAuthSession("access-token");
+
+    await expect(
+      refreshAuth(null, "old-refresh-token"),
+    ).rejects.toMatchObject({ code: "REFRESH_TOKEN_INVALID", status: 401 });
+    expect(createAuthTokens).not.toHaveBeenCalled();
+  });
+
   test("선택 세션의 삭제 사용자 토큰은 비회원으로 정리하고 쿠키 삭제를 지시한다", async () => {
     jest.mocked(verifyToken).mockReturnValue({
       userId: "deleted-user-id",
       role: "CUSTOMER",
       tokenType: "access",
+      sessionId,
+      refreshTokenId: null,
     });
     jest.mocked(findUserById).mockResolvedValue(null);
 

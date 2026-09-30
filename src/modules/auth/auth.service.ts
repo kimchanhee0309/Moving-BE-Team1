@@ -8,7 +8,13 @@ import {
   TooManyRequestsError,
   UnauthorizedError,
 } from "../../common/errors/app-error";
-import { createAuthTokens, verifyToken } from "../../common/utils/auth-token";
+import { env } from "../../config/env";
+import {
+  createAuthTokenIdentifiers,
+  createAuthTokens,
+  verifyAccessTokenForLogout,
+  verifyToken,
+} from "../../common/utils/auth-token";
 import { removeReplacedLocalProfileImage } from "../customer-profile/customer-profile.image";
 import { removeReplacedMoverProfileImage } from "../mover-profile/mover-profile.image";
 import type {
@@ -20,6 +26,7 @@ import type {
   LoginRequestDto,
   OptionalAuthSessionResult,
   PasswordResetCodeRequestResultDto,
+  RefreshAuthResult,
   SignUpRequestDto,
   RecoveryVerificationResultDto,
   VerifyPasswordResetCodeRequestDto,
@@ -50,6 +57,7 @@ import {
   registerLoginFailure,
 } from "./auth-login-attempt";
 import {
+  createAuthSession,
   createEmailUser,
   consumePasswordResetChallenge,
   deleteRestrictedWithdrawalRelations,
@@ -65,10 +73,37 @@ import {
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
   restorePasswordResetChallenge,
+  revokeAuthSession,
+  rotateAuthSession,
   runAuthTransaction,
   updateEmailUserPassword,
 } from "./auth.repository";
 import { hashPassword, verifyPassword } from "./password";
+
+function getRefreshExpiration(now = new Date()): Date {
+  return new Date(now.getTime() + env.REFRESH_TOKEN_MAX_AGE_MS);
+}
+
+/** 사용자 인증 성공을 서버 Refresh 세션과 Access/Refresh JWT 한 쌍으로 발급합니다. */
+export async function issueAuthTokens(
+  userId: string,
+  role: AuthUserDto["role"],
+): Promise<AuthResult["tokens"]> {
+  const identifiers = createAuthTokenIdentifiers();
+  await createAuthSession({
+    id: identifiers.sessionId,
+    userId,
+    currentRefreshTokenId: identifiers.refreshTokenId,
+    expiresAt: getRefreshExpiration(),
+  });
+
+  return createAuthTokens(
+    userId,
+    role,
+    identifiers.sessionId,
+    identifiers.refreshTokenId,
+  );
+}
 
 /**
  * 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다.
@@ -102,7 +137,7 @@ export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
 
   return {
     user: toAuthUserDto(user),
-    tokens: createAuthTokens(user.id, user.role),
+    tokens: await issueAuthTokens(user.id, user.role),
   };
 }
 
@@ -134,7 +169,7 @@ export async function login(input: LoginRequestDto): Promise<AuthResult> {
 
   return {
     user: toAuthUserDto(user),
-    tokens: createAuthTokens(user.id, user.role),
+    tokens: await issueAuthTokens(user.id, user.role),
   };
 }
 
@@ -402,12 +437,35 @@ export async function getCurrentUser(userId: string): Promise<AuthUserDto> {
   return toAuthUserDto(user);
 }
 
-/** Refresh Token을 검증하고 현재 사용자 기준으로 Access/Refresh Token을 모두 회전합니다. */
-export async function refreshAuth(refreshToken: string): Promise<AuthResult> {
+async function rotateRefreshAuth(refreshToken: string): Promise<AuthResult> {
   const payload = verifyToken(refreshToken, "refresh");
   const user = await findUserById(payload.userId);
 
-  if (!user || user.role !== payload.role) {
+  if (!user || user.role !== payload.role || !payload.refreshTokenId) {
+    throw new UnauthorizedError(
+      "Refresh Token이 유효하지 않습니다.",
+      "REFRESH_TOKEN_INVALID",
+    );
+  }
+
+  const nextRefreshTokenId = createAuthTokenIdentifiers().refreshTokenId;
+  const rotation = await rotateAuthSession(
+    payload.sessionId,
+    user.id,
+    payload.refreshTokenId,
+    nextRefreshTokenId,
+    getRefreshExpiration(),
+    new Date(),
+  );
+
+  if (rotation === "REUSED") {
+    throw new UnauthorizedError(
+      "이미 사용된 Refresh Token입니다. 다시 로그인해 주세요.",
+      "REFRESH_TOKEN_REUSED",
+    );
+  }
+
+  if (rotation === "INVALID") {
     throw new UnauthorizedError(
       "Refresh Token이 유효하지 않습니다.",
       "REFRESH_TOKEN_INVALID",
@@ -416,8 +474,54 @@ export async function refreshAuth(refreshToken: string): Promise<AuthResult> {
 
   return {
     user: toAuthUserDto(user),
-    tokens: createAuthTokens(user.id, user.role),
+    tokens: createAuthTokens(
+      user.id,
+      user.role,
+      payload.sessionId,
+      nextRefreshTokenId,
+    ),
   };
+}
+
+/**
+ * 유효 Access는 그대로 사용하고, Access가 없거나 만료된 경우에만 Refresh를 원자적으로 회전합니다.
+ * 위조·서명 오류·잘못된 payload의 Access는 Refresh로 우회하지 않고 기존 Access 오류를 반환합니다.
+ */
+export async function refreshAuth(
+  accessToken: string | null,
+  refreshToken: string | null,
+): Promise<RefreshAuthResult> {
+  if (accessToken) {
+    try {
+      const payload = verifyToken(accessToken, "access");
+      const user = await findUserById(payload.userId);
+
+      if (!user || user.role !== payload.role) {
+        throw new UnauthorizedError(
+          "Access Token이 유효하지 않습니다.",
+          "ACCESS_TOKEN_INVALID",
+        );
+      }
+
+      return { user: toAuthUserDto(user), tokens: null };
+    } catch (error: unknown) {
+      if (
+        !(error instanceof UnauthorizedError) ||
+        error.code !== "ACCESS_TOKEN_EXPIRED"
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  if (!refreshToken) {
+    throw new UnauthorizedError(
+      "Refresh Token이 필요합니다.",
+      "REFRESH_TOKEN_MISSING",
+    );
+  }
+
+  return rotateRefreshAuth(refreshToken);
 }
 
 /**
@@ -446,14 +550,27 @@ export async function restoreOptionalAuthSession(
           shouldClearCookies: false,
         };
       }
+
+      return {
+        user: null,
+        tokens: null,
+        shouldClearCookies: true,
+      };
     } catch (error: unknown) {
       if (!(error instanceof UnauthorizedError)) throw error;
+      if (error.code !== "ACCESS_TOKEN_EXPIRED") {
+        return {
+          user: null,
+          tokens: null,
+          shouldClearCookies: true,
+        };
+      }
     }
   }
 
   if (refreshToken) {
     try {
-      const refreshed = await refreshAuth(refreshToken);
+      const refreshed = await rotateRefreshAuth(refreshToken);
 
       return {
         user: refreshed.user,
@@ -470,6 +587,19 @@ export async function restoreOptionalAuthSession(
     tokens: null,
     shouldClearCookies: hadAuthCookie,
   };
+}
+
+/** 유효하거나 만료된 서명 Access가 가리키는 서버 세션을 로그아웃 시 멱등 폐기합니다. */
+export async function logoutAuthSession(accessToken: string | null): Promise<void> {
+  if (!accessToken) return;
+
+  try {
+    const payload = verifyAccessTokenForLogout(accessToken);
+    await revokeAuthSession(payload.sessionId, payload.userId, new Date());
+  } catch (error: unknown) {
+    // 로그아웃은 위조·손상 쿠키가 있어도 정보 노출 없이 쿠키 삭제까지 멱등 성공합니다.
+    if (!(error instanceof UnauthorizedError)) throw error;
+  }
 }
 
 /**

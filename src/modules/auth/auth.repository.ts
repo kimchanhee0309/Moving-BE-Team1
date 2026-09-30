@@ -1,5 +1,5 @@
 /**
- * Auth Service에 필요한 User 조회·생성·회원 탈퇴 transaction을 Prisma로 수행합니다.
+ * Auth Service에 필요한 User 조회·생성, Refresh 세션 회전, 회원 탈퇴 transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
 import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
@@ -53,6 +53,16 @@ interface CreateOAuthUserData {
   socialId: string;
 }
 
+interface CreateAuthSessionData {
+  id: string;
+  userId: string;
+  currentRefreshTokenId: string;
+  expiresAt: Date;
+}
+
+/** Refresh 회전 transaction이 구분해 Service 오류 코드로 변환할 소비 결과입니다. */
+export type RefreshSessionRotationResult = "ROTATED" | "REUSED" | "INVALID";
+
 /** 중복 확인과 로그인에 사용할 이메일 계정을 조회합니다. */
 export function findUserByEmail(email: string): Promise<AuthUserRecord | null> {
   return prisma.user.findUnique({ where: { email }, select: authUserSelect });
@@ -82,6 +92,90 @@ export function findUserBySocialAccount(
 /** 검증·해싱이 끝난 일반 이메일 사용자를 생성하며 역할별 profile은 별도 기능에서 만듭니다. */
 export function createEmailUser(data: CreateEmailUserData): Promise<AuthUserRecord> {
   return prisma.user.create({ data, select: authUserSelect });
+}
+
+/** 로그인 성공 시 Refresh 원문 없이 현재 토큰 식별자만 가진 서버 세션을 생성합니다. */
+export async function createAuthSession(data: CreateAuthSessionData): Promise<void> {
+  await prisma.authSession.create({ data, select: { id: true } });
+}
+
+/**
+ * 현재 Refresh 식별자를 transaction 안에서 한 번만 다음 식별자로 교체합니다.
+ * 이미 교체된 식별자가 다시 들어오면 세션 전체를 폐기해 회전 후 토큰도 사용할 수 없게 합니다.
+ */
+export function rotateAuthSession(
+  sessionId: string,
+  userId: string,
+  currentRefreshTokenId: string,
+  nextRefreshTokenId: string,
+  nextExpiresAt: Date,
+  now: Date,
+): Promise<RefreshSessionRotationResult> {
+  return prisma.$transaction(async (transaction) => {
+    const session = await transaction.authSession.findUnique({
+      where: { id: sessionId },
+      select: {
+        userId: true,
+        currentRefreshTokenId: true,
+        expiresAt: true,
+        revokedAt: true,
+      },
+    });
+
+    if (
+      !session ||
+      session.userId !== userId ||
+      session.revokedAt ||
+      session.expiresAt <= now
+    ) {
+      return "INVALID";
+    }
+
+    if (session.currentRefreshTokenId !== currentRefreshTokenId) {
+      await transaction.authSession.updateMany({
+        where: { id: sessionId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      return "REUSED";
+    }
+
+    const rotated = await transaction.authSession.updateMany({
+      where: {
+        id: sessionId,
+        userId,
+        currentRefreshTokenId,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
+      data: {
+        currentRefreshTokenId: nextRefreshTokenId,
+        expiresAt: nextExpiresAt,
+      },
+    });
+
+    if (rotated.count === 1) {
+      return "ROTATED";
+    }
+
+    // 병렬로 같은 Refresh를 소비한 경쟁 요청도 재사용으로 보고 세션 family를 폐기합니다.
+    await transaction.authSession.updateMany({
+      where: { id: sessionId, revokedAt: null },
+      data: { revokedAt: now },
+    });
+    return "REUSED";
+  });
+}
+
+/** 로그아웃한 브라우저 세션 하나를 멱등적으로 폐기합니다. */
+export async function revokeAuthSession(
+  sessionId: string,
+  userId: string,
+  revokedAt: Date,
+): Promise<void> {
+  await prisma.authSession.updateMany({
+    where: { id: sessionId, userId, revokedAt: null },
+    data: { revokedAt },
+  });
 }
 
 const passwordResetUserSelect = {

@@ -58,9 +58,26 @@ model User {
   mover         Mover?
   notifications Notification[]
   passwordResetChallenge PasswordResetChallenge?
+  authSessions AuthSession[]
 
   @@unique([socialProvider, socialId])
   @@index([role])
+}
+
+/// Refresh Token 원문 없이 현재 회전 식별자와 폐기 상태만 저장하는 브라우저 인증 세션이다.
+model AuthSession {
+  id                    String    @id @db.Uuid
+  userId                String    @db.Uuid
+  currentRefreshTokenId String    @db.Uuid
+  expiresAt             DateTime  @db.Timestamptz(3)
+  revokedAt             DateTime? @db.Timestamptz(3)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
 
 model PasswordResetChallenge {

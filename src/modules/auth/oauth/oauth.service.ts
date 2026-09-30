@@ -4,9 +4,9 @@
  */
 import type { UserRole } from "../../../generated/prisma/enums";
 import { BadRequestError, ConflictError } from "../../../common/errors/app-error";
-import { createAuthTokens } from "../../../common/utils/auth-token";
 import type { AuthResult } from "../auth.dto";
 import { toAuthUserDto } from "../auth.mapper";
+import { issueAuthTokens } from "../auth.service";
 import {
   createOAuthUser,
   findUserByEmail,
@@ -50,7 +50,7 @@ export async function authenticateWithOAuth(
 
     return {
       user: toAuthUserDto(socialUser),
-      tokens: createAuthTokens(socialUser.id, socialUser.role),
+      tokens: await issueAuthTokens(socialUser.id, socialUser.role),
     };
   }
 
@@ -76,7 +76,7 @@ export async function authenticateWithOAuth(
 
     return {
       user: toAuthUserDto(user),
-      tokens: createAuthTokens(user.id, user.role),
+      tokens: await issueAuthTokens(user.id, user.role),
     };
   } catch (error: unknown) {
     // 사전 조회와 생성 사이의 경쟁 요청도 계정 병합 없이 동일한 충돌로 종료합니다.

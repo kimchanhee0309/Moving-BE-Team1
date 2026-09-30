@@ -20,6 +20,28 @@ describe("Auth token", () => {
       userId: "user-id",
       role: "CUSTOMER",
       tokenType: "access",
+      sessionId: expect.any(String),
+      refreshTokenId: null,
+    });
+  });
+
+  test("한 쌍의 Access와 Refresh는 같은 세션과 Refresh 회전 식별자를 가진다", () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const refreshTokenId = "22222222-2222-4222-8222-222222222222";
+    const tokens = createAuthTokens(
+      "user-id",
+      "CUSTOMER",
+      sessionId,
+      refreshTokenId,
+    );
+
+    expect(verifyToken(tokens.accessToken, "access")).toMatchObject({
+      sessionId,
+      refreshTokenId: null,
+    });
+    expect(verifyToken(tokens.refreshToken, "refresh")).toMatchObject({
+      sessionId,
+      refreshTokenId,
     });
   });
 

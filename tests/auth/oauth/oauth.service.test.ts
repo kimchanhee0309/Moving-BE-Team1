@@ -7,11 +7,11 @@ jest.mock("../../../src/modules/auth/auth.repository", () => ({
   findUserBySocialAccount: jest.fn(),
 }));
 
-jest.mock("../../../src/common/utils/auth-token", () => ({
-  createAuthTokens: jest.fn(),
+jest.mock("../../../src/modules/auth/auth.service", () => ({
+  issueAuthTokens: jest.fn(),
 }));
 
-import { createAuthTokens } from "../../../src/common/utils/auth-token";
+import { issueAuthTokens } from "../../../src/modules/auth/auth.service";
 import {
   createOAuthUser,
   findUserByEmail,
@@ -41,7 +41,7 @@ const profile = {
 describe("OAuth service", () => {
   beforeEach(() => {
     jest.resetAllMocks();
-    jest.mocked(createAuthTokens).mockReturnValue({
+    jest.mocked(issueAuthTokens).mockResolvedValue({
       accessToken: "access-token",
       refreshToken: "refresh-token",
     });

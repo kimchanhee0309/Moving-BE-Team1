@@ -16,6 +16,7 @@ jest.mock("../../src/modules/auth/auth.service", () => ({
   requestPasswordResetCode: jest.fn(),
   getCurrentUser: jest.fn(),
   login: jest.fn(),
+  logoutAuthSession: jest.fn(),
   refreshAuth: jest.fn(),
   verifyPasswordResetCode: jest.fn(),
   restoreOptionalAuthSession: jest.fn(),
@@ -70,6 +71,7 @@ import {
   requestPasswordResetCode,
   getCurrentUser,
   login,
+  logoutAuthSession,
   refreshAuth,
   verifyPasswordResetCode,
   restoreOptionalAuthSession,
@@ -230,6 +232,7 @@ describe("Auth controller response contract", () => {
   });
 
   test("토큰 갱신도 회전된 쿠키와 최신 data.user를 반환한다", async () => {
+    jest.mocked(getAccessTokenFromCookie).mockReturnValue(null);
     jest.mocked(getRefreshTokenFromCookie).mockReturnValue("old-refresh-token");
     jest.mocked(refreshAuth).mockResolvedValue({ user, tokens });
     const response = createResponse();
@@ -241,6 +244,19 @@ describe("Auth controller response contract", () => {
     );
 
     expect(setAuthCookies).toHaveBeenCalledWith(response, tokens);
+    expect(refreshAuth).toHaveBeenCalledWith(null, "old-refresh-token");
+    expect(response.json).toHaveBeenCalledWith({ success: true, data: { user } });
+  });
+
+  test("유효 Access 결과는 사용자만 반환하고 쿠키를 재발급하지 않는다", async () => {
+    jest.mocked(getAccessTokenFromCookie).mockReturnValue("access-token");
+    jest.mocked(getRefreshTokenFromCookie).mockReturnValue("refresh-token");
+    jest.mocked(refreshAuth).mockResolvedValue({ user, tokens: null });
+    const response = createResponse();
+
+    await refreshController({} as Request, response, jest.fn() as NextFunction);
+
+    expect(setAuthCookies).not.toHaveBeenCalled();
     expect(response.json).toHaveBeenCalledWith({ success: true, data: { user } });
   });
 
@@ -341,15 +357,18 @@ describe("Auth controller response contract", () => {
     expect(response.json).toHaveBeenCalledWith({ success: true, data: null });
   });
 
-  test("로그아웃은 인증 여부와 관계없이 쿠키를 지우고 공통 빈 응답을 반환한다", () => {
+  test("로그아웃은 연결 세션을 폐기하고 쿠키를 지운 뒤 공통 빈 응답을 반환한다", async () => {
+    jest.mocked(getAccessTokenFromCookie).mockReturnValue("access-token");
+    jest.mocked(logoutAuthSession).mockResolvedValue();
     const response = createResponse();
 
-    logoutController(
+    await logoutController(
       {} as Request,
       response,
       jest.fn() as NextFunction,
     );
 
+    expect(logoutAuthSession).toHaveBeenCalledWith("access-token");
     expect(clearAuthCookies).toHaveBeenCalledWith(response);
     expect(response.json).toHaveBeenCalledWith({ success: true, data: null });
   });

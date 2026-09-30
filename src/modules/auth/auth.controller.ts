@@ -11,7 +11,6 @@ import {
   getRefreshTokenFromCookie,
   setAuthCookies,
 } from "../../common/cookies/auth-cookie";
-import { UnauthorizedError } from "../../common/errors/app-error";
 import { HTTP_STATUS } from "../../common/constants/http-status";
 import { sendSuccess } from "../../common/response/api-response";
 import { getAuthContext } from "../../common/utils/auth-context";
@@ -20,6 +19,7 @@ import {
   findAccount,
   getCurrentUser,
   login,
+  logoutAuthSession,
   requestPasswordResetCode,
   refreshAuth,
   verifyPasswordResetCode,
@@ -108,20 +108,16 @@ export const meController: RequestHandler = async (request, response) => {
   return sendSuccess(response, HTTP_STATUS.OK, { user });
 };
 
-/** Refresh Token을 검증해 두 쿠키를 회전하고 최신 사용자를 data.user로 반환합니다. */
+/** Access 상태를 먼저 판정하고 필요한 경우에만 Refresh를 소비해 회전된 쿠키를 설정합니다. */
 export const refreshController: RequestHandler = async (request, response) => {
+  const accessToken = getAccessTokenFromCookie(request);
   const refreshToken = getRefreshTokenFromCookie(request);
 
-  if (!refreshToken) {
-    throw new UnauthorizedError(
-      "Refresh Token이 필요합니다.",
-      "REFRESH_TOKEN_MISSING",
-    );
+  const result = await refreshAuth(accessToken, refreshToken);
+
+  if (result.tokens) {
+    setAuthCookies(response, result.tokens);
   }
-
-  const result = await refreshAuth(refreshToken);
-
-  setAuthCookies(response, result.tokens);
 
   return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
 };
@@ -166,8 +162,9 @@ export const withdrawAccountController: UnknownBodyRequestHandler = async (
   return sendSuccess(response, HTTP_STATUS.OK, null);
 };
 
-/** Stateless 로그아웃으로 두 쿠키를 만료시키며 이미 만료된 토큰도 동일하게 처리합니다. */
-export const logoutController: RequestHandler = (_request, response) => {
+/** 연결된 서버 세션을 폐기하고 두 쿠키를 만료시키며 손상된 토큰도 멱등 처리합니다. */
+export const logoutController: RequestHandler = async (request, response) => {
+  await logoutAuthSession(getAccessTokenFromCookie(request));
   clearAuthCookies(response);
 
   return sendSuccess(response, HTTP_STATUS.OK, null);

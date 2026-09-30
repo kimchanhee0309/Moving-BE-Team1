@@ -15,6 +15,10 @@
 - 비회원이 인증 필요 행동을 하면 역할별 로그인 화면으로 이동합니다.
 - 가입 또는 OAuth callback 후 `/auth/me`를 조회하고 `profileCompleted: false`이면 역할별 프로필 등록 화면으로 이동합니다.
 - 프로필 등록 완료 후 `/auth/me`를 다시 조회하면 `profileCompleted: true`가 되어 개인 페이지에 진입할 수 있습니다.
+- 보호 API의 401 코드가 `ACCESS_TOKEN_MISSING` 또는 `ACCESS_TOKEN_EXPIRED`일 때만 `POST /auth/refresh`를 한 번 호출한 뒤 원 요청을 재시도합니다.
+- 여러 요청이 동시에 401을 받아도 Refresh 호출은 하나로 합치고, 완료된 같은 Refresh Token을 병렬·반복 전송하지 않습니다.
+- `ACCESS_TOKEN_INVALID`, `REFRESH_TOKEN_INVALID`, `REFRESH_TOKEN_EXPIRED`, `REFRESH_TOKEN_REUSED`는 자동 갱신을 반복하지 않고 로그인 화면으로 전환합니다.
+- 프론트는 HttpOnly Refresh Cookie의 값·서명·만료를 직접 읽거나 검증하지 않으며, 모든 판단은 백엔드 오류 코드로 수행합니다.
 
 ## Router guard 선택
 

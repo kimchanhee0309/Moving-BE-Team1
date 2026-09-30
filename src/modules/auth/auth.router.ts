@@ -401,7 +401,7 @@ authRouter.delete("/me", authenticate, withdrawAccountController);
  *   post:
  *     tags: [Auth]
  *     summary: Restore Optional Browser Session
- *     description: 공개 페이지용 세션 확인입니다. 비회원은 user null로 성공하고, Access가 없거나 만료됐지만 Refresh가 유효하면 두 토큰을 회전합니다. Refresh 쿠키 Path는 넓히지 않습니다.
+ *     description: 공개 페이지용 세션 확인입니다. 비회원은 user null로 성공하고, Access가 없거나 만료됐지만 Refresh가 유효하면 두 토큰을 회전합니다. 위조·서명 오류 Access는 Refresh하지 않으며 Refresh 쿠키 Path는 넓히지 않습니다.
  *     responses:
  *       200:
  *         description: 로그인 사용자 또는 정상 비회원 상태
@@ -422,7 +422,7 @@ authRouter.post(
  *   post:
  *     tags: [Auth]
  *     summary: Refresh Auth Tokens
- *     description: Refresh Token 검증 후 Access/Refresh Token을 모두 회전하고 최신 사용자를 반환합니다.
+ *     description: 유효한 Access는 재발급하지 않고 최신 사용자만 반환합니다. Access가 없거나 만료된 경우에만 Refresh Token을 원자적으로 소비해 두 토큰을 회전하며, 위조 Access와 만료·위조·재사용 Refresh는 거절합니다.
  *     security: [{ refreshTokenCookie: [] }]
  *     responses:
  *       200:
@@ -430,7 +430,11 @@ authRouter.post(
  *         content:
  *           application/json:
  *             schema: { $ref: "#/components/schemas/AuthUserResponse" }
- *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       401:
+ *         description: Access 위조 또는 Refresh 누락·만료·위조·재사용
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ErrorResponse" }
  *       429: { $ref: "#/components/responses/TooManyRequests" }
  */
 authRouter.post("/refresh", refreshRateLimiter, refreshController);
@@ -441,7 +445,7 @@ authRouter.post("/refresh", refreshRateLimiter, refreshController);
  *   post:
  *     tags: [Auth]
  *     summary: Log Out
- *     description: 인증 상태와 관계없이 브라우저의 Access/Refresh 쿠키를 만료시킵니다.
+ *     description: Access가 연결된 서버 Refresh 세션을 폐기하고 브라우저의 Access/Refresh 쿠키를 만료시킵니다. 손상되거나 없는 Access에서도 쿠키 삭제는 멱등 성공합니다.
  *     responses:
  *       200:
  *         description: 로그아웃 처리 완료
