@@ -232,9 +232,9 @@ moveRequestRouter.patch(
  *     tags: [MoveRequests]
  *     summary: Delete Move Request
  *     description: >-
- *       내 이사 견적 요청을 삭제합니다. WAITING이면 대기 중(PROPOSED)이던 견적을 보낸 기사님
- *       전원에게, CONFIRMED면 확정(CONFIRMED) 견적을 보낸 기사님에게 취소 알림을 보냅니다.
- *       COMPLETED 요청은 삭제할 수 없어 409를 반환합니다.
+ *       내 이사 견적 요청을 삭제합니다. WAITING 요청만 삭제할 수 있으며, 대기 중(PROPOSED)이던
+ *       견적을 보낸 기사님 전원에게 취소 알림을 보냅니다. 이미 확정(CONFIRMED)되었거나
+ *       완료(COMPLETED)된 요청은 삭제할 수 없어 409를 반환합니다.
  *     security: [{ accessTokenCookie: [] }]
  *     parameters:
  *       - in: path

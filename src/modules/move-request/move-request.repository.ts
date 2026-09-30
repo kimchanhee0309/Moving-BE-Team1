@@ -202,6 +202,45 @@ export async function findMoveRequestForCancelByIdForUpdate(
   });
 }
 
+/**
+ * 계정 탈퇴 시 취소 알림 대상을 찾기 위해, 해당 고객의 진행 중인 이사 요청을 전부 조회합니다.
+ * "고객은 동시에 활성 요청을 하나만 가진다"는 규칙상 실제로는 0건 또는 1건만 돌아오지만, 그
+ * 불변식이 깨지는 경우까지 안전하게 처리하기 위해 배열로 반환합니다.
+ *
+ * `findActiveMoveRequestByCustomerId`와 같은 기준("활성" = WAITING 전부, 또는 CONFIRMED이면서
+ * 이사일이 아직 지나지 않음)을 그대로 따른다 — 이 기준 없이 CONFIRMED만으로 조회하면, 이사일이
+ * 이미 지났지만 아무 배치도 COMPLETED로 전이시키지 않아 여전히 CONFIRMED로 남아있는 오래된 요청까지
+ * "취소 알림" 대상에 잡혀 "확정된 이사 일정이 취소되었습니다"라는 알림이 이미 끝난 이사에 대해
+ * 잘못 나가게 된다.
+ *
+ * `auth.service.ts`의 `withdrawAccount`가 User(및 Customer)를 cascade 삭제하기 전에 호출해
+ * 각 요청에 맞는 취소 알림(MOVE_REQUEST_CANCELED/CONFIRMED_MOVE_CANCELED)을 생성할 수 있게 한다.
+ *
+ * @param customerId 탈퇴하는 고객의 Customer.id
+ * @param now 기준 시각(테스트에서 주입 가능하도록 매개변수로 받는다. `findActiveMoveRequestByCustomerId`와 동일한 관례)
+ * @param client 현재 transaction client(auth 모듈의 withdrawAccount transaction)
+ * @returns 취소 알림 대상 MoveRequest 목록(없으면 빈 배열)
+ * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
+ */
+export function findCancelableMoveRequestsByCustomerId(
+  customerId: string,
+  now: Date,
+  client: Prisma.TransactionClient,
+): Promise<MoveRequestForCancelRecord[]> {
+  const todayUtcMidnight = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+
+  return client.moveRequest.findMany({
+    where: {
+      customerId,
+      OR: [
+        { status: "WAITING" },
+        { status: "CONFIRMED", moveDate: { gte: todayUtcMidnight } },
+      ],
+    },
+    select: moveRequestForCancelSelect,
+  });
+}
+
 export function findMoverById(
   id: string,
   client: PrismaClientOrTx = prisma,
@@ -394,8 +433,13 @@ export interface CreatedMoveRequestCancelNotificationRecord {
  * 문구는 이 시점 값 그대로 저장되어 있으므로 알림 내용 자체는 보존되며, SSE push는 이 함수가
  * 반환한 값(삭제 전 실제 id)을 그대로 사용한다.
  *
+ * `reason`으로 문구를 다르게 쓴다. 고객이 직접 삭제(WAITING만 가능, `move-request.service.ts`의
+ * `deleteMoveRequestForCustomer`)했는데 "계정을 탈퇴하여"라고 말하면 사실과 달라 부자연스럽다는
+ * 사용자 피드백으로 나뉘었다 — 실제로 계정을 탈퇴한 경우(`auth.service.ts`의 `withdrawAccount`,
+ * WAITING/CONFIRMED 둘 다 가능)에만 그 표현을 쓴다.
+ *
  * @param transaction 현재 transaction client
- * @param input 알림 유형, 대상 MoveRequest.id, 알림 문구에 넣을 고객 이름, 받을 기사님 목록
+ * @param input 알림 유형, 취소 사유, 대상 MoveRequest.id, 알림 문구에 넣을 고객 이름, 받을 기사님 목록
  * @returns 저장한 알림 내용 목록(0건일 수 있음). Service가 transaction 커밋 이후 각 항목을 SSE push한다.
  * @sideeffect recipients 수만큼 Notification 레코드를 생성합니다.
  */
@@ -403,6 +447,7 @@ export async function createMoveRequestCancelNotifications(
   transaction: Prisma.TransactionClient,
   input: {
     type: "MOVE_REQUEST_CANCELED" | "CONFIRMED_MOVE_CANCELED";
+    reason: "DIRECT_DELETE" | "WITHDRAWAL";
     moveRequestId: string;
     customerName: string;
     recipients: QuoteRecipientRecord[];
@@ -412,15 +457,18 @@ export async function createMoveRequestCancelNotifications(
     return [];
   }
 
-  // 문구는 사용자가 이미 확정한 카피를 그대로 사용한다("계정을 탈퇴하여"라는 표현은 지금은
-  // 고객이 요청을 직접 삭제하는 경로에서 재사용하는 것이며, 추후 계정 탈퇴 기능이 이 브랜치에
-  // 합쳐지면 같은 알림을 그 경로에서도 재사용할 계획이라 문구를 이렇게 미리 정했다).
   const isWaitingCancel = input.type === "MOVE_REQUEST_CANCELED";
+  const isWithdrawal = input.reason === "WITHDRAWAL";
   const title = isWaitingCancel
     ? "견적 요청이 취소되었습니다."
     : "확정된 이사가 취소되었습니다.";
   const content = isWaitingCancel
-    ? `${input.customerName} 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.`
+    ? isWithdrawal
+      ? `${input.customerName} 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.`
+      : `${input.customerName} 고객님이 보내주신 견적 요청을 취소했습니다.`
+    // CONFIRMED 취소는 현재 withdrawAccount 경로로만 도달한다(직접 삭제는 WAITING만 허용해
+    // move-request.service.ts가 CONFIRMED를 409로 거절한다) — 그래서 reason 분기 없이 항상
+    // 탈퇴 문구를 쓴다. 이 전제가 바뀌면(예: 다른 사유의 CONFIRMED 취소가 생기면) 여기도 분기해야 한다.
     : `${input.customerName} 고객님이 계정을 탈퇴하여 확정된 이사 일정이 취소되었습니다.`;
 
   const notifications: CreatedMoveRequestCancelNotificationRecord[] = input.recipients.map(

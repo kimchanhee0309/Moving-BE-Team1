@@ -357,12 +357,16 @@ export async function updateMoveRequestForCustomer(
 }
 
 /**
- * 내 이사 견적 요청을 삭제합니다(WAITING/CONFIRMED만 가능, COMPLETED는 거절).
+ * 내 이사 견적 요청을 삭제합니다(WAITING만 가능, CONFIRMED/COMPLETED는 거절).
  *
- * 상태별로 알림 대상이 다릅니다.
- * - WAITING: 이 요청에 PROPOSED 견적을 보낸 기사님 전원에게 MOVE_REQUEST_CANCELED 알림.
- * - CONFIRMED: 확정(CONFIRMED) 견적을 보낸 기사님(정상적으로는 1명)에게 CONFIRMED_MOVE_CANCELED 알림.
- * - COMPLETED: ConflictError로 거절(완료된 이사는 삭제할 수 없음).
+ * 견적이 확정(CONFIRMED)된 이후에는 수정(updateMoveRequestForCustomer)과 마찬가지로 삭제도
+ * 막는다 — 사용자가 직접 확인한 요구사항: 확정 후에는 요청 내용을 되돌릴 수 없게 한다.
+ * 이 제한 전에는 CONFIRMED 요청도 삭제 가능해 CONFIRMED_MOVE_CANCELED 알림을 보냈지만,
+ * 이제 이 경로로는 도달하지 않는다(계정 탈퇴로 인한 취소처럼 고객 본인 의사가 아닌 취소 경로가
+ * 나중에 이 타입을 다시 쓸 수 있어 타입 자체는 스키마에 남겨둔다).
+ *
+ * WAITING 삭제 시 이 요청에 PROPOSED 견적을 보낸 기사님 전원에게 MOVE_REQUEST_CANCELED 알림을
+ * 보낸다.
  *
  * 삭제는 status 전이가 아니라 실제 row 삭제(hard delete)입니다. DesignatedRequest/Quote/
  * Review는 schema의 onDelete: Cascade로 함께 삭제되고, RequestRejection은 onDelete: RESTRICT라
@@ -375,7 +379,7 @@ export async function updateMoveRequestForCustomer(
  * @param customerId requireProfile이 보장한 Customer.id
  * @param moveRequestId 검증된 MoveRequest UUID
  * @throws NotFoundError MOVE_REQUEST_NOT_FOUND 요청이 없거나 본인 소유가 아닌 경우
- * @throws ConflictError MOVE_REQUEST_NOT_DELETABLE COMPLETED 상태라 삭제할 수 없는 경우
+ * @throws ConflictError MOVE_REQUEST_NOT_DELETABLE WAITING이 아니어서 삭제할 수 없는 경우
  * @remarks 알림 생성과 MoveRequest 삭제를 한 트랜잭션에서 처리하고, 커밋 이후에만 SSE push합니다.
  */
 export async function deleteMoveRequestForCustomer(
@@ -393,31 +397,24 @@ export async function deleteMoveRequestForCustomer(
       );
     }
 
-    if (moveRequest.status === "COMPLETED") {
+    if (moveRequest.status !== "WAITING") {
       throw new ConflictError(
-        "완료된 이사 견적 요청은 삭제할 수 없습니다.",
+        "대기 중인 이사 견적 요청만 삭제할 수 있습니다.",
         "MOVE_REQUEST_NOT_DELETABLE",
       );
     }
 
-    // WAITING이면 대기 중인(PROPOSED) 견적을 보낸 기사님 전원, CONFIRMED면 확정(CONFIRMED)
-    // 견적을 보낸 기사님에게 알린다. status는 위에서 COMPLETED를 걸러냈으므로 여기서는
-    // WAITING 또는 CONFIRMED만 남는다.
-    const isWaitingCancel = moveRequest.status === "WAITING";
-    const targetQuoteStatus: "PROPOSED" | "CONFIRMED" = isWaitingCancel
-      ? "PROPOSED"
-      : "CONFIRMED";
-    const notificationType: "MOVE_REQUEST_CANCELED" | "CONFIRMED_MOVE_CANCELED" =
-      isWaitingCancel ? "MOVE_REQUEST_CANCELED" : "CONFIRMED_MOVE_CANCELED";
-
+    // 위에서 WAITING이 아니면 이미 걸러냈으므로 대기 중이던(PROPOSED) 견적을 보낸 기사님
+    // 전원에게만 알린다.
     const recipients = await findQuoteRecipientsByMoveRequestIdAndStatus(
       moveRequestId,
-      targetQuoteStatus,
+      "PROPOSED",
       tx,
     );
 
     const createdNotifications = await createMoveRequestCancelNotifications(tx, {
-      type: notificationType,
+      type: "MOVE_REQUEST_CANCELED",
+      reason: "DIRECT_DELETE",
       moveRequestId,
       customerName: moveRequest.customer.user.name,
       recipients,

@@ -196,7 +196,7 @@ describe("Move request 수정/삭제 service", () => {
           quoteId: QUOTE_ID_1,
           type: "MOVE_REQUEST_CANCELED",
           title: "견적 요청이 취소되었습니다.",
-          content: "홍길동 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.",
+          content: "홍길동 고객님이 보내주신 견적 요청을 취소했습니다.",
         },
         {
           userId: MOVER_USER_ID_2,
@@ -204,7 +204,7 @@ describe("Move request 수정/삭제 service", () => {
           quoteId: QUOTE_ID_2,
           type: "MOVE_REQUEST_CANCELED",
           title: "견적 요청이 취소되었습니다.",
-          content: "홍길동 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.",
+          content: "홍길동 고객님이 보내주신 견적 요청을 취소했습니다.",
         },
       ]);
 
@@ -216,10 +216,12 @@ describe("Move request 수정/삭제 service", () => {
         "PROPOSED",
         {},
       );
+      // 고객이 직접 삭제한 것이지 계정 탈퇴가 아니므로 reason은 DIRECT_DELETE여야 한다.
       expect(createMoveRequestCancelNotifications).toHaveBeenCalledWith(
         {},
         expect.objectContaining({
           type: "MOVE_REQUEST_CANCELED",
+          reason: "DIRECT_DELETE",
           moveRequestId: MOVE_REQUEST_ID,
           customerName: "홍길동",
         }),
@@ -237,43 +239,27 @@ describe("Move request 수정/삭제 service", () => {
       expect(publishNotificationToUser).toHaveBeenCalledWith(MOVER_USER_ID_1, {
         type: "MOVE_REQUEST_CANCELED",
         title: "견적 요청이 취소되었습니다.",
-        content: "홍길동 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.",
+        content: "홍길동 고객님이 보내주신 견적 요청을 취소했습니다.",
         moveRequestId: MOVE_REQUEST_ID,
         quoteId: QUOTE_ID_1,
         createdAt: expect.any(String),
       });
     });
 
-    test("CONFIRMED 요청을 삭제하면 확정 기사 한 명에게만 알림을 만든다", async () => {
+    test("CONFIRMED 요청이면 ConflictError(MOVE_REQUEST_NOT_DELETABLE)를 던지고 삭제·알림이 없다", async () => {
       jest.mocked(findMoveRequestForCancelByIdForUpdate).mockResolvedValue(
         createCancelRecord({ status: "CONFIRMED" }),
       );
-      jest.mocked(findQuoteRecipientsByMoveRequestIdAndStatus).mockResolvedValue([
-        { quoteId: QUOTE_ID_1, moverUserId: MOVER_USER_ID_1 },
-      ]);
-      jest.mocked(createMoveRequestCancelNotifications).mockResolvedValue([
-        {
-          userId: MOVER_USER_ID_1,
-          moveRequestId: MOVE_REQUEST_ID,
-          quoteId: QUOTE_ID_1,
-          type: "CONFIRMED_MOVE_CANCELED",
-          title: "확정된 이사가 취소되었습니다.",
-          content: "홍길동 고객님이 계정을 탈퇴하여 확정된 이사 일정이 취소되었습니다.",
-        },
-      ]);
 
-      await deleteMoveRequestForCustomer(CUSTOMER_ID, MOVE_REQUEST_ID);
+      await expect(
+        deleteMoveRequestForCustomer(CUSTOMER_ID, MOVE_REQUEST_ID),
+      ).rejects.toMatchObject(
+        expect.objectContaining({ code: "MOVE_REQUEST_NOT_DELETABLE", status: 409 }),
+      );
 
-      expect(findQuoteRecipientsByMoveRequestIdAndStatus).toHaveBeenCalledWith(
-        MOVE_REQUEST_ID,
-        "CONFIRMED",
-        {},
-      );
-      expect(createMoveRequestCancelNotifications).toHaveBeenCalledWith(
-        {},
-        expect.objectContaining({ type: "CONFIRMED_MOVE_CANCELED" }),
-      );
-      expect(publishNotificationToUser).toHaveBeenCalledTimes(1);
+      expect(findQuoteRecipientsByMoveRequestIdAndStatus).not.toHaveBeenCalled();
+      expect(deleteMoveRequestById).not.toHaveBeenCalled();
+      expect(publishNotificationToUser).not.toHaveBeenCalled();
     });
 
     test("일치하는 견적이 없으면(0명) 알림 없이 정상 삭제한다", async () => {

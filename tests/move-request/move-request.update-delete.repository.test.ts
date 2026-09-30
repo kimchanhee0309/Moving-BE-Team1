@@ -18,6 +18,7 @@ import {
   createMoveRequestCancelNotifications,
   deleteMoveRequestById,
   deleteRequestRejectionsByMoveRequestId,
+  findCancelableMoveRequestsByCustomerId,
   findMoveRequestForCancelByIdForUpdate,
   findQuoteRecipientsByMoveRequestIdAndStatus,
   updateMoveRequest,
@@ -103,12 +104,33 @@ describe("Move request 수정/삭제 repository", () => {
     expect(result).toEqual([{ quoteId: QUOTE_ID, moverUserId: MOVER_USER_ID }]);
   });
 
+  test("findCancelableMoveRequestsByCustomerId는 WAITING 전부와, 이사일이 지나지 않은 CONFIRMED만 조회한다", async () => {
+    const txFindMany = jest.fn().mockResolvedValue([]);
+    const tx = { moveRequest: { findMany: txFindMany } } as never;
+    const now = new Date("2026-09-30T05:00:00.000Z");
+
+    await findCancelableMoveRequestsByCustomerId("customer-id", now, tx);
+
+    expect(txFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          customerId: "customer-id",
+          OR: [
+            { status: "WAITING" },
+            { status: "CONFIRMED", moveDate: { gte: new Date("2026-09-30T00:00:00.000Z") } },
+          ],
+        },
+      }),
+    );
+  });
+
   test("createMoveRequestCancelNotifications는 대상이 없으면 createMany를 호출하지 않고 빈 배열을 반환한다", async () => {
     const txCreateMany = jest.fn();
     const tx = { notification: { createMany: txCreateMany } } as never;
 
     const result = await createMoveRequestCancelNotifications(tx, {
       type: "MOVE_REQUEST_CANCELED",
+      reason: "DIRECT_DELETE",
       moveRequestId: MOVE_REQUEST_ID,
       customerName: "홍길동",
       recipients: [],
@@ -118,12 +140,13 @@ describe("Move request 수정/삭제 repository", () => {
     expect(txCreateMany).not.toHaveBeenCalled();
   });
 
-  test("createMoveRequestCancelNotifications는 WAITING 취소 문구로 대상 전원의 Notification을 생성한다", async () => {
+  test("createMoveRequestCancelNotifications는 직접 삭제(DIRECT_DELETE)면 탈퇴 문구 없이 WAITING 취소 문구를 쓴다", async () => {
     const txCreateMany = jest.fn().mockResolvedValue({ count: 1 });
     const tx = { notification: { createMany: txCreateMany } } as never;
 
     const result = await createMoveRequestCancelNotifications(tx, {
       type: "MOVE_REQUEST_CANCELED",
+      reason: "DIRECT_DELETE",
       moveRequestId: MOVE_REQUEST_ID,
       customerName: "홍길동",
       recipients: [{ quoteId: QUOTE_ID, moverUserId: MOVER_USER_ID }],
@@ -137,11 +160,32 @@ describe("Move request 수정/삭제 repository", () => {
           quoteId: QUOTE_ID,
           type: "MOVE_REQUEST_CANCELED",
           title: "견적 요청이 취소되었습니다.",
-          content: "홍길동 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.",
+          content: "홍길동 고객님이 보내주신 견적 요청을 취소했습니다.",
         },
       ],
     });
     expect(result).toHaveLength(1);
+  });
+
+  test("createMoveRequestCancelNotifications는 계정 탈퇴(WITHDRAWAL)면 WAITING 취소도 탈퇴 문구를 쓴다", async () => {
+    const txCreateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const tx = { notification: { createMany: txCreateMany } } as never;
+
+    await createMoveRequestCancelNotifications(tx, {
+      type: "MOVE_REQUEST_CANCELED",
+      reason: "WITHDRAWAL",
+      moveRequestId: MOVE_REQUEST_ID,
+      customerName: "홍길동",
+      recipients: [{ quoteId: QUOTE_ID, moverUserId: MOVER_USER_ID }],
+    });
+
+    expect(txCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          content: "홍길동 고객님이 계정을 탈퇴하여 보내주신 견적 요청이 취소되었습니다.",
+        }),
+      ],
+    });
   });
 
   test("createMoveRequestCancelNotifications는 CONFIRMED 취소 문구로 Notification을 생성한다", async () => {
@@ -150,6 +194,7 @@ describe("Move request 수정/삭제 repository", () => {
 
     await createMoveRequestCancelNotifications(tx, {
       type: "CONFIRMED_MOVE_CANCELED",
+      reason: "WITHDRAWAL",
       moveRequestId: MOVE_REQUEST_ID,
       customerName: "홍길동",
       recipients: [{ quoteId: QUOTE_ID, moverUserId: MOVER_USER_ID }],

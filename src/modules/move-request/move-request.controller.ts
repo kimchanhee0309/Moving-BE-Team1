@@ -80,7 +80,7 @@ export const updateMoveRequestController: RequestHandler = async (
   return sendSuccess(response, HTTP_STATUS.OK, { moveRequest });
 };
 
-/** 대상 MoveRequest를 삭제하고 204를 반환합니다(WAITING/CONFIRMED만 가능). */
+/** 대상 MoveRequest를 삭제하고 204를 반환합니다(WAITING만 가능). */
 export const deleteMoveRequestController: RequestHandler = async (
   request,
   response,
