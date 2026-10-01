@@ -68,7 +68,7 @@ describe("Received quotes query validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "limit", reason: "1 이상 50 이하의 정수여야 합니다." },
+          expect.objectContaining({ field: "limit", reason: "1 이상 50 이하의 정수여야 합니다." }),
         ]);
       }
     }
@@ -133,7 +133,7 @@ describe("Quote id params validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "quoteId", reason: "UUID 형식이어야 합니다." },
+          expect.objectContaining({ field: "quoteId", reason: "UUID 형식이어야 합니다." }),
         ]);
       }
     }

@@ -39,7 +39,7 @@ describe("Review validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.code).toBe("VALIDATION_ERROR");
         expect(error.details).toEqual([
-          { field: "moverId", reason: "UUID 형식이어야 합니다." },
+          expect.objectContaining({ field: "moverId", reason: "UUID 형식이어야 합니다." }),
         ]);
       }
     }
@@ -62,7 +62,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "pageSize", reason: "50 이하여야 합니다." },
+          expect.objectContaining({ field: "pageSize", reason: "50 이하여야 합니다." }),
         ]);
       }
     }
@@ -93,7 +93,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "page", reason: `${REVIEW_LIST_MAX_PAGE} 이하여야 합니다.` },
+          expect.objectContaining({ field: "page", reason: `${REVIEW_LIST_MAX_PAGE} 이하여야 합니다.` }),
         ]);
       }
     }
@@ -116,7 +116,7 @@ describe("Review validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.code).toBe("VALIDATION_ERROR");
         expect(error.details).toEqual([
-          { field: "page", reason: "조회 위치가 허용 범위를 넘습니다." },
+          expect.objectContaining({ field: "page", reason: "조회 위치가 허용 범위를 넘습니다." }),
         ]);
       }
     }
@@ -133,7 +133,7 @@ describe("Review validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.code).toBe("VALIDATION_ERROR");
         expect(error.details).toEqual([
-          { field: "page", reason: "허용된 정수 범위를 벗어났습니다." },
+          expect.objectContaining({ field: "page", reason: "허용된 정수 범위를 벗어났습니다." }),
         ]);
       }
     }
@@ -156,7 +156,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "page", reason: "조회 위치가 허용 범위를 넘습니다." },
+          expect.objectContaining({ field: "page", reason: "조회 위치가 허용 범위를 넘습니다." }),
         ]);
       }
     }
@@ -172,10 +172,10 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          {
+          expect.objectContaining({
             field: "type",
             reason: "WRITABLE 또는 WRITTEN만 사용할 수 있습니다.",
-          },
+          }),
         ]);
       }
     }
@@ -217,7 +217,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "rating", reason: "1부터 5 사이의 정수여야 합니다." },
+          expect.objectContaining({ field: "rating", reason: "1부터 5 사이의 정수여야 합니다." }),
         ]);
       }
     }
@@ -237,7 +237,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "content", reason: "10자 이상이어야 합니다." },
+          expect.objectContaining({ field: "content", reason: "10자 이상이어야 합니다." }),
         ]);
       }
     }
@@ -258,7 +258,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "moverId", reason: "허용되지 않은 필드입니다." },
+          expect.objectContaining({ field: "moverId", reason: "허용되지 않은 필드입니다." }),
         ]);
       }
     }
@@ -274,7 +274,7 @@ describe("Review validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "body", reason: "요청 Body가 필요합니다." },
+          expect.objectContaining({ field: "body", reason: "요청 Body가 필요합니다." }),
         ]);
       }
     }

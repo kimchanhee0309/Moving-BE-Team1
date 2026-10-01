@@ -136,7 +136,7 @@ export function createLocalProfileImageStorage(
           new BadRequestError(
             "JPEG, PNG, WebP 이미지만 업로드할 수 있습니다.",
             "VALIDATION_ERROR",
-            [{ field: fieldName, reason: "지원하지 않는 이미지 형식입니다." }],
+            [{ field: fieldName, reason: "지원하지 않는 이미지 형식입니다.", code: "UNSUPPORTED_IMAGE_TYPE" }],
           ),
         );
         return;
@@ -153,7 +153,7 @@ export function createLocalProfileImageStorage(
         new BadRequestError(
           "multipart/form-data 형식이 필요합니다.",
           "VALIDATION_ERROR",
-          [{ field: "content-type", reason: "multipart/form-data를 사용해 주세요." }],
+          [{ field: "content-type", reason: "multipart/form-data를 사용해 주세요.", code: "INVALID_CONTENT_TYPE" }],
         ),
       );
       return;
@@ -189,7 +189,7 @@ export function createLocalProfileImageStorage(
       throw new BadRequestError(
         "올바른 이미지 파일이 아닙니다.",
         "VALIDATION_ERROR",
-        [{ field: fieldName, reason: "지원하지 않는 이미지 형식입니다." }],
+        [{ field: fieldName, reason: "지원하지 않는 이미지 형식입니다.", code: "UNSUPPORTED_IMAGE_TYPE" }],
       );
     }
 
@@ -201,7 +201,7 @@ export function createLocalProfileImageStorage(
         throw new BadRequestError(
           "애니메이션 이미지는 업로드할 수 없습니다.",
           "VALIDATION_ERROR",
-          [{ field: fieldName, reason: "정지 이미지만 업로드할 수 있습니다." }],
+          [{ field: fieldName, reason: "정지 이미지만 업로드할 수 있습니다.", code: "ANIMATED_IMAGE_NOT_ALLOWED" }],
         );
       }
 
@@ -215,7 +215,7 @@ export function createLocalProfileImageStorage(
         throw new BadRequestError(
           "올바른 이미지 파일이 아닙니다.",
           "VALIDATION_ERROR",
-          [{ field: fieldName, reason: "파일 내용과 이미지 형식이 일치하지 않습니다." }],
+          [{ field: fieldName, reason: "파일 내용과 이미지 형식이 일치하지 않습니다.", code: "IMAGE_TYPE_MISMATCH" }],
         );
       }
 
@@ -223,7 +223,7 @@ export function createLocalProfileImageStorage(
         throw new BadRequestError(
           "애니메이션 이미지는 업로드할 수 없습니다.",
           "VALIDATION_ERROR",
-          [{ field: fieldName, reason: "정지 이미지만 업로드할 수 있습니다." }],
+          [{ field: fieldName, reason: "정지 이미지만 업로드할 수 있습니다.", code: "ANIMATED_IMAGE_NOT_ALLOWED" }],
         );
       }
 
@@ -240,7 +240,7 @@ export function createLocalProfileImageStorage(
       throw new BadRequestError(
         "올바른 이미지 파일이 아닙니다.",
         "VALIDATION_ERROR",
-        [{ field: fieldName, reason: "손상되지 않은 정지 이미지를 업로드해 주세요." }],
+        [{ field: fieldName, reason: "손상되지 않은 정지 이미지를 업로드해 주세요.", code: "CORRUPTED_IMAGE" }],
       );
     }
   }
