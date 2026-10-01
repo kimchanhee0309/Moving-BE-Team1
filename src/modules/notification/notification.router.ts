@@ -19,12 +19,18 @@ export const notificationRouter = Router();
  *   schemas:
  *     NotificationItem:
  *       type: object
- *       required: [id, type, title, content, moveRequestId, quoteId, readAt, createdAt]
+ *       required: [id, type, title, content, params, moveRequestId, quoteId, readAt, createdAt]
  *       properties:
  *         id: { type: string, format: uuid }
  *         type: { type: string, enum: [NEW_QUOTE, QUOTE_CONFIRMED, NEW_MOVE_REQUEST, MOVE_DAY, MOVE_REQUEST_CANCELED, CONFIRMED_MOVE_CANCELED] }
  *         title: { type: string, example: "새로운 견적이 도착했습니다." }
- *         content: { type: string, example: "기사님이 새로운 이사 견적을 보냈습니다." }
+ *         content: { type: string, example: "기사님이 새로운 이사 견적을 보냈습니다.", description: "한국어 완성 문장. params 번역이 없을 때의 대체 문구" }
+ *         params:
+ *           type: object
+ *           nullable: true
+ *           additionalProperties: { type: string }
+ *           description: "다국어 문장 조립용 변수. NEW_QUOTE(moverNickname, serviceType) · QUOTE_CONFIRMED(moverNickname 또는 customerName) · MOVE_DAY(from, to) · 취소 알림(customerName, reason: DIRECT_DELETE|WITHDRAWAL). 변수 없는 알림과 기존 알림은 null"
+ *           example: { moverNickname: "김코드", serviceType: "SMALL" }
  *         moveRequestId: { type: string, format: uuid, nullable: true }
  *         quoteId: { type: string, format: uuid, nullable: true }
  *         readAt: { type: string, format: date-time, nullable: true, description: "읽지 않았으면 null" }

@@ -9,6 +9,7 @@ import type {
   GetReceivedRequestsQuery,
   ServiceTypeCode,
 } from "./mover-request.dto";
+import type { NotificationParams } from "../notification/notification.dto";
 
 /** 받은 요청 목록 조회 결과입니다. */
 export interface ReceivedRequestRecord {
@@ -106,6 +107,8 @@ export interface CreatedNotificationRecord {
   type: "NEW_QUOTE";
   title: string;
   content: string;
+  /** 언어별 알림 문장을 조립할 변수입니다. 문장에 변수가 없는 알림은 생략합니다. */
+  params?: NotificationParams;
 }
 
 /** 받은 요청 목록 조회 Repository 입력입니다. */
@@ -448,6 +451,7 @@ export async function createNewQuoteNotification(
     type: "NEW_QUOTE",
     title: "새로운 견적이 도착했습니다.",
     content: `${input.moverNickname} 기사님의 ${serviceTypeLabel} 견적이 도착했어요`,
+    params: { moverNickname: input.moverNickname, serviceType: input.serviceTypeName },
   } satisfies CreatedNotificationRecord;
 
   await transaction.notification.create({

@@ -9,6 +9,7 @@ import type {
   ReceivedQuoteHistoryQuery,
   ReceivedQuotesQuery,
 } from "./customer-quote.dto";
+import type { NotificationParams } from "../notification/notification.dto";
 
 function createReceivedQuoteSelect(customerId: string) {
   return {
@@ -537,6 +538,8 @@ export interface CreatedQuoteConfirmedNotificationRecord {
   type: "QUOTE_CONFIRMED";
   title: string;
   content: string;
+  /** 언어별 알림 문장을 조립할 변수입니다. 문장에 변수가 없는 알림은 생략합니다. */
+  params?: NotificationParams;
 }
 
 /** 고객·기사 양쪽에 저장한 QUOTE_CONFIRMED 알림 내용입니다. */
@@ -568,6 +571,7 @@ export async function createQuoteConfirmedNotifications(
     type: "QUOTE_CONFIRMED",
     title: "견적이 확정되었습니다.",
     content: `${input.moverNickname} 기사님의 견적이 확정되었습니다.`,
+    params: { moverNickname: input.moverNickname },
   } satisfies CreatedQuoteConfirmedNotificationRecord;
 
   const moverNotification = {
@@ -577,6 +581,7 @@ export async function createQuoteConfirmedNotifications(
     type: "QUOTE_CONFIRMED",
     title: "고객님이 견적을 확정했습니다.",
     content: `${input.customerName} 고객님이 견적을 확정했습니다.`,
+    params: { customerName: input.customerName },
   } satisfies CreatedQuoteConfirmedNotificationRecord;
 
   await client.notification.createMany({

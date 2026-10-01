@@ -6,6 +6,7 @@
  */
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
+import type { NotificationParams } from "./notification.dto";
 
 type PrismaClientOrTx = Prisma.TransactionClient | typeof prisma;
 
@@ -141,6 +142,8 @@ export interface CreatedMoveDayNotificationRecord {
   type: "MOVE_DAY";
   title: string;
   content: string;
+  /** 언어별 알림 문장을 조립할 변수입니다. 문장에 변수가 없는 알림은 생략합니다. */
+  params?: NotificationParams;
 }
 
 /**

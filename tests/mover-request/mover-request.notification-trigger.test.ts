@@ -115,6 +115,7 @@ describe("sendQuoteToReceivedRequest의 알림 push", () => {
       content: "김코드 기사님의 소형이사 견적이 도착했어요",
       moveRequestId: REQUEST_ID,
       quoteId: QUOTE_ID,
+      params: null,
       createdAt: expect.any(String),
     });
 
