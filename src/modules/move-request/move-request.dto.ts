@@ -10,6 +10,7 @@ export type ServiceTypeName = (typeof SERVICE_TYPE_NAMES)[number];
 export type {
   CreateDesignatedRequestInput,
   CreateMoveRequestInput,
+  UpdateMoveRequestInput,
 } from "./move-request.validator";
 
 export interface MoveRequestDto {

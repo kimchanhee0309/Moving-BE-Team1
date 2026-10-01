@@ -8,6 +8,7 @@ import {
   NotFoundError,
 } from "../../common/errors/app-error";
 import { prisma } from "../../lib/prisma";
+import { publishNotificationToUser } from "../notification/notification.hub";
 import { encodeReceivedQuoteCursor, encodeReceivedQuoteHistoryCursor } from "./customer-quote.cursor";
 import type {
   QuoteDetailDto,
@@ -32,6 +33,7 @@ import {
   findReceivedQuoteHistoryDetail,
   findReceivedQuotes,
   lockMoveRequestForConfirm,
+  type CreatedQuoteConfirmedNotifications,
   type MoverReviewAverage,
   type ReceivedQuoteDetailRecord,
   type ReceivedQuoteRecord,
@@ -279,6 +281,11 @@ export async function confirmReceivedQuote(
   customerId: string,
   quoteId: string,
 ): Promise<ReceivedQuoteDetailResult> {
+  // transaction 콜백 밖에서 push해야 하므로, 저장한 알림 내용을 클로저 변수로 꺼내온다.
+  // 이 transaction은 mover-request 쪽과 달리 Serializable 재시도 루프로 감싸져 있지 않아
+  // 콜백이 최대 한 번만 실행되므로 단순 대입으로도 마지막 시도의 값만 남는다.
+  let confirmedNotifications: CreatedQuoteConfirmedNotifications | undefined;
+
   const confirmed = await prisma.$transaction(async (tx) => {
     const owned = await findOwnedQuoteForConfirm(customerId, quoteId, tx);
 
@@ -317,7 +324,7 @@ export async function confirmReceivedQuote(
     }
 
     await applyQuoteConfirmation(locked.id, locked.moveRequest.id, tx);
-    await createQuoteConfirmedNotifications(
+    confirmedNotifications = await createQuoteConfirmedNotifications(
       {
         customerUserId: locked.moveRequest.customer.userId,
         customerName: locked.moveRequest.customer.user.name,
@@ -341,6 +348,30 @@ export async function confirmReceivedQuote(
 
     return detail;
   });
+
+  // transaction이 커밋된 뒤에만 push한다. 커밋 전에 push하면 이후 오류로 rollback될 경우
+  // 실제로 저장되지 않은 알림을 클라이언트가 먼저 받을 수 있다.
+  if (confirmedNotifications) {
+    const createdAt = new Date().toISOString();
+
+    publishNotificationToUser(confirmedNotifications.customer.userId, {
+      type: confirmedNotifications.customer.type,
+      title: confirmedNotifications.customer.title,
+      content: confirmedNotifications.customer.content,
+      moveRequestId: confirmedNotifications.customer.moveRequestId,
+      quoteId: confirmedNotifications.customer.quoteId,
+      createdAt,
+    });
+
+    publishNotificationToUser(confirmedNotifications.mover.userId, {
+      type: confirmedNotifications.mover.type,
+      title: confirmedNotifications.mover.title,
+      content: confirmedNotifications.mover.content,
+      moveRequestId: confirmedNotifications.mover.moveRequestId,
+      quoteId: confirmedNotifications.mover.quoteId,
+      createdAt,
+    });
+  }
 
   const averages = new Map<string, number | null>(
     (await findMoverReviewAverages([confirmed.mover.id])).map(
