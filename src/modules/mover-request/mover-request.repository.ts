@@ -39,6 +39,10 @@ export interface ReceivedRequestRecord {
  *
  * 전체 지정 기사와 전체 견적을 함께 조회하여 일반·지정·전체 견적 수를
  * 동일한 Serializable transaction 안에서 계산합니다.
+ * serviceType.name과 moverServiceTypes[].mover.nickname은 NEW_QUOTE 알림 문구
+ * ("{기사 닉네임} 기사님의 {서비스 타입 한글명} 견적이 도착했어요")를 만드는 데 사용하며,
+ * 이미 이 조회에서 서비스 유형 매칭용으로 moverId로 필터링된 값을 그대로 재사용하므로
+ * 별도 round-trip이 필요하지 않습니다.
  */
 export interface ReceivedRequestActionRecord {
   id: string;
@@ -50,8 +54,12 @@ export interface ReceivedRequestActionRecord {
   };
 
   serviceType: {
+    name: string;
     moverServiceTypes: Array<{
       id: string;
+      mover: {
+        nickname: string;
+      };
     }>;
   };
 
@@ -84,6 +92,20 @@ export interface CreatedRequestRejectionRecord {
   moveRequestId: string;
   reason: string;
   createdAt: Date;
+}
+
+/**
+ * 새 견적 알림으로 실제 저장한 내용입니다.
+ * Service가 트랜잭션 커밋 이후 이 값 그대로 SSE push payload를 만들 수 있도록
+ * DB에 쓴 title/content 문구를 다시 조회하지 않고 그대로 반환합니다.
+ */
+export interface CreatedNotificationRecord {
+  userId: string;
+  moveRequestId: string;
+  quoteId: string;
+  type: "NEW_QUOTE";
+  title: string;
+  content: string;
 }
 
 /** 받은 요청 목록 조회 Repository 입력입니다. */
@@ -303,12 +325,22 @@ export async function findReceivedRequestForAction(
 
       serviceType: {
         select: {
+          // NEW_QUOTE 알림 문구의 "{서비스 타입 한글명}" 부분에 사용합니다.
+          name: true,
+
           moverServiceTypes: {
             where: {
               moverId: input.moverId,
             },
             select: {
               id: true,
+              // NEW_QUOTE 알림 문구의 "{기사 닉네임}" 부분에 사용합니다. 이미 현재 기사
+              // moverId로 필터링된 결과이므로 별도 쿼리 없이 닉네임을 함께 가져옵니다.
+              mover: {
+                select: {
+                  nickname: true,
+                },
+              },
             },
             take: 1,
           },
@@ -376,11 +408,24 @@ export async function createQuote(
 }
 
 /**
+ * 서비스 타입 코드(SMALL/HOME/OFFICE)를 알림 문구용 한글명으로 변환합니다.
+ *
+ * 팀이 확정한 매핑(docs/move-request-api.md:111)이며, 이 알림 문구를 만드는
+ * 이 파일 안에서만 쓰이는 작은 상수라 src/common으로 올리지 않습니다(YAGNI).
+ * 알 수 없는 값이 들어오면(데이터 이상 등) 원본 코드를 그대로 노출해 방어적으로 동작합니다.
+ */
+const SERVICE_TYPE_LABEL_KO: Record<string, string> = {
+  SMALL: "소형이사",
+  HOME: "가정이사",
+  OFFICE: "사무실이사",
+};
+
+/**
  * 고객에게 새 견적 도착 알림을 생성합니다.
  *
  * @param transaction 현재 Serializable transaction client
- * @param input 고객 User UUID, 요청 UUID, 견적 UUID
- * @returns 반환값 없음
+ * @param input 고객 User UUID, 요청 UUID, 견적 UUID, 기사 닉네임, 서비스 타입 코드
+ * @returns 저장한 알림 내용. Service가 트랜잭션 커밋 이후 SSE push에 사용합니다.
  * @sideeffect Notification 레코드를 생성합니다.
  */
 export async function createNewQuoteNotification(
@@ -389,18 +434,27 @@ export async function createNewQuoteNotification(
     customerUserId: string;
     requestId: string;
     quoteId: string;
+    moverNickname: string;
+    serviceTypeName: string;
   },
-): Promise<void> {
+): Promise<CreatedNotificationRecord> {
+  const serviceTypeLabel =
+    SERVICE_TYPE_LABEL_KO[input.serviceTypeName] ?? input.serviceTypeName;
+
+  const notificationData = {
+    userId: input.customerUserId,
+    moveRequestId: input.requestId,
+    quoteId: input.quoteId,
+    type: "NEW_QUOTE",
+    title: "새로운 견적이 도착했습니다.",
+    content: `${input.moverNickname} 기사님의 ${serviceTypeLabel} 견적이 도착했어요`,
+  } satisfies CreatedNotificationRecord;
+
   await transaction.notification.create({
-    data: {
-      userId: input.customerUserId,
-      moveRequestId: input.requestId,
-      quoteId: input.quoteId,
-      type: "NEW_QUOTE",
-      title: "새로운 견적이 도착했습니다.",
-      content: "기사님이 새로운 이사 견적을 보냈습니다.",
-    },
+    data: notificationData,
   });
+
+  return notificationData;
 }
 
 /**

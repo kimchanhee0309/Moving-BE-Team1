@@ -526,8 +526,29 @@ export async function applyQuoteConfirmation(
 }
 
 /**
+ * QUOTE_CONFIRMED 알림 수신자 한 명에게 실제 저장한 내용입니다.
+ * Service가 트랜잭션 커밋 이후 이 값 그대로 SSE push payload를 만들 수 있도록
+ * DB에 쓴 title/content 문구를 다시 조회하지 않고 그대로 반환합니다.
+ */
+export interface CreatedQuoteConfirmedNotificationRecord {
+  userId: string;
+  moveRequestId: string;
+  quoteId: string;
+  type: "QUOTE_CONFIRMED";
+  title: string;
+  content: string;
+}
+
+/** 고객·기사 양쪽에 저장한 QUOTE_CONFIRMED 알림 내용입니다. */
+export interface CreatedQuoteConfirmedNotifications {
+  customer: CreatedQuoteConfirmedNotificationRecord;
+  mover: CreatedQuoteConfirmedNotificationRecord;
+}
+
+/**
  * 고객과 확정된 기사님에게 QUOTE_CONFIRMED 알림을 같은 트랜잭션에서 만듭니다.
  * 문구는 seed의 확정 알림과 같게 맞춰 화면이 다른 카피를 받지 않게 합니다.
+ * @returns 저장한 두 알림 내용. Service가 트랜잭션 커밋 이후 SSE push에 사용합니다.
  */
 export async function createQuoteConfirmedNotifications(
   input: {
@@ -539,27 +560,33 @@ export async function createQuoteConfirmedNotifications(
     quoteId: string;
   },
   client: Prisma.TransactionClient,
-): Promise<void> {
+): Promise<CreatedQuoteConfirmedNotifications> {
+  const customerNotification = {
+    userId: input.customerUserId,
+    moveRequestId: input.moveRequestId,
+    quoteId: input.quoteId,
+    type: "QUOTE_CONFIRMED",
+    title: "견적이 확정되었습니다.",
+    content: `${input.moverNickname} 기사님의 견적이 확정되었습니다.`,
+  } satisfies CreatedQuoteConfirmedNotificationRecord;
+
+  const moverNotification = {
+    userId: input.moverUserId,
+    moveRequestId: input.moveRequestId,
+    quoteId: input.quoteId,
+    type: "QUOTE_CONFIRMED",
+    title: "고객님이 견적을 확정했습니다.",
+    content: `${input.customerName} 고객님이 견적을 확정했습니다.`,
+  } satisfies CreatedQuoteConfirmedNotificationRecord;
+
   await client.notification.createMany({
-    data: [
-      {
-        userId: input.customerUserId,
-        moveRequestId: input.moveRequestId,
-        quoteId: input.quoteId,
-        type: "QUOTE_CONFIRMED",
-        title: "견적이 확정되었습니다.",
-        content: `${input.moverNickname} 기사님의 견적이 확정되었습니다.`,
-      },
-      {
-        userId: input.moverUserId,
-        moveRequestId: input.moveRequestId,
-        quoteId: input.quoteId,
-        type: "QUOTE_CONFIRMED",
-        title: "고객님이 견적을 확정했습니다.",
-        content: `${input.customerName} 고객님이 견적을 확정했습니다.`,
-      },
-    ],
+    data: [customerNotification, moverNotification],
   });
+
+  return {
+    customer: customerNotification,
+    mover: moverNotification,
+  };
 }
 
 /**

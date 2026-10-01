@@ -8,7 +8,9 @@ import { requireProfiledCustomer } from "../../common/middleware/auth/auth-guard
 import {
   createDesignatedRequestController,
   createMoveRequestController,
+  deleteMoveRequestController,
   getActiveMoveRequestController,
+  updateMoveRequestController,
 } from "./move-request.controller";
 
 export const moveRequestRouter = Router();
@@ -182,4 +184,73 @@ moveRequestRouter.post(
   "/:moveRequestId/designated-requests",
   requireProfiledCustomer,
   createDesignatedRequestController,
+);
+
+/**
+ * @openapi
+ * /customers/me/move-requests/{moveRequestId}:
+ *   patch:
+ *     tags: [MoveRequests]
+ *     summary: Update Move Request
+ *     description: >-
+ *       대기(WAITING) 중인 내 이사 견적 요청의 이사 종류·날짜·출발지·도착지를 수정합니다.
+ *       이미 확정(CONFIRMED)되었거나 완료(COMPLETED)된 요청은 409를 반환합니다.
+ *       이미 받은 PROPOSED 견적은 이 API로 무효화되지 않고 그대로 유지됩니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: moveRequestId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/CreateMoveRequestRequest" }
+ *     responses:
+ *       200:
+ *         description: 이사 견적 요청 수정 성공
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/MoveRequestResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       403: { $ref: "#/components/responses/Forbidden" }
+ *       404: { $ref: "#/components/responses/NotFound" }
+ *       409: { $ref: "#/components/responses/Conflict" }
+ */
+moveRequestRouter.patch(
+  "/:moveRequestId",
+  requireProfiledCustomer,
+  updateMoveRequestController,
+);
+
+/**
+ * @openapi
+ * /customers/me/move-requests/{moveRequestId}:
+ *   delete:
+ *     tags: [MoveRequests]
+ *     summary: Delete Move Request
+ *     description: >-
+ *       내 이사 견적 요청을 삭제합니다. WAITING 요청만 삭제할 수 있으며, 대기 중(PROPOSED)이던
+ *       견적을 보낸 기사님 전원에게 취소 알림을 보냅니다. 이미 확정(CONFIRMED)되었거나
+ *       완료(COMPLETED)된 요청은 삭제할 수 없어 409를 반환합니다.
+ *     security: [{ accessTokenCookie: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: moveRequestId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       204:
+ *         description: 이사 견적 요청 삭제 성공(본문 없음)
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       403: { $ref: "#/components/responses/Forbidden" }
+ *       404: { $ref: "#/components/responses/NotFound" }
+ *       409: { $ref: "#/components/responses/Conflict" }
+ */
+moveRequestRouter.delete(
+  "/:moveRequestId",
+  requireProfiledCustomer,
+  deleteMoveRequestController,
 );

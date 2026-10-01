@@ -5,17 +5,20 @@
 import type { RequestHandler } from "express";
 
 import { HTTP_STATUS } from "../../common/constants/http-status";
-import { sendSuccess } from "../../common/response/api-response";
+import { sendNoContent, sendSuccess } from "../../common/response/api-response";
 import { getProfileAuthContext } from "../../common/utils/auth-context";
 import {
   createDesignatedRequestForCustomer,
   createMoveRequestForCustomer,
+  deleteMoveRequestForCustomer,
   getActiveMoveRequestForCustomer,
+  updateMoveRequestForCustomer,
 } from "./move-request.service";
 import {
   parseCreateDesignatedRequestInput,
   parseCreateMoveRequestInput,
   parseMoveRequestIdParam,
+  parseUpdateMoveRequestInput,
 } from "./move-request.validator";
 
 /** 새 이사 견적 요청을 생성해 201과 data.moveRequest를 반환합니다. */
@@ -57,4 +60,35 @@ export const createDesignatedRequestController: RequestHandler = async (
   );
 
   return sendSuccess(response, HTTP_STATUS.CREATED, { designatedRequest });
+};
+
+/** 대상 MoveRequest를 수정해 200과 data.moveRequest를 반환합니다(WAITING 상태만 가능). */
+export const updateMoveRequestController: RequestHandler = async (
+  request,
+  response,
+) => {
+  const { profileId: customerId } = getProfileAuthContext(request);
+  const moveRequestId = parseMoveRequestIdParam(request.params.moveRequestId);
+  const input = parseUpdateMoveRequestInput(request.body);
+
+  const moveRequest = await updateMoveRequestForCustomer(
+    customerId,
+    moveRequestId,
+    input,
+  );
+
+  return sendSuccess(response, HTTP_STATUS.OK, { moveRequest });
+};
+
+/** 대상 MoveRequest를 삭제하고 204를 반환합니다(WAITING만 가능). */
+export const deleteMoveRequestController: RequestHandler = async (
+  request,
+  response,
+) => {
+  const { profileId: customerId } = getProfileAuthContext(request);
+  const moveRequestId = parseMoveRequestIdParam(request.params.moveRequestId);
+
+  await deleteMoveRequestForCustomer(customerId, moveRequestId);
+
+  return sendNoContent(response);
 };

@@ -9,6 +9,7 @@ import {
   NotFoundError,
 } from "../../common/errors/app-error";
 import { prisma } from "../../lib/prisma";
+import { publishNotificationToUser } from "../notification/notification.hub";
 import {
   SERVICE_TYPE_NAMES,
   type CreateDesignatedRequestInput,
@@ -16,17 +17,29 @@ import {
   type DesignatedRequestDto,
   type MoveRequestDto,
   type ServiceTypeName,
+  type UpdateMoveRequestInput,
 } from "./move-request.dto";
 import {
   countDesignatedRequestsByMoveRequestId,
   createDesignatedRequest,
   createMoveRequest,
+  createMoveRequestCancelNotifications,
+  createNewMoveRequestNotifications,
+  deleteMoveRequestById,
+  deleteRequestRejectionsByMoveRequestId,
   findActiveMoveRequestByCustomerId,
+  findCustomerRegionId,
   findDesignatedRequestByMoveRequestAndMover,
+  findMoversForNewMoveRequestNotification,
   findMoveRequestByIdForUpdate,
+  findMoveRequestForCancelByIdForUpdate,
   findMoverById,
+  findQuoteRecipientsByMoveRequestIdAndStatus,
   findServiceTypeIdByName,
   lockCustomerRow,
+  updateMoveRequest,
+  type CreatedMoveRequestCancelNotificationRecord,
+  type CreatedNewMoveRequestNotificationRecord,
   type DesignatedRequestRecord,
   type MoveRequestRecord,
 } from "./move-request.repository";
@@ -67,27 +80,41 @@ function toDesignatedRequestDto(record: DesignatedRequestRecord): DesignatedRequ
   };
 }
 
-export async function createMoveRequestForCustomer(
-  customerId: string,
-  input: CreateMoveRequestInput,
-): Promise<MoveRequestDto> {
-  const now = new Date();
-
-  // UTC 캘린더 날짜 기준 비교(응답 예시가 moveDate를 UTC 자정으로 저장하는 것을 근거로 한 임시
-  // 가정). 실제 timezone 기준은 문서에도 미정으로 남아 있어 추후 팀 협의 필요.
-  const moveDate = new Date(`${input.moveDate}T00:00:00.000Z`);
+/**
+ * moveDate 입력을 검증해 Date로 변환합니다. 생성(POST)과 수정(PATCH)이 "오늘(UTC)보다 미래"·
+ * "실존하는 캘린더 날짜" 규칙을 동일하게 적용해야 하므로 공유 helper로 둡니다.
+ *
+ * UTC 캘린더 날짜 기준 비교(응답 예시가 moveDate를 UTC 자정으로 저장하는 것을 근거로 한 임시
+ * 가정). 실제 timezone 기준은 문서에도 미정으로 남아 있어 추후 팀 협의 필요.
+ *
+ * @param rawMoveDate validator가 형식(YYYY-MM-DD)만 확인한 원본 문자열
+ * @param now 현재 시각(호출부와 같은 now를 써야 트랜잭션 안에서 시각이 흔들리지 않음)
+ * @throws BadRequestError VALIDATION_ERROR 과거/오늘이거나 존재하지 않는 캘린더 날짜인 경우
+ */
+function resolveValidatedMoveDate(rawMoveDate: string, now: Date): Date {
+  const moveDate = new Date(`${rawMoveDate}T00:00:00.000Z`);
   const todayUtcMidnight = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
   // "2026-02-30"처럼 형식은 맞지만 실존하지 않는 날짜는 Date가 조용히 다음 날짜로 넘겨버리므로,
   // 파싱 결과를 다시 문자열로 되돌려 입력과 같은지 확인해야 롤오버를 걸러낼 수 있습니다.
   const isInvalidCalendarDate =
     Number.isNaN(moveDate.getTime()) ||
-    moveDate.toISOString().slice(0, 10) !== input.moveDate;
+    moveDate.toISOString().slice(0, 10) !== rawMoveDate;
 
   if (isInvalidCalendarDate || moveDate.getTime() <= todayUtcMidnight.getTime()) {
     throw new BadRequestError("moveDate는 오늘(UTC 기준)보다 미래여야 합니다.", "VALIDATION_ERROR", [
       { field: "moveDate", reason: "오늘 이후의 유효한 날짜여야 합니다." },
     ]);
   }
+
+  return moveDate;
+}
+
+export async function createMoveRequestForCustomer(
+  customerId: string,
+  input: CreateMoveRequestInput,
+): Promise<MoveRequestDto> {
+  const now = new Date();
+  const moveDate = resolveValidatedMoveDate(input.moveDate, now);
 
   const serviceType = await findServiceTypeIdByName(input.serviceType);
 
@@ -96,6 +123,9 @@ export async function createMoveRequestForCustomer(
   }
 
   // Customer row를 먼저 잠가 같은 고객의 동시 요청을 직렬화한 뒤 활성 요청을 확인·생성한다.
+  // transaction은 dto와 함께 저장한 NEW_MOVE_REQUEST 알림 내용을 반환한다. 알림 내용을
+  // transaction 밖으로 가져와야 커밋 이후에만 SSE push를 호출할 수 있다(롤백되면 push도
+  // 하지 않아야 한다).
   const created = await prisma.$transaction(async (tx) => {
     await lockCustomerRow(customerId, tx);
 
@@ -108,7 +138,16 @@ export async function createMoveRequestForCustomer(
       );
     }
 
-    return createMoveRequest(
+    // 지역 매칭 알림 대상을 찾으려면 고객의 regionId가 필요하다. Customer.regionId는 필수
+    // 컬럼이라 정상 데이터라면 항상 존재해야 하며, 없다면 AppError가 아닌 일반 Error로 던져
+    // 전역 handler가 500으로 처리하게 둔다(seed/DB 정합성 문제로 간주).
+    const customerRegion = await findCustomerRegionId(customerId, tx);
+
+    if (!customerRegion) {
+      throw new Error(`Customer의 지역 정보를 찾을 수 없습니다: ${customerId}`);
+    }
+
+    const moveRequest = await createMoveRequest(
       {
         customerId,
         serviceTypeId: serviceType.id,
@@ -118,9 +157,57 @@ export async function createMoveRequestForCustomer(
       },
       tx,
     );
+
+    // 사용자가 확정한 알림 범위: 요청 지역과 서비스 유형이 모두 일치하는 기사님 전원.
+    // 대상이 0명이어도 정상 흐름이며, 이 경우 createNewMoveRequestNotifications가 빈
+    // 배열을 그대로 반환한다.
+    const matchingMovers = await findMoversForNewMoveRequestNotification(
+      customerRegion.regionId,
+      serviceType.id,
+      tx,
+    );
+
+    const notifications = await createNewMoveRequestNotifications(tx, {
+      moverUserIds: matchingMovers.map((mover) => mover.userId),
+      moveRequestId: moveRequest.id,
+    });
+
+    return { moveRequest, notifications };
   });
 
-  return toMoveRequestDto(created);
+  // transaction이 커밋된 뒤에만 push한다. 커밋 전에 push하면 이후 오류로 rollback될 경우
+  // 실제로 저장되지 않은 알림을 클라이언트가 먼저 받을 수 있다.
+  publishNewMoveRequestNotifications(created.notifications);
+
+  return toMoveRequestDto(created.moveRequest);
+}
+
+/**
+ * NEW_MOVE_REQUEST 알림을 매칭된 기사님 전원에게 SSE push합니다.
+ * 반드시 알림을 생성한 transaction이 커밋된 뒤에만 호출해야 합니다.
+ *
+ * @param notifications transaction 안에서 저장한 알림 내용 목록(0건일 수 있음)
+ * @sideeffect 연결된 각 기사님의 SSE 연결에 notification 이벤트를 write합니다.
+ */
+function publishNewMoveRequestNotifications(
+  notifications: CreatedNewMoveRequestNotificationRecord[],
+): void {
+  if (notifications.length === 0) {
+    return;
+  }
+
+  const createdAt = new Date().toISOString();
+
+  for (const notification of notifications) {
+    publishNotificationToUser(notification.userId, {
+      type: notification.type,
+      title: notification.title,
+      content: notification.content,
+      moveRequestId: notification.moveRequestId,
+      quoteId: notification.quoteId,
+      createdAt,
+    });
+  }
 }
 
 export async function getActiveMoveRequestForCustomer(
@@ -201,4 +288,175 @@ export async function createDesignatedRequestForCustomer(
   });
 
   return toDesignatedRequestDto(created);
+}
+
+/**
+ * WAITING 상태인 내 이사 견적 요청의 서비스 유형·이사일·출발지·도착지를 수정합니다.
+ *
+ * 소유권 검증은 `createDesignatedRequestForCustomer`(다른 고객 요청이면 ForbiddenError)와
+ * 다르게, `customer-quote`/`favorite`/`review` 모듈에서 이미 굳어진 다수 패턴을 따라 다른
+ * 고객의 요청이면 존재 여부를 구분하지 않고 동일하게 NotFoundError(MOVE_REQUEST_NOT_FOUND)로
+ * 응답한다.
+ *
+ * 이미 받은 PROPOSED 견적을 이번 수정으로 무효화할지는 아직 팀이 정하지 않았으므로, 이 함수는
+ * Quote 상태를 전혀 건드리지 않는다(수정 후에도 기존 PROPOSED 견적은 그대로 유지된다).
+ *
+ * @param customerId requireProfile이 보장한 Customer.id
+ * @param moveRequestId 검증된 MoveRequest UUID
+ * @param input 검증된 서비스 유형·이사일·출발지·도착지(생성 API와 동일한 검증 규칙)
+ * @returns 수정된 MoveRequest DTO
+ * @throws NotFoundError MOVE_REQUEST_NOT_FOUND 요청이 없거나 본인 소유가 아닌 경우
+ * @throws ConflictError MOVE_REQUEST_NOT_EDITABLE WAITING이 아니어서 수정할 수 없는 경우
+ * @remarks MoveRequest 재확인과 update를 한 트랜잭션에서 처리해 동시 확정과의 경쟁을 막습니다.
+ */
+export async function updateMoveRequestForCustomer(
+  customerId: string,
+  moveRequestId: string,
+  input: UpdateMoveRequestInput,
+): Promise<MoveRequestDto> {
+  const now = new Date();
+  const moveDate = resolveValidatedMoveDate(input.moveDate, now);
+
+  const serviceType = await findServiceTypeIdByName(input.serviceType);
+
+  if (!serviceType) {
+    throw new Error(`ServiceType을 찾을 수 없습니다: ${input.serviceType}`);
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const moveRequest = await findMoveRequestByIdForUpdate(moveRequestId, tx);
+
+    // 존재하지 않는 경우와 다른 고객 소유인 경우를 구분하지 않고 같은 404로 응답합니다.
+    if (!moveRequest || moveRequest.customerId !== customerId) {
+      throw new NotFoundError(
+        "이사 견적 요청을 찾을 수 없습니다.",
+        "MOVE_REQUEST_NOT_FOUND",
+      );
+    }
+
+    if (moveRequest.status !== "WAITING") {
+      throw new ConflictError(
+        "대기 중인 이사 견적 요청만 수정할 수 있습니다.",
+        "MOVE_REQUEST_NOT_EDITABLE",
+      );
+    }
+
+    return updateMoveRequest(
+      moveRequestId,
+      {
+        serviceTypeId: serviceType.id,
+        moveDate,
+        fromAddress: input.fromAddress,
+        toAddress: input.toAddress,
+      },
+      tx,
+    );
+  });
+
+  return toMoveRequestDto(updated);
+}
+
+/**
+ * 내 이사 견적 요청을 삭제합니다(WAITING만 가능, CONFIRMED/COMPLETED는 거절).
+ *
+ * 견적이 확정(CONFIRMED)된 이후에는 수정(updateMoveRequestForCustomer)과 마찬가지로 삭제도
+ * 막는다 — 사용자가 직접 확인한 요구사항: 확정 후에는 요청 내용을 되돌릴 수 없게 한다.
+ * 이 제한 전에는 CONFIRMED 요청도 삭제 가능해 CONFIRMED_MOVE_CANCELED 알림을 보냈지만,
+ * 이제 이 경로로는 도달하지 않는다(계정 탈퇴로 인한 취소처럼 고객 본인 의사가 아닌 취소 경로가
+ * 나중에 이 타입을 다시 쓸 수 있어 타입 자체는 스키마에 남겨둔다).
+ *
+ * WAITING 삭제 시 이 요청에 PROPOSED 견적을 보낸 기사님 전원에게 MOVE_REQUEST_CANCELED 알림을
+ * 보낸다.
+ *
+ * 삭제는 status 전이가 아니라 실제 row 삭제(hard delete)입니다. DesignatedRequest/Quote/
+ * Review는 schema의 onDelete: Cascade로 함께 삭제되고, RequestRejection은 onDelete: RESTRICT라
+ * 먼저 명시적으로 지워야 합니다(둘 다 repository 함수 참고). 취소 알림 row는 MoveRequest를
+ * 지우기 전에 만들어야 FK 제약을 통과하며, 이후 cascade로 MoveRequest/Quote가 삭제되면 이미
+ * 만든 알림 row의 moveRequestId/quoteId는 onDelete: SetNull로 트랜잭션 안에서 즉시 NULL이
+ * 됩니다 — title/content 문구 자체는 그대로 저장되어 있어 알림 내용은 보존되며, SSE push는
+ * DB 재조회 없이 이 함수가 만든 값을 그대로 사용합니다.
+ *
+ * @param customerId requireProfile이 보장한 Customer.id
+ * @param moveRequestId 검증된 MoveRequest UUID
+ * @throws NotFoundError MOVE_REQUEST_NOT_FOUND 요청이 없거나 본인 소유가 아닌 경우
+ * @throws ConflictError MOVE_REQUEST_NOT_DELETABLE WAITING이 아니어서 삭제할 수 없는 경우
+ * @remarks 알림 생성과 MoveRequest 삭제를 한 트랜잭션에서 처리하고, 커밋 이후에만 SSE push합니다.
+ */
+export async function deleteMoveRequestForCustomer(
+  customerId: string,
+  moveRequestId: string,
+): Promise<void> {
+  const notifications = await prisma.$transaction(async (tx) => {
+    const moveRequest = await findMoveRequestForCancelByIdForUpdate(moveRequestId, tx);
+
+    // 존재하지 않는 경우와 다른 고객 소유인 경우를 구분하지 않고 같은 404로 응답합니다.
+    if (!moveRequest || moveRequest.customerId !== customerId) {
+      throw new NotFoundError(
+        "이사 견적 요청을 찾을 수 없습니다.",
+        "MOVE_REQUEST_NOT_FOUND",
+      );
+    }
+
+    if (moveRequest.status !== "WAITING") {
+      throw new ConflictError(
+        "대기 중인 이사 견적 요청만 삭제할 수 있습니다.",
+        "MOVE_REQUEST_NOT_DELETABLE",
+      );
+    }
+
+    // 위에서 WAITING이 아니면 이미 걸러냈으므로 대기 중이던(PROPOSED) 견적을 보낸 기사님
+    // 전원에게만 알린다.
+    const recipients = await findQuoteRecipientsByMoveRequestIdAndStatus(
+      moveRequestId,
+      "PROPOSED",
+      tx,
+    );
+
+    const createdNotifications = await createMoveRequestCancelNotifications(tx, {
+      type: "MOVE_REQUEST_CANCELED",
+      reason: "DIRECT_DELETE",
+      moveRequestId,
+      customerName: moveRequest.customer.user.name,
+      recipients,
+    });
+
+    // RequestRejection은 onDelete: RESTRICT라서 MoveRequest 삭제 전에 먼저 지워야 삭제가
+    // 참조 무결성 위반 없이 성공한다.
+    await deleteRequestRejectionsByMoveRequestId(moveRequestId, tx);
+    await deleteMoveRequestById(moveRequestId, tx);
+
+    return createdNotifications;
+  });
+
+  // transaction이 커밋된 뒤에만 push한다. 커밋 전에 push하면 이후 오류로 rollback될 경우
+  // 실제로 저장되지 않은 알림을 클라이언트가 먼저 받을 수 있다.
+  publishMoveRequestCancelNotifications(notifications);
+}
+
+/**
+ * MOVE_REQUEST_CANCELED/CONFIRMED_MOVE_CANCELED 알림을 대상 기사님들에게 SSE push합니다.
+ * 반드시 알림을 생성한 transaction이 커밋된 뒤에만 호출해야 합니다.
+ *
+ * @param notifications transaction 안에서 저장한 알림 내용 목록(0건일 수 있음)
+ * @sideeffect 연결된 각 기사님의 SSE 연결에 notification 이벤트를 write합니다.
+ */
+function publishMoveRequestCancelNotifications(
+  notifications: CreatedMoveRequestCancelNotificationRecord[],
+): void {
+  if (notifications.length === 0) {
+    return;
+  }
+
+  const createdAt = new Date().toISOString();
+
+  for (const notification of notifications) {
+    publishNotificationToUser(notification.userId, {
+      type: notification.type,
+      title: notification.title,
+      content: notification.content,
+      moveRequestId: notification.moveRequestId,
+      quoteId: notification.quoteId,
+      createdAt,
+    });
+  }
 }
