@@ -4,6 +4,13 @@
  * 담당하고, 이 파일은 "언제 실행할지"와 "실행 실패가 서버에 영향을 주지 않게" 만드는 부분만
  * 책임집니다. server.ts는 이 모듈이 내보내는 시작·정지 함수만 호출하고 cron 세부사항을
  * 알지 못합니다(server.ts는 process/서버 lifecycle만 담당한다는 AGENTS.md 규칙을 따름).
+ *
+ * ⚠️ 단일 Node 프로세스 배포 전제: 아래 noOverlap은 같은 프로세스 안에서 cron이 겹쳐 실행되는
+ * 것만 막습니다. 여러 서버 인스턴스가 동시에 떠 있으면 각 인스턴스가 독립적으로 이 스케줄을
+ * 등록하므로 같은 시각에 중복 실행될 수 있고, move-day.repository.ts의 "기존 알림 조회 후
+ * 생성" 방식은 인스턴스 간 경쟁을 막지 못해 같은 알림이 중복 생성될 수 있습니다(AGENTS.md 8번의
+ * rate limit/OAuth state와 동일한 단일 프로세스 메모리 전제). 다중 인스턴스로 배포하려면 팀
+ * 승인 후 분산 lock이나 scheduler leader 지정, 또는 DB 수준 멱등 처리를 먼저 도입해야 합니다.
  */
 import cron from "node-cron";
 import type { ScheduledTask } from "node-cron";

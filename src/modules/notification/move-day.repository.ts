@@ -94,6 +94,15 @@ export interface MoveDayNotificationRecipientKey {
  * 조합에 중복 생성되지 않도록, Service가 이 결과를 기준으로 후보를 걸러냅니다.
  * moveRequestIds가 비어 있으면 불필요한 쿼리를 보내지 않고 빈 배열을 즉시 반환합니다.
  *
+ * ⚠️ 이 "조회 후 생성(check-then-create)" 방식은 같은 단일 프로세스 안에서의 순차 재실행만
+ * 안전하게 막습니다. 여러 서버 인스턴스가 동시에 이 함수를 호출하면 둘 다 "기존 알림 없음"으로
+ * 판단할 수 있어 같은 알림이 중복 생성될 수 있습니다(move-day.scheduler.ts 상단 주석 참고).
+ * DB 트랜잭션이나 unique 제약으로 막지 않은 이유는, Notification에 (type, moveRequestId,
+ * userId) 전역 unique 제약을 걸면 quoteId로 구분되는 NEW_QUOTE 등 다른 알림 타입의 정상적인
+ * 다건 생성(같은 요청에 여러 기사님의 견적 알림)까지 막혀버리고, quoteId를 포함하면 nullable이라
+ * Postgres가 NULL끼리는 다른 값으로 취급해 정작 quoteId가 없는 MOVE_DAY 예외 케이스의 중복은
+ * 막지 못하기 때문입니다. 현재는 단일 Node 프로세스 배포를 전제로 범위를 한정합니다.
+ *
  * @param moveRequestIds 알림 후보에 포함된 MoveRequest.id 목록(중복 제거 여부는 호출부 자유)
  * @param client 기본 prisma client
  * @sideeffect PostgreSQL 읽기 쿼리를 실행합니다.
