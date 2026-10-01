@@ -93,3 +93,31 @@ export function publishNotificationToUser(
     }
   }
 }
+
+/**
+ * 서버 종료 시 열려있는 모든 SSE 연결을 강제로 끊어 graceful shutdown이 멈추지 않게 합니다.
+ *
+ * SSE 연결은 의도적으로 끝나지 않는 장기 연결이라 `server.close()`는 이 연결들이 스스로
+ * 끝나기를 기다리며 멈춰 있게 됩니다. 이 함수는 등록된 모든 Response에 `.end()`를 호출해
+ * 연결을 끊고, 그 결과로 각 요청에서 발생하는 `request.on("close")` 핸들러가 heartbeat
+ * 정리와 `unregisterNotificationConnection`을 뒤따라 수행하도록 유도합니다. 이미 끊어진
+ * 연결에 `.end()`를 호출하면 예외가 날 수 있어 개별적으로 감싸 한 연결의 실패가 나머지
+ * 연결 정리를 막지 않게 합니다. 마지막으로 Map 자체를 비워 이후 어떤 push도 발생하지
+ * 않도록 합니다(개별 연결의 뒤이은 unregister 호출은 없는 userId를 조용히 무시하므로
+ * 이중 정리로 인한 오류는 없습니다).
+ * @sideeffect connectionsByUserId의 모든 Response를 종료하고 Map을 비웁니다.
+ */
+export function closeAllNotificationConnections(): void {
+  for (const connections of connectionsByUserId.values()) {
+    for (const connection of connections) {
+      try {
+        connection.end();
+      } catch {
+        // 이미 끊어진 연결에 end()를 호출하면 예외가 날 수 있습니다. 서버 종료 절차를
+        // 막지 않도록 개별 실패는 무시하고 나머지 연결 정리를 계속합니다.
+      }
+    }
+  }
+
+  connectionsByUserId.clear();
+}

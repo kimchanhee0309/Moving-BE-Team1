@@ -5,6 +5,7 @@
 import type { Response } from "express";
 
 import {
+  closeAllNotificationConnections,
   publishNotificationToUser,
   registerNotificationConnection,
   unregisterNotificationConnection,
@@ -14,7 +15,7 @@ import type { NotificationStreamPayload } from "../../src/modules/notification/n
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 
 function createMockResponse(): Response {
-  return { write: jest.fn() } as unknown as Response;
+  return { write: jest.fn(), end: jest.fn() } as unknown as Response;
 }
 
 const payload: NotificationStreamPayload = {
@@ -96,5 +97,53 @@ describe("notification hub", () => {
 
     unregisterNotificationConnection(USER_ID, broken);
     unregisterNotificationConnection(USER_ID, healthy);
+  });
+
+  describe("closeAllNotificationConnections", () => {
+    const OTHER_USER_ID = "44444444-4444-4444-8444-444444444444";
+
+    test("여러 사용자·여러 연결(같은 사용자 다중 탭 포함) 모두에 end()를 호출한다", () => {
+      const firstTab = createMockResponse();
+      const secondTab = createMockResponse();
+      const otherUserConnection = createMockResponse();
+      registerNotificationConnection(USER_ID, firstTab);
+      registerNotificationConnection(USER_ID, secondTab);
+      registerNotificationConnection(OTHER_USER_ID, otherUserConnection);
+
+      closeAllNotificationConnections();
+
+      expect(firstTab.end).toHaveBeenCalledTimes(1);
+      expect(secondTab.end).toHaveBeenCalledTimes(1);
+      expect(otherUserConnection.end).toHaveBeenCalledTimes(1);
+    });
+
+    test("호출 이후에는 Map이 비워져 publishNotificationToUser가 아무 연결에도 write하지 않는다", () => {
+      const response = createMockResponse();
+      registerNotificationConnection(USER_ID, response);
+
+      closeAllNotificationConnections();
+      publishNotificationToUser(USER_ID, payload);
+
+      expect(response.write).not.toHaveBeenCalled();
+    });
+
+    test("일부 연결의 end()가 예외를 던져도 나머지 연결 정리가 멈추지 않는다", () => {
+      const broken = {
+        write: jest.fn(),
+        end: jest.fn(() => {
+          throw new Error("이미 끊어진 연결입니다.");
+        }),
+      } as unknown as Response;
+      const healthy = createMockResponse();
+      registerNotificationConnection(USER_ID, broken);
+      registerNotificationConnection(OTHER_USER_ID, healthy);
+
+      expect(() => closeAllNotificationConnections()).not.toThrow();
+      expect(healthy.end).toHaveBeenCalledTimes(1);
+
+      // Map이 완전히 비워졌는지(일부 실패가 clear()를 막지 않는지)도 함께 검증한다.
+      publishNotificationToUser(OTHER_USER_ID, payload);
+      expect(healthy.write).not.toHaveBeenCalled();
+    });
   });
 });

@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import { app } from "./app";
 import { env } from "./config/env";
 import { prisma } from "./lib/prisma";
+import { closeAllNotificationConnections } from "./modules/notification/notification.hub";
 import {
   startMoveDayNotificationScheduler,
   stopMoveDayNotificationScheduler,
@@ -35,6 +36,11 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
 
   // cron 타이머가 살아있으면 프로세스 종료를 막을 수 있으므로 HTTP 서버를 닫기 전에 정지한다.
   stopMoveDayNotificationScheduler();
+
+  // SSE는 의도적으로 끝나지 않는 장기 연결이라 server.close()가 끝나길 기다리면 영원히
+  // 끝나지 않으므로, 먼저 모든 연결을 강제로 닫아야 한다. 이 호출 이후 각 연결의
+  // request.on("close") 핸들러가 허브 등록 해제와 heartbeat 정리를 뒤따라 수행한다.
+  closeAllNotificationConnections();
 
   const forceShutdownTimer = setTimeout(() => {
     process.exit(1);
