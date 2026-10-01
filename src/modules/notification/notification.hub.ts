@@ -19,10 +19,22 @@ import type { NotificationStreamPayload } from "./notification.dto";
 const connectionsByUserId = new Map<string, Set<Response>>();
 
 /**
- * SSE 연결을 허브에 등록합니다.
+ * 사용자 1명이 동시에 유지할 수 있는 SSE 연결 수 상한입니다.
+ * 여러 탭·기기로 접속하는 정상 사용 패턴을 충분히 커버하면서도, 비정상 클라이언트가 연결을
+ * 반복 생성해 메모리·타이머·소켓을 무한히 점유하는 것을 막기 위한 잠정값입니다. 정확한 수치는
+ * 팀이 확정한 값이 아니므로 운영 중 과도하게 낮거나 높다고 판단되면 팀 협의로 조정합니다.
+ */
+const MAX_CONNECTIONS_PER_USER = 5;
+
+/**
+ * SSE 연결을 허브에 등록합니다. 이미 상한(MAX_CONNECTIONS_PER_USER)만큼 연결을 보유한
+ * 사용자가 새 연결을 열면, 가장 먼저 등록된(가장 오래된) 연결을 강제로 종료해 자리를 확보한
+ * 뒤 새 연결을 추가합니다. Set은 삽입 순서를 보장하므로 `values().next().value`가 항상
+ * 가장 오래된 연결입니다.
  * @param userId 인증된 User.id
  * @param response 헤더가 이미 SSE로 설정되고 write가 가능한 Express Response
- * @sideeffect connectionsByUserId Map을 변경합니다.
+ * @sideeffect connectionsByUserId Map을 변경합니다. 상한 초과 시 가장 오래된 연결의
+ * Response.end()를 호출하고(이미 끊어져 예외가 나도 무시) 경고 로그를 한 줄 남깁니다.
  */
 export function registerNotificationConnection(
   userId: string,
@@ -30,12 +42,44 @@ export function registerNotificationConnection(
 ): void {
   const existing = connectionsByUserId.get(userId);
 
-  if (existing) {
-    existing.add(response);
+  if (!existing) {
+    connectionsByUserId.set(userId, new Set([response]));
     return;
   }
 
-  connectionsByUserId.set(userId, new Set([response]));
+  // 상한을 넘기는 경우에만 가장 오래된 연결을 강제 종료한다. 정상 범위 안의
+  // 등록/해제는 로그를 남기지 않아 노이즈를 피한다.
+  if (existing.size >= MAX_CONNECTIONS_PER_USER) {
+    const oldestConnection = existing.values().next().value;
+
+    if (oldestConnection) {
+      existing.delete(oldestConnection);
+
+      try {
+        oldestConnection.end();
+      } catch {
+        // 이미 끊어진 연결에 end()를 호출하면 예외가 날 수 있다. 상한 초과로 인한
+        // 강제 종료는 best-effort이므로 실패해도 새 연결 등록을 막지 않는다.
+      }
+
+      console.warn(
+        `사용자 ${userId}의 SSE 연결이 상한(${MAX_CONNECTIONS_PER_USER})을 초과해 가장 오래된 연결을 종료합니다`,
+      );
+    }
+  }
+
+  existing.add(response);
+}
+
+/**
+ * 테스트·관찰 목적으로 특정 사용자가 현재 보유한 SSE 연결 수를 조회합니다.
+ * 운영 모니터링 지표(Prometheus 등)는 이 저장소에 아직 구축돼 있지 않으므로 이 함수는
+ * 그 대체재가 아니라, 상한 로직을 검증하기 위한 최소한의 관찰 수단입니다.
+ * @param userId 조회할 User.id
+ * @returns 등록된 연결 수. 연결이 없으면 0.
+ */
+export function getNotificationConnectionCount(userId: string): number {
+  return connectionsByUserId.get(userId)?.size ?? 0;
 }
 
 /**

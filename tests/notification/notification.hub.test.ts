@@ -6,6 +6,7 @@ import type { Response } from "express";
 
 import {
   closeAllNotificationConnections,
+  getNotificationConnectionCount,
   publishNotificationToUser,
   registerNotificationConnection,
   unregisterNotificationConnection,
@@ -97,6 +98,114 @@ describe("notification hub", () => {
 
     unregisterNotificationConnection(USER_ID, broken);
     unregisterNotificationConnection(USER_ID, healthy);
+  });
+
+  describe("registerNotificationConnection 연결 수 상한", () => {
+    const LIMIT_USER_ID = "55555555-5555-4555-8555-555555555555";
+    const ANOTHER_LIMIT_USER_ID = "66666666-6666-4666-8666-666666666666";
+
+    test("상한(5개)까지는 모두 유지되고 기존 연결은 end()되지 않는다", () => {
+      const connections = Array.from({ length: 5 }, () =>
+        createMockResponse(),
+      );
+
+      connections.forEach((connection) =>
+        registerNotificationConnection(LIMIT_USER_ID, connection),
+      );
+
+      expect(getNotificationConnectionCount(LIMIT_USER_ID)).toBe(5);
+      connections.forEach((connection) =>
+        expect(connection.end).not.toHaveBeenCalled(),
+      );
+
+      connections.forEach((connection) =>
+        unregisterNotificationConnection(LIMIT_USER_ID, connection),
+      );
+    });
+
+    test("상한을 넘기면 가장 오래된 연결을 종료하고 최신 연결만 남긴다", () => {
+      const oldestConnection = createMockResponse();
+      const remainingConnections = Array.from({ length: 5 }, () =>
+        createMockResponse(),
+      );
+
+      registerNotificationConnection(LIMIT_USER_ID, oldestConnection);
+      remainingConnections.forEach((connection) =>
+        registerNotificationConnection(LIMIT_USER_ID, connection),
+      );
+
+      // 1번째(가장 오래된) 연결만 end()되고 나머지(2~6번째)는 그대로 유지된다.
+      expect(oldestConnection.end).toHaveBeenCalledTimes(1);
+      remainingConnections.forEach((connection) =>
+        expect(connection.end).not.toHaveBeenCalled(),
+      );
+      expect(getNotificationConnectionCount(LIMIT_USER_ID)).toBe(5);
+
+      publishNotificationToUser(LIMIT_USER_ID, payload);
+      expect(oldestConnection.write).not.toHaveBeenCalled();
+      remainingConnections.forEach((connection) =>
+        expect(connection.write).toHaveBeenCalledTimes(1),
+      );
+
+      remainingConnections.forEach((connection) =>
+        unregisterNotificationConnection(LIMIT_USER_ID, connection),
+      );
+    });
+
+    test("사용자별로 독립적으로 상한이 적용된다", () => {
+      const overLimitUserConnections = Array.from({ length: 6 }, () =>
+        createMockResponse(),
+      );
+      const otherUserConnection = createMockResponse();
+
+      registerNotificationConnection(ANOTHER_LIMIT_USER_ID, otherUserConnection);
+      overLimitUserConnections.forEach((connection) =>
+        registerNotificationConnection(LIMIT_USER_ID, connection),
+      );
+
+      // 한 사용자가 상한을 넘겨 오래된 연결이 정리되어도 다른 사용자의 연결은 영향받지 않는다.
+      expect(otherUserConnection.end).not.toHaveBeenCalled();
+      expect(getNotificationConnectionCount(ANOTHER_LIMIT_USER_ID)).toBe(1);
+
+      unregisterNotificationConnection(
+        ANOTHER_LIMIT_USER_ID,
+        otherUserConnection,
+      );
+      overLimitUserConnections
+        .slice(1)
+        .forEach((connection) =>
+          unregisterNotificationConnection(LIMIT_USER_ID, connection),
+        );
+    });
+
+    test("강제 종료 대상 연결의 end()가 예외를 던져도 새 연결 등록은 계속된다", () => {
+      const broken = {
+        write: jest.fn(),
+        end: jest.fn(() => {
+          throw new Error("이미 끊어진 연결입니다.");
+        }),
+      } as unknown as Response;
+      const healthyConnections = Array.from({ length: 4 }, () =>
+        createMockResponse(),
+      );
+      const newConnection = createMockResponse();
+
+      registerNotificationConnection(LIMIT_USER_ID, broken);
+      healthyConnections.forEach((connection) =>
+        registerNotificationConnection(LIMIT_USER_ID, connection),
+      );
+
+      expect(() =>
+        registerNotificationConnection(LIMIT_USER_ID, newConnection),
+      ).not.toThrow();
+
+      expect(getNotificationConnectionCount(LIMIT_USER_ID)).toBe(5);
+
+      healthyConnections.forEach((connection) =>
+        unregisterNotificationConnection(LIMIT_USER_ID, connection),
+      );
+      unregisterNotificationConnection(LIMIT_USER_ID, newConnection);
+    });
   });
 
   describe("closeAllNotificationConnections", () => {
