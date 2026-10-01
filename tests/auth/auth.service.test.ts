@@ -177,7 +177,6 @@ const tokens = {
   accessToken: "access-token",
   refreshToken: "refresh-token",
 };
-
 const transaction = {} as AuthTransaction;
 const emailWithdrawalUser: WithdrawalUserRecord = {
   id: "customer-user-id",
@@ -519,11 +518,45 @@ describe("Auth service", () => {
     });
     jest.mocked(findUserById).mockResolvedValue(moverWithProfile);
 
-    await expect(refreshAuth("old-refresh-token")).resolves.toEqual({
+    await expect(refreshAuth(null, "old-refresh-token")).resolves.toEqual({
       user: expect.objectContaining({ id: "mover-user-id" }),
       tokens,
     });
-    expect(createAuthTokens).toHaveBeenCalledWith("mover-user-id", "MOVER");
+    expect(createAuthTokens).toHaveBeenCalledWith(
+      "mover-user-id",
+      "MOVER",
+    );
+  });
+
+  test("유효한 Access가 있으면 명시적 Refresh에서도 토큰을 재발급하지 않는다", async () => {
+    jest.mocked(verifyToken).mockReturnValue({
+      userId: "customer-user-id",
+      role: "CUSTOMER",
+      tokenType: "access",
+    });
+    jest.mocked(findUserById).mockResolvedValue(customerWithoutProfile);
+
+    await expect(
+      refreshAuth("access-token", "refresh-token"),
+    ).resolves.toEqual({
+      user: expect.objectContaining({ id: "customer-user-id" }),
+      tokens: null,
+    });
+    expect(createAuthTokens).not.toHaveBeenCalled();
+  });
+
+  test("위조된 Access는 유효한 Refresh가 있어도 복구하지 않는다", async () => {
+    jest.mocked(verifyToken).mockImplementation(() => {
+      throw new UnauthorizedError(
+        "Access Token이 유효하지 않습니다.",
+        "ACCESS_TOKEN_INVALID",
+      );
+    });
+
+    await expect(
+      refreshAuth("forged-access-token", "refresh-token"),
+    ).rejects.toMatchObject({ code: "ACCESS_TOKEN_INVALID", status: 401 });
+    expect(findUserById).not.toHaveBeenCalled();
   });
 
   test("탈퇴 후 같은 Refresh Token은 REFRESH_TOKEN_INVALID로 거절한다", async () => {
@@ -534,7 +567,7 @@ describe("Auth service", () => {
     });
     jest.mocked(findUserById).mockResolvedValue(null);
 
-    await expect(refreshAuth("old-refresh-token")).rejects.toMatchObject({
+    await expect(refreshAuth(null, "old-refresh-token")).rejects.toMatchObject({
       code: "REFRESH_TOKEN_INVALID",
       status: 401,
     });
@@ -606,7 +639,10 @@ describe("Auth service", () => {
       tokens,
       shouldClearCookies: false,
     });
-    expect(createAuthTokens).toHaveBeenCalledWith("mover-user-id", "MOVER");
+    expect(createAuthTokens).toHaveBeenCalledWith(
+      "mover-user-id",
+      "MOVER",
+    );
   });
 
   test("잘못된 Refresh Token은 선택 세션에서 비회원으로 정리한다", async () => {
@@ -624,6 +660,24 @@ describe("Auth service", () => {
       tokens: null,
       shouldClearCookies: true,
     });
+  });
+
+  test("위조된 Access는 선택 세션에서도 Refresh하지 않고 비회원으로 정리한다", async () => {
+    jest.mocked(verifyToken).mockImplementation(() => {
+      throw new UnauthorizedError(
+        "Access Token이 유효하지 않습니다.",
+        "ACCESS_TOKEN_INVALID",
+      );
+    });
+
+    await expect(
+      restoreOptionalAuthSession("forged-access-token", "refresh-token"),
+    ).resolves.toEqual({
+      user: null,
+      tokens: null,
+      shouldClearCookies: true,
+    });
+    expect(verifyToken).toHaveBeenCalledTimes(1);
   });
 
   test("선택 세션의 삭제 사용자 토큰은 비회원으로 정리하고 쿠키 삭제를 지시한다", async () => {

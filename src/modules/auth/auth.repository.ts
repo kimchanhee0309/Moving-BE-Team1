@@ -1,5 +1,5 @@
 /**
- * Auth Service에 필요한 User 조회·생성·회원 탈퇴 transaction을 Prisma로 수행합니다.
+ * Auth Service에 필요한 User 조회·생성과 회원 탈퇴 transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
 import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";

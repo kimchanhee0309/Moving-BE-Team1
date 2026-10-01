@@ -1,8 +1,9 @@
 /**
- * Access/Refresh JWT의 생성과 검증을 담당합니다.
- * 두 종류의 Secret을 분리하고 tokenType을 검사하여 토큰 용도 혼용을 차단합니다.
+ * Access/Refresh JWT의 stateless 생성과 검증을 담당합니다.
+ * 두 종류의 Secret과 tokenType을 분리하며 DB 세션이나 토큰 식별자를 요구하지 않습니다.
  */
 import jwt from "jsonwebtoken";
+import { randomUUID } from "node:crypto";
 
 import type { UserRole } from "../../generated/prisma/enums";
 import { env } from "../../config/env";
@@ -64,20 +65,27 @@ export function createToken(
       algorithm: "HS256",
       expiresIn: getExpiresInSeconds(tokenType),
       issuer: env.JWT_ISSUER,
+      jwtid: randomUUID(),
       subject: userId,
     },
   );
 }
 
 /** Access/Refresh Token을 함께 발급하며 갱신 시에도 두 토큰을 회전시킵니다. */
-export function createAuthTokens(userId: string, role: UserRole): AuthTokens {
+export function createAuthTokens(
+  userId: string,
+  role: UserRole,
+): AuthTokens {
   return {
     accessToken: createToken(userId, role, "access"),
     refreshToken: createToken(userId, role, "refresh"),
   };
 }
 
-/** 서명·만료·issuer·용도·필수 payload를 검증하고 최소 인증 정보만 반환합니다. */
+/**
+ * 서명·만료·issuer·용도·필수 payload를 검증하고 최소 인증 정보만 반환합니다.
+ * jti와 sessionId 같은 추가 claim은 필수로 요구하지 않아 이번 배포 전후 토큰을 함께 허용합니다.
+ */
 export function verifyToken(token: string, tokenType: TokenType): AuthTokenPayload {
   try {
     const payload = jwt.verify(token, getSecret(tokenType), {

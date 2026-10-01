@@ -96,6 +96,14 @@ export interface AuthResult {
   tokens: AuthTokens;
 }
 
+/** 명시적 갱신 요청이 유효 Access를 재발급하지 않도록 회전 여부를 표현합니다. */
+export interface RefreshAuthResult {
+  /** Access 또는 회전된 Refresh로 확인한 최신 사용자입니다. */
+  user: AuthUserDto;
+  /** Access가 유효하면 null, Refresh를 소비해 회전했으면 새 쿠키용 토큰입니다. */
+  tokens: AuthTokens | null;
+}
+
 /** 선택적 세션 복구가 비회원과 로그인 사용자를 같은 200 계약으로 반환하기 위한 결과입니다. */
 export interface OptionalAuthSessionResult {
   /** 유효한 Access 또는 Refresh Token으로 확인한 사용자이며 비회원은 null입니다. */

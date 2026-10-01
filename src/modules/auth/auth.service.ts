@@ -27,6 +27,7 @@ import type {
   LoginRequestDto,
   OptionalAuthSessionResult,
   PasswordResetCodeRequestResultDto,
+  RefreshAuthResult,
   SignUpRequestDto,
   RecoveryVerificationResultDto,
   VerifyPasswordResetCodeRequestDto,
@@ -409,8 +410,7 @@ export async function getCurrentUser(userId: string): Promise<AuthUserDto> {
   return toAuthUserDto(user);
 }
 
-/** Refresh Token을 검증하고 현재 사용자 기준으로 Access/Refresh Token을 모두 회전합니다. */
-export async function refreshAuth(refreshToken: string): Promise<AuthResult> {
+async function rotateRefreshAuth(refreshToken: string): Promise<AuthResult> {
   const payload = verifyToken(refreshToken, "refresh");
   const user = await findUserById(payload.userId);
 
@@ -425,6 +425,47 @@ export async function refreshAuth(refreshToken: string): Promise<AuthResult> {
     user: toAuthUserDto(user),
     tokens: createAuthTokens(user.id, user.role),
   };
+}
+
+/**
+ * 유효 Access는 그대로 사용하고, Access가 없거나 만료된 경우에만 stateless Refresh를 회전합니다.
+ * 위조·서명 오류·잘못된 payload의 Access는 Refresh로 우회하지 않고 기존 Access 오류를 반환합니다.
+ */
+export async function refreshAuth(
+  accessToken: string | null,
+  refreshToken: string | null,
+): Promise<RefreshAuthResult> {
+  if (accessToken) {
+    try {
+      const payload = verifyToken(accessToken, "access");
+      const user = await findUserById(payload.userId);
+
+      if (!user || user.role !== payload.role) {
+        throw new UnauthorizedError(
+          "Access Token이 유효하지 않습니다.",
+          "ACCESS_TOKEN_INVALID",
+        );
+      }
+
+      return { user: toAuthUserDto(user), tokens: null };
+    } catch (error: unknown) {
+      if (
+        !(error instanceof UnauthorizedError) ||
+        error.code !== "ACCESS_TOKEN_EXPIRED"
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  if (!refreshToken) {
+    throw new UnauthorizedError(
+      "Refresh Token이 필요합니다.",
+      "REFRESH_TOKEN_MISSING",
+    );
+  }
+
+  return rotateRefreshAuth(refreshToken);
 }
 
 /**
@@ -453,14 +494,27 @@ export async function restoreOptionalAuthSession(
           shouldClearCookies: false,
         };
       }
+
+      return {
+        user: null,
+        tokens: null,
+        shouldClearCookies: true,
+      };
     } catch (error: unknown) {
       if (!(error instanceof UnauthorizedError)) throw error;
+      if (error.code !== "ACCESS_TOKEN_EXPIRED") {
+        return {
+          user: null,
+          tokens: null,
+          shouldClearCookies: true,
+        };
+      }
     }
   }
 
   if (refreshToken) {
     try {
-      const refreshed = await refreshAuth(refreshToken);
+      const refreshed = await rotateRefreshAuth(refreshToken);
 
       return {
         user: refreshed.user,
