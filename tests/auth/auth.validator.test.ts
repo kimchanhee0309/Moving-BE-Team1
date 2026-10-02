@@ -30,6 +30,23 @@ describe("Auth validator", () => {
     });
   });
 
+  test("복구 질문과 답변은 함께 받고 답변을 정규화한다", () => {
+    const base = { name: "홍길동", email: "user@example.com", phone: "01012345678", password: "Password1!", role: "CUSTOMER" };
+    expect(parseSignUpInput({ ...base, recoveryQuestion: "CHILDHOOD_NICKNAME", recoveryAnswer: "  별명  " })).toMatchObject({ recoveryQuestion: "CHILDHOOD_NICKNAME", recoveryAnswer: "별명" });
+    expect(() => parseSignUpInput({ ...base, recoveryQuestion: "CHILDHOOD_NICKNAME" })).toThrow(BadRequestError);
+    expect(() => parseSignUpInput({ ...base, recoveryAnswer: "별명" })).toThrow(BadRequestError);
+    expect(() => parseConfirmPasswordResetInput({ token: "token", newPassword: "Password1!", recoveryAnswer: "x" })).toThrow(BadRequestError);
+  });
+
+  test("목록 밖 복구 질문은 한국어 사유로 거절한다", () => {
+    const base = { name: "홍길동", email: "user@example.com", phone: "01012345678", password: "Password1!", role: "CUSTOMER" };
+    expect(() => parseSignUpInput({ ...base, recoveryQuestion: "UNKNOWN", recoveryAnswer: "별명" })).toThrow(
+      expect.objectContaining({
+        details: [expect.objectContaining({ field: "recoveryQuestion", reason: "제공된 복구 질문 중 하나를 선택해 주세요." })],
+      }),
+    );
+  });
+
   test.each(["김지훈", "홍 길동", "Jihoon Kim", "Anne-Marie", "O'Connor", "김·지훈"])(
     "회원가입에서 허용된 이름 형식을 통과시킨다: %s",
     (name) => {

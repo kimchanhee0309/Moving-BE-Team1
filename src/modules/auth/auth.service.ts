@@ -72,6 +72,7 @@ import {
   markPasswordResetChallengeVerified,
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
+  reserveRecoveryAnswerAttempt,
   restorePasswordResetChallenge,
   runAuthTransaction,
   updateEmailUserPassword,
@@ -99,13 +100,19 @@ export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
     throw new ConflictError("이미 사용 중인 전화번호입니다.", "PHONE_ALREADY_EXISTS");
   }
 
-  const passwordHash = await hashPassword(input.password);
+  // 구버전 가입 요청은 두 필드를 모두 생략할 수 있으나 새 가입 화면은 질문과 답변을 함께 보냅니다.
+  const [passwordHash, recoveryAnswerHash] = await Promise.all([
+    hashPassword(input.password),
+    input.recoveryAnswer ? hashPassword(input.recoveryAnswer) : Promise.resolve(undefined),
+  ]);
   const user = await createEmailUser({
     name: input.name,
     email: input.email,
     phone: input.phone,
     passwordHash,
     role: input.role,
+    recoveryQuestion: input.recoveryQuestion,
+    recoveryAnswerHash,
   });
 
   return {
@@ -346,6 +353,7 @@ export async function verifyPasswordResetCode(
       reservedAttempt.user.passwordHash,
       reservedAttempt.id,
     ),
+    recoveryQuestion: reservedAttempt.user.recoveryQuestion ?? null,
   };
 }
 
@@ -354,6 +362,36 @@ export async function confirmPasswordReset(
   input: ConfirmPasswordResetRequestDto,
 ): Promise<void> {
   const payload = verifyPasswordResetToken(input.token);
+
+  // 이미 사용됐거나 검증되지 않은 challenge는 답변 횟수 예약 전에 거절합니다.
+  // 먼저 확인하지 않으면 재사용 토큰이 횟수 예약 실패로 이어져 RECOVERY_ANSWER_ATTEMPTS_EXCEEDED로 잘못 응답합니다.
+  const answerChallenge = await findPasswordResetChallengeById(payload.challengeId);
+  if (
+    !answerChallenge?.verifiedAt ||
+    answerChallenge.consumedAt ||
+    answerChallenge.user.id !== payload.userId
+  ) {
+    throw new BadRequestError(
+      "비밀번호 재설정 인증이 만료되었거나 올바르지 않습니다.",
+      "PASSWORD_RESET_TOKEN_INVALID",
+    );
+  }
+
+  // 토큰만으로 답변을 무제한 추측하지 못하도록 실패 횟수를 transaction 밖에서 먼저 예약합니다.
+  if (answerChallenge.user.recoveryQuestion && answerChallenge.user.recoveryAnswerHash) {
+    if (!input.recoveryAnswer) {
+      throw new BadRequestError("복구 답변을 입력해 주세요.", "RECOVERY_ANSWER_REQUIRED");
+    }
+    const reservation = await reserveRecoveryAnswerAttempt(payload.challengeId, payload.userId, 5);
+    if (reservation.count !== 1) {
+      throw new TooManyRequestsError("복구 답변 확인 횟수를 초과했습니다. 새 인증코드를 요청해 주세요.", "RECOVERY_ANSWER_ATTEMPTS_EXCEEDED");
+    }
+    if (!await verifyPassword(input.recoveryAnswer, answerChallenge.user.recoveryAnswerHash)) {
+      throw new UnauthorizedError("복구 답변이 올바르지 않습니다.", "RECOVERY_ANSWER_INVALID");
+    }
+  }
+
+  // 답변 확인을 통과한 요청만 bcrypt 비용을 쓰도록 새 비밀번호 hash는 이 시점에 만듭니다.
   const nextPasswordHash = await hashPassword(input.newPassword);
 
   await runAuthTransaction(async (transaction) => {
@@ -369,7 +407,8 @@ export async function confirmPasswordReset(
       !user?.passwordHash ||
       user.id !== payload.userId ||
       user.role !== payload.role ||
-      !matchesCredentialVersion(user.passwordHash, payload.credentialVersion)
+      !matchesCredentialVersion(user.passwordHash, payload.credentialVersion) ||
+      Boolean(user.recoveryQuestion) !== Boolean(user.recoveryAnswerHash)
     ) {
       throw new BadRequestError(
         "비밀번호 재설정 인증이 만료되었거나 올바르지 않습니다.",

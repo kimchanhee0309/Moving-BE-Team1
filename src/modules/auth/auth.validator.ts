@@ -28,6 +28,14 @@ const roleSchema = z.enum(["CUSTOMER", "MOVER"], {
   error: "CUSTOMER 또는 MOVER만 사용할 수 있습니다.",
 });
 
+// 질문 목록은 과거 복구 기능의 식별자를 재사용합니다. 답변 원문은 저장하지 않습니다.
+const recoveryQuestionSchema = z.enum(["CHILDHOOD_NICKNAME", "MEMORABLE_PLACE", "PERSONAL_PHRASE"], {
+  error: "제공된 복구 질문 중 하나를 선택해 주세요.",
+});
+const recoveryAnswerSchema = z.string({ error: "복구 답변을 입력해 주세요." })
+  .transform((value) => value.normalize("NFKC").trim().toLowerCase())
+  .pipe(z.string().min(2, { error: "복구 답변은 2자 이상 입력해 주세요." }).max(100, { error: "복구 답변은 100자 이내로 입력해 주세요." }));
+
 const emailSchema = requiredString
   .transform((value) => value.toLowerCase())
   .pipe(
@@ -58,8 +66,14 @@ const signUpSchema = z
       ),
     password: passwordSchema,
     role: roleSchema,
+    recoveryQuestion: recoveryQuestionSchema.optional(),
+    recoveryAnswer: recoveryAnswerSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.recoveryQuestion) === Boolean(value.recoveryAnswer), {
+    error: "복구 질문과 답변을 함께 입력해 주세요.",
+    path: ["recoveryAnswer"],
+  });
 
 const loginSchema = z
   .object({
@@ -90,6 +104,7 @@ const confirmPasswordResetSchema = z
   .object({
     token: requiredString.max(4096, { error: "재설정 인증이 올바르지 않습니다." }),
     newPassword: passwordSchema,
+    recoveryAnswer: recoveryAnswerSchema.optional(),
   })
   .strict();
 

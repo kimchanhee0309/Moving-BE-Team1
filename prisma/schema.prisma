@@ -23,6 +23,13 @@ enum SocialProvider {
   KAKAO
 }
 
+// 이메일 인증 뒤 추가 확인에만 사용하는 고정 복구 질문입니다.
+enum PasswordRecoveryQuestion {
+  CHILDHOOD_NICKNAME
+  MEMORABLE_PLACE
+  PERSONAL_PHRASE
+}
+
 enum MoveRequestStatus {
   WAITING
   CONFIRMED
@@ -45,20 +52,22 @@ enum NotificationType {
 }
 
 model User {
-  id             String          @id @default(uuid()) @db.Uuid
-  role           UserRole
-  name           String          @db.VarChar(50)
-  passwordHash   String?         @db.VarChar(255)
-  email          String          @unique @db.VarChar(255)
-  phone          String?         @unique @db.VarChar(20)
-  socialProvider SocialProvider?
-  socialId       String?         @db.VarChar(255)
-  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
+  id                 String                    @id @default(uuid()) @db.Uuid
+  role               UserRole
+  name               String                    @db.VarChar(50)
+  passwordHash       String?                   @db.VarChar(255)
+  recoveryQuestion   PasswordRecoveryQuestion?
+  recoveryAnswerHash String?                   @db.VarChar(255)
+  email              String                    @unique @db.VarChar(255)
+  phone              String?                   @unique @db.VarChar(20)
+  socialProvider     SocialProvider?
+  socialId           String?                   @db.VarChar(255)
+  createdAt          DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                  @updatedAt @db.Timestamptz(3)
 
-  customer      Customer?
-  mover         Mover?
-  notifications Notification[]
+  customer               Customer?
+  mover                  Mover?
+  notifications          Notification[]
   passwordResetChallenge PasswordResetChallenge?
 
   @@unique([socialProvider, socialId])
@@ -66,16 +75,17 @@ model User {
 }
 
 model PasswordResetChallenge {
-  id             String    @id @default(uuid()) @db.Uuid
-  userId         String    @unique @db.Uuid
-  codeHash       String    @db.VarChar(64)
-  failedAttempts Int       @default(0)
-  expiresAt      DateTime  @db.Timestamptz(3)
-  sentAt         DateTime  @db.Timestamptz(3)
-  verifiedAt     DateTime? @db.Timestamptz(3)
-  consumedAt     DateTime? @db.Timestamptz(3)
-  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  id                     String    @id @default(uuid()) @db.Uuid
+  userId                 String    @unique @db.Uuid
+  codeHash               String    @db.VarChar(64)
+  failedAttempts         Int       @default(0)
+  recoveryAnswerAttempts Int       @default(0)
+  expiresAt              DateTime  @db.Timestamptz(3)
+  sentAt                 DateTime  @db.Timestamptz(3)
+  verifiedAt             DateTime? @db.Timestamptz(3)
+  consumedAt             DateTime? @db.Timestamptz(3)
+  createdAt              DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

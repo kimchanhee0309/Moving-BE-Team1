@@ -247,11 +247,12 @@ Vercel 기본 도메인과 AWS 기본 도메인을 그대로 사용하면 서로
 ## 계정 찾기와 비밀번호 재설정
 
 - `POST /auth/recovery/account`: 이름·이메일·역할이 정확히 일치하는지 확인하고 로그인 ID와 이메일/SNS 계정 방식을 반환합니다.
-- 회원가입에는 별도의 복구 질문·답변을 받지 않습니다.
+- 이메일 회원가입은 고정 복구 질문(`CHILDHOOD_NICKNAME`, `MEMORABLE_PLACE`, `PERSONAL_PHRASE`)과 답변을 함께 받을 수 있습니다. 배포 중 구버전 프론트 호환을 위해 두 필드 모두 생략할 수 있으며, 새 프론트에서는 필수 입력입니다. 답변은 정규화 후 bcrypt hash만 저장합니다. OAuth 가입은 질문을 받지 않습니다.
 - `POST /auth/recovery/password/code`: 이름·이메일·역할이 일치하는 이메일 계정에 6자리 인증코드를 보냅니다. 코드는 5분간 유효하고 60초 뒤 재발송할 수 있으며 IP별 1시간 5회로 제한합니다.
 - 위 endpoint는 이메일 계정에 `delivery: EMAIL`과 challenge ID를, OAuth 계정에 `delivery: SOCIAL`을, 불일치 계정에 `delivery: NONE`을 반환합니다. OAuth 계정은 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.
 - `POST /auth/recovery/password/code/verify`: challenge ID와 6자리 코드를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다. challenge별 5회 및 IP별 1시간 5회로 대입을 제한합니다.
-- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전·검증된 challenge를 확인한 뒤 새 비밀번호를 저장합니다. challenge와 토큰은 한 번만 사용할 수 있습니다.
+- 코드 검증 응답의 `recoveryQuestion`은 가입 시 등록한 질문 식별자이며, 등록하지 않은 기존 계정은 `null`입니다.
+- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전·검증된 challenge를 확인합니다. 질문 등록 계정은 정규화한 `recoveryAnswer`를 추가 확인하며 challenge별 5회 실패 시 새 이메일 코드를 요청해야 합니다. 기존 계정은 이메일 코드만으로 진행합니다. challenge와 토큰은 한 번만 사용할 수 있습니다.
 - 인증코드 원문은 메일로만 전송하고 DB에는 사용자 ID와 별도 Secret으로 생성한 HMAC만 저장합니다. 기존 비밀번호는 표시하지 않고 새 비밀번호만 설정합니다.
 - 로그인은 이메일·역할별 5번째 실패 응답부터 15분 동안 `LOGIN_ATTEMPTS_EXCEEDED`로 제한하며, 별도로 IP별 요청 제한도 적용합니다. 다중 서버 운영 시 공용 rate-limit store를 연결해야 동일한 제한이 전체 인스턴스에 적용됩니다.
 
