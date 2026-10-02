@@ -63,7 +63,7 @@ app.post("/auth/login", loginRateLimiter, (_request, response) => {
   return response.status(401).json({ success: false });
 });
 
-app.post("/auth/recovery/account", accountRecoveryRateLimiter, (_request, response) => {
+app.post("/auth/recovery/password/confirm", accountRecoveryRateLimiter, (_request, response) => {
   return response.status(200).json({ success: true });
 });
 
@@ -232,7 +232,7 @@ describe("Auth rate limit", () => {
       post("/auth/login", TEST_IPS[5]),
     );
     const recoveryResponses = await repeatRequest(11, () =>
-      post("/auth/recovery/account", TEST_IPS[5]),
+      post("/auth/recovery/password/confirm", TEST_IPS[5]),
     );
 
     expect(loginResponses.slice(0, 5).every(({ status }) => status === 401)).toBe(true);

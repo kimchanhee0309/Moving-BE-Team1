@@ -18,7 +18,6 @@ import {
 } from "./auth-rate-limit";
 import {
   confirmPasswordResetController,
-  findAccountController,
   loginController,
   logoutController,
   meController,
@@ -266,29 +265,6 @@ authRouter.post("/signup", signUpRateLimiter, signUpController);
  *       429: { $ref: "#/components/responses/TooManyRequests" }
  */
 authRouter.post("/login", loginRateLimiter, loginController);
-
-/**
- * @openapi
- * /auth/recovery/account:
- *   post:
- *     tags: [Auth]
- *     summary: Find Login Account
- *     description: 이름·이메일·역할이 정확히 일치하면 로그인 ID와 이메일/SNS 계정 방식을 반환합니다.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema: { $ref: "#/components/schemas/AccountRecoveryRequest" }
- *     responses:
- *       200: { description: 계정 일치 결과 }
- *       400: { $ref: "#/components/responses/BadRequest" }
- *       429: { $ref: "#/components/responses/TooManyRequests" }
- */
-authRouter.post(
-  "/recovery/account",
-  accountRecoveryRateLimiter,
-  findAccountController,
-);
 
 /**
  * @openapi

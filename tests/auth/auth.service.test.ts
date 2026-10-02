@@ -110,7 +110,6 @@ import {
 } from "../../src/modules/auth/auth.repository";
 import {
   confirmPasswordReset,
-  findAccount,
   getCurrentUser,
   login,
   refreshAuth,
@@ -297,26 +296,6 @@ describe("Auth service", () => {
       },
       tokens,
     });
-  });
-
-  test("이름·이메일·역할이 일치하면 로그인 ID와 계정 방식을 찾는다", async () => {
-    jest.mocked(findUserByEmail).mockResolvedValue(customerWithoutProfile);
-
-    await expect(findAccount({
-      name: "홍길동",
-      email: "user@example.com",
-      role: "CUSTOMER",
-    })).resolves.toEqual({
-      found: true,
-      loginId: "user@example.com",
-      loginMethod: "EMAIL",
-    });
-
-    await expect(findAccount({
-      name: "다른이름",
-      email: "user@example.com",
-      role: "CUSTOMER",
-    })).resolves.toEqual({ found: false, loginId: null, loginMethod: null });
   });
 
   test("이메일 계정에 5분 만료 코드를 발송하고 challenge 정보를 반환한다", async () => {

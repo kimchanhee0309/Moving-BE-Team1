@@ -67,7 +67,7 @@ export const loginRateLimiter = rateLimit({
   handler: rejectLoginRateLimitedRequest,
 });
 
-/** 계정 존재 여부 대입을 줄이기 위해 계정 찾기를 IP별 1시간에 10회로 제한합니다. */
+/** 재설정 토큰·복구 답변 대입을 줄이기 위해 비밀번호 재설정 확인을 IP별 1시간에 10회로 제한합니다. */
 export const accountRecoveryRateLimiter = rateLimit({
   windowMs: ONE_HOUR_MS,
   limit: 10,
