@@ -12,7 +12,6 @@ jest.mock("../../src/modules/auth/auth.validator", () => ({
 
 jest.mock("../../src/modules/auth/auth.service", () => ({
   confirmPasswordReset: jest.fn(),
-  findAccount: jest.fn(),
   requestPasswordResetCode: jest.fn(),
   getCurrentUser: jest.fn(),
   login: jest.fn(),
@@ -52,7 +51,6 @@ import {
 } from "../../src/common/utils/auth-context";
 import {
   confirmPasswordResetController,
-  findAccountController,
   loginController,
   logoutController,
   meController,
@@ -66,7 +64,6 @@ import {
 import { markOptionalSessionRefreshFailure } from "../../src/modules/auth/auth-rate-limit";
 import {
   confirmPasswordReset,
-  findAccount,
   requestPasswordResetCode,
   getCurrentUser,
   login,
@@ -178,17 +175,6 @@ describe("Auth controller response contract", () => {
 
     expect(setAuthCookies).toHaveBeenCalledWith(response, tokens);
     expect(response.json).toHaveBeenCalledWith({ success: true, data: { user } });
-  });
-
-  test("계정 찾기 결과를 민감정보 없이 반환한다", async () => {
-    const input = { name: "홍길동", email: "user@example.com", role: "CUSTOMER" as const };
-    jest.mocked(parseAccountRecoveryInput).mockReturnValue(input);
-    jest.mocked(findAccount).mockResolvedValue({ found: true, loginId: input.email, loginMethod: "EMAIL" });
-    const response = createResponse();
-
-    await findAccountController({ body: input } as Request, response, jest.fn() as NextFunction);
-
-    expect(response.json).toHaveBeenCalledWith({ success: true, data: { found: true, loginId: input.email, loginMethod: "EMAIL" } });
   });
 
   test("비밀번호 재설정 코드를 발송하고 challenge 정보를 반환한다", async () => {

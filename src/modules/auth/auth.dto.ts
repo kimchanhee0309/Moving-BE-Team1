@@ -39,7 +39,7 @@ export interface WithdrawAccountRequestDto {
   currentPassword?: string;
 }
 
-/** 계정 찾기와 비밀번호 재설정 요청에서 공통으로 확인하는 본인 입력입니다. */
+/** 비밀번호 재설정 인증코드 요청에서 확인하는 본인 입력입니다. 로그인 ID가 이메일이라 별도 아이디 찾기 API는 두지 않습니다. */
 export interface AccountRecoveryRequestDto {
   name: string;
   email: string;
@@ -72,12 +72,6 @@ export interface RecoveryVerificationResultDto {
   resetToken: string;
   /** null이면 기존 계정의 이메일 코드 검증만 필요합니다. */
   recoveryQuestion: PasswordRecoveryQuestion | null;
-}
-
-export interface AccountLookupResultDto {
-  found: boolean;
-  loginId: string | null;
-  loginMethod: "EMAIL" | "SOCIAL" | null;
 }
 
 /** Auth API가 외부에 공개하는 사용자 정보이며 내부 hash와 token은 포함하지 않습니다. */

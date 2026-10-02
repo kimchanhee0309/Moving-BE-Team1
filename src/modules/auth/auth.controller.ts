@@ -16,7 +16,6 @@ import { sendSuccess } from "../../common/response/api-response";
 import { getAuthContext } from "../../common/utils/auth-context";
 import {
   confirmPasswordReset,
-  findAccount,
   getCurrentUser,
   login,
   requestPasswordResetCode,
@@ -57,16 +56,6 @@ export const loginController: UnknownBodyRequestHandler = async (request, respon
   setAuthCookies(response, result.tokens);
 
   return sendSuccess(response, HTTP_STATUS.OK, { user: result.user });
-};
-
-/** 이름·이메일·역할이 일치하는지 확인해 로그인 ID와 계정 방식을 반환합니다. */
-export const findAccountController: UnknownBodyRequestHandler = async (
-  request,
-  response,
-) => {
-  const input = parseAccountRecoveryInput(request.body);
-  const result = await findAccount(input);
-  return sendSuccess(response, HTTP_STATUS.OK, result);
 };
 
 /** 이메일 계정에는 숫자 코드를 발송하고 OAuth 계정에는 SNS 안내 결과를 반환합니다. */

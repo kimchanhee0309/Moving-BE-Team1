@@ -244,9 +244,9 @@ TRUST_PROXY=실제_AWS_PROXY_HOP_수
 
 Vercel 기본 도메인과 AWS 기본 도메인을 그대로 사용하면 서로 완전히 다른 site이므로 인증 쿠키에는 `COOKIE_SAME_SITE=none`과 `COOKIE_SECURE=true`가 필요합니다. 이 방식은 브라우저의 third-party cookie 제한 영향을 받을 수 있어 장기 운영에서는 같은 서비스 도메인의 `app`/`api` 하위 도메인 구성을 우선합니다. 어느 방식이든 CORS에는 정확한 Vercel 운영 origin만 등록하고 wildcard와 credentials를 함께 사용하지 않습니다.
 
-## 계정 찾기와 비밀번호 재설정
+## 비밀번호 재설정
 
-- `POST /auth/recovery/account`: 이름·이메일·역할이 정확히 일치하는지 확인하고 로그인 ID와 이메일/SNS 계정 방식을 반환합니다.
+- 로그인 ID가 이메일이므로 별도 아이디 찾기 API(`POST /auth/recovery/account`)는 제공하지 않습니다. SNS 가입 계정 여부는 아래 인증코드 요청의 `delivery: SOCIAL`로 안내합니다.
 - 이메일 회원가입은 고정 복구 질문(`CHILDHOOD_NICKNAME`, `MEMORABLE_PLACE`, `PERSONAL_PHRASE`)과 답변을 함께 받을 수 있습니다. 배포 중 구버전 프론트 호환을 위해 두 필드 모두 생략할 수 있으며, 새 프론트에서는 필수 입력입니다. 답변은 정규화 후 SHA-256으로 고정 길이화한 값을 bcrypt hash로만 저장합니다(긴 한글 답변이 bcrypt 72바이트 제한에 잘리지 않도록). OAuth 가입은 질문을 받지 않습니다.
 - `POST /auth/recovery/password/code`: 이름·이메일·역할이 일치하는 이메일 계정에 6자리 인증코드를 보냅니다. 코드는 5분간 유효하고 60초 뒤 재발송할 수 있으며 IP별 1시간 5회로 제한합니다.
 - 위 endpoint는 이메일 계정에 `delivery: EMAIL`과 challenge ID를, OAuth 계정에 `delivery: SOCIAL`을, 불일치 계정에 `delivery: NONE`을 반환합니다. OAuth 계정은 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.

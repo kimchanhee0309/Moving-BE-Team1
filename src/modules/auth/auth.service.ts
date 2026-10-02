@@ -19,7 +19,6 @@ import {
 import { removeReplacedMoverProfileImage } from "../mover-profile/mover-profile.image";
 import { publishNotificationToUser } from "../notification/notification.hub";
 import type {
-  AccountLookupResultDto,
   AccountRecoveryRequestDto,
   AuthResult,
   AuthUserDto,
@@ -155,21 +154,6 @@ export async function login(input: LoginRequestDto): Promise<AuthResult> {
   return {
     user: toAuthUserDto(user),
     tokens: createAuthTokens(user.id, user.role),
-  };
-}
-
-/** 입력한 이름·이메일·역할이 정확히 일치할 때 로그인 ID와 계정 방식을 반환합니다. */
-export async function findAccount(
-  input: AccountRecoveryRequestDto,
-): Promise<AccountLookupResultDto> {
-  const user = await findUserByEmail(input.email);
-  if (!user || user.name !== input.name || user.role !== input.role) {
-    return { found: false, loginId: null, loginMethod: null };
-  }
-  return {
-    found: true,
-    loginId: user.email,
-    loginMethod: user.passwordHash ? "EMAIL" : "SOCIAL",
   };
 }
 
