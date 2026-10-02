@@ -2,7 +2,7 @@
  * 이메일 인증·선택 세션·회원 탈퇴 API의 입력과 외부 응답 DTO를 정의합니다.
  * passwordHash와 토큰 원문 같은 내부 인증 정보는 응답 DTO에 포함하지 않습니다.
  */
-import type { UserRole } from "../../generated/prisma/enums";
+import type { PasswordRecoveryQuestion, UserRole } from "../../generated/prisma/enums";
 import type { AuthTokens } from "../../common/utils/auth-token";
 
 /** POST /auth/signup에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
@@ -17,6 +17,10 @@ export interface SignUpRequestDto {
   password: string;
   /** 가입할 계정 유형이며 CUSTOMER 또는 MOVER입니다. */
   role: UserRole;
+  /** 이메일 계정의 선택형 복구 질문입니다. 구버전 클라이언트는 둘 다 생략할 수 있습니다. */
+  recoveryQuestion?: PasswordRecoveryQuestion;
+  /** 질문과 함께 전달하는 2~100자 답변이며 hash만 저장합니다. */
+  recoveryAnswer?: string;
 }
 
 /** POST /auth/login에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
@@ -46,6 +50,8 @@ export interface AccountRecoveryRequestDto {
 export interface ConfirmPasswordResetRequestDto {
   token: string;
   newPassword: string;
+  /** 질문을 설정한 계정에서 이메일 인증 뒤 추가로 확인하는 답변입니다. */
+  recoveryAnswer?: string;
 }
 
 /** POST /auth/recovery/password/code/verify에서 검증할 challenge와 숫자 코드입니다. */
@@ -64,6 +70,8 @@ export interface PasswordResetCodeRequestResultDto {
 
 export interface RecoveryVerificationResultDto {
   resetToken: string;
+  /** null이면 기존 계정의 이메일 코드 검증만 필요합니다. */
+  recoveryQuestion: PasswordRecoveryQuestion | null;
 }
 
 export interface AccountLookupResultDto {
