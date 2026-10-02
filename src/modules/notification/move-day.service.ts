@@ -17,6 +17,7 @@ import {
   type ConfirmedMoveRequestForMoveDay,
   type CreatedMoveDayNotificationRecord,
 } from "./move-day.repository";
+import type { NotificationParams } from "./notification.dto";
 
 /**
  * 기준 시각(now)의 UTC 캘린더 날짜 다음 날 UTC 자정 instant를 계산합니다.
@@ -40,6 +41,19 @@ function computeTomorrowUtcMidnight(now: Date): Date {
  * 이사 예정일이에요.")를 사용합니다(팀 확정 문구). 기사 닉네임·고객 이름은 더 이상 문구에
  * 포함하지 않으므로 확정 견적 유무와 무관하게 항상 같은 결과를 반환합니다.
  */
+/**
+ * MOVE_DAY 알림의 문장 변수를 만듭니다. content와 같은 주소 약칭을 사용합니다.
+ *
+ * @param moveRequest 확정된 이사 요청
+ * @returns from·to 주소 약칭
+ */
+function buildMoveDayParams(moveRequest: ConfirmedMoveRequestForMoveDay): NotificationParams {
+  return {
+    from: abbreviateAddress(moveRequest.fromAddress),
+    to: abbreviateAddress(moveRequest.toAddress),
+  };
+}
+
 function buildMoveDayContent(moveRequest: ConfirmedMoveRequestForMoveDay): string {
   const fromAbbrev = abbreviateAddress(moveRequest.fromAddress);
   const toAbbrev = abbreviateAddress(moveRequest.toAddress);
@@ -62,6 +76,7 @@ function buildCustomerCandidate(
     type: "MOVE_DAY",
     title: "내일은 이사 예정일입니다.",
     content: buildMoveDayContent(moveRequest),
+    params: buildMoveDayParams(moveRequest),
   };
 }
 
@@ -77,6 +92,7 @@ function buildMoverCandidate(
     type: "MOVE_DAY",
     title: "내일은 이사 예정일입니다.",
     content: buildMoveDayContent(moveRequest),
+    params: buildMoveDayParams(moveRequest),
   };
 }
 
@@ -150,6 +166,7 @@ export async function runMoveDayNotificationJob(
       type: notification.type,
       title: notification.title,
       content: notification.content,
+      params: notification.params ?? null,
       moveRequestId: notification.moveRequestId,
       quoteId: notification.quoteId,
       createdAt,

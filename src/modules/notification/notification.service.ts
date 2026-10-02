@@ -8,6 +8,7 @@ import { NotFoundError } from "../../common/errors/app-error";
 import { encodeNotificationCursor } from "./notification.cursor";
 import type {
   NotificationListItemDto,
+  NotificationParams,
   NotificationListQuery,
   NotificationListResult,
   NotificationReadResult,
@@ -20,6 +21,21 @@ import {
 } from "./notification.repository";
 
 /** Repository record를 응답 DTO로 변환합니다. Prisma row를 그대로 노출하지 않습니다. */
+/**
+ * DB Json 값을 문자열 값만 가진 params 객체로 좁힙니다.
+ * 객체가 아니거나 문자열이 아닌 값이 섞이면 클라이언트가 잘못 조립하지 않도록 null을 반환합니다.
+ *
+ * @param value Notification.params 원본(Json | null)
+ * @returns 문자열 맵 또는 null
+ */
+function toNotificationParams(value: unknown): NotificationParams | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  return entries.every(([, item]) => typeof item === "string")
+    ? Object.fromEntries(entries.map(([key, item]) => [key, String(item)]))
+    : null;
+}
+
 function toNotificationListItem(
   record: NotificationRecord,
 ): NotificationListItemDto {
@@ -28,6 +44,7 @@ function toNotificationListItem(
     type: record.type,
     title: record.title,
     content: record.content,
+    params: toNotificationParams(record.params),
     moveRequestId: record.moveRequestId,
     quoteId: record.quoteId,
     readAt: record.readAt ? record.readAt.toISOString() : null,

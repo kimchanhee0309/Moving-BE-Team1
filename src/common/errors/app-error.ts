@@ -3,10 +3,18 @@ import { HTTP_STATUS } from "../constants/http-status";
 /**
  * API 명세가 정한 필드별 검증 오류 한 건입니다.
  * 클라이언트는 field로 입력 항목을 찾고 reason을 사용자에게 표시합니다.
+ * code는 다국어 화면에서 사유를 번역하기 위한 안정적인 식별자이며, 기존 클라이언트 호환을 위해 선택 필드입니다.
  */
 export interface ErrorDetail {
+  /** 오류가 발생한 입력 필드 경로입니다. 예: "email", "address.zipCode" */
   field: string;
+  /** 한국어 사유 문구입니다. code 번역이 없을 때의 대체 문구로도 쓰입니다. */
   reason: string;
+  /**
+   * 사유 종류 식별자입니다. 대문자 스네이크 케이스를 사용합니다.
+   * 예: REQUIRED, INVALID_TYPE, TOO_SMALL, TOO_BIG, INVALID_FORMAT, INVALID_VALUE, UNRECOGNIZED_FIELD
+   */
+  code?: string;
 }
 
 export type ErrorDetails = ErrorDetail[];

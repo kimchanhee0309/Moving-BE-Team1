@@ -49,7 +49,7 @@ describe("Mover search query validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "pageSize", reason: "1 이상 20 이하의 정수여야 합니다." },
+          expect.objectContaining({ field: "pageSize", reason: "1 이상 20 이하의 정수여야 합니다." }),
         ]);
       }
     }
@@ -65,7 +65,7 @@ describe("Mover search query validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "page", reason: "1 이상 1000 이하의 정수여야 합니다." },
+          expect.objectContaining({ field: "page", reason: "1 이상 1000 이하의 정수여야 합니다." }),
         ]);
       }
     }
@@ -84,16 +84,16 @@ describe("Mover search query validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          {
+          expect.objectContaining({
             field: "regions",
             reason:
               "서울, 경기, 인천, 강원, 충북, 충남, 세종, 대전, 전북, 전남, 광주, 경북, 경남, 대구, 울산, 부산, 제주만 사용할 수 있습니다.",
-          },
-          {
+          }),
+          expect.objectContaining({
             field: "sort",
             reason:
               "reviewCount, rating, careerYears, confirmedCount만 사용할 수 있습니다.",
-          },
+          }),
         ]);
       }
     }
@@ -109,7 +109,7 @@ describe("Mover search query validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "regions", reason: "하나의 값만 허용합니다." },
+          expect.objectContaining({ field: "regions", reason: "하나의 값만 허용합니다." }),
         ]);
       }
     }
@@ -135,7 +135,7 @@ describe("parseMoverSearchIdParams", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "id", reason: "UUID 형식이어야 합니다." },
+          expect.objectContaining({ field: "id", reason: "UUID 형식이어야 합니다." }),
         ]);
       }
     }

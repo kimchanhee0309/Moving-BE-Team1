@@ -295,6 +295,8 @@ model Notification {
   type          NotificationType
   title         String           @db.VarChar(100)
   content       String           @db.Text
+  /// 다국어 화면에서 알림 문장을 조립할 변수(예: moverNickname, serviceType). 기존 알림과 변수 없는 알림은 null입니다.
+  params        Json?
   readAt        DateTime?        @db.Timestamptz(3)
   createdAt     DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt     DateTime         @updatedAt @db.Timestamptz(3)
