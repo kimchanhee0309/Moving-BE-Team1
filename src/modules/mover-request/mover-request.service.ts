@@ -338,6 +338,7 @@ export async function sendQuoteToReceivedRequest(
       type: notification.type,
       title: notification.title,
       content: notification.content,
+      params: notification.params ?? null,
       moveRequestId: notification.moveRequestId,
       quoteId: notification.quoteId,
       createdAt: new Date().toISOString(),

@@ -106,6 +106,7 @@ describe("runMoveDayNotificationJob", () => {
         type: "MOVE_DAY",
         title: "내일은 이사 예정일입니다.",
         content: EXPECTED_CONTENT,
+        params: { from: "경기(일산)", to: "서울(영등포)" },
       },
       {
         userId: MOVER_USER_ID,
@@ -114,6 +115,7 @@ describe("runMoveDayNotificationJob", () => {
         type: "MOVE_DAY",
         title: "내일은 이사 예정일입니다.",
         content: EXPECTED_CONTENT,
+        params: { from: "경기(일산)", to: "서울(영등포)" },
       },
     ]);
 
@@ -146,6 +148,7 @@ describe("runMoveDayNotificationJob", () => {
         type: "MOVE_DAY",
         title: "내일은 이사 예정일입니다.",
         content: EXPECTED_CONTENT,
+        params: { from: "경기(일산)", to: "서울(영등포)" },
       },
     ]);
     expect(result).toHaveLength(1);
@@ -176,6 +179,7 @@ describe("runMoveDayNotificationJob", () => {
         type: "MOVE_DAY",
         title: "내일은 이사 예정일입니다.",
         content: EXPECTED_CONTENT,
+        params: { from: "경기(일산)", to: "서울(영등포)" },
       },
     ]);
     expect(result).toHaveLength(1);

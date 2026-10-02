@@ -6,6 +6,7 @@ import type { Prisma } from "../../generated/prisma/client";
 import type { QuoteStatus } from "../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
 import type { ServiceTypeName } from "./move-request.dto";
+import type { NotificationParams } from "../notification/notification.dto";
 
 type PrismaClientOrTx = Prisma.TransactionClient | typeof prisma;
 
@@ -54,6 +55,8 @@ export interface CreatedNewMoveRequestNotificationRecord {
   type: "NEW_MOVE_REQUEST";
   title: string;
   content: string;
+  /** 언어별 알림 문장을 조립할 변수입니다. 문장에 변수가 없는 알림은 생략합니다. */
+  params?: NotificationParams;
 }
 
 export function findServiceTypeIdByName(
@@ -419,6 +422,8 @@ export interface CreatedMoveRequestCancelNotificationRecord {
   type: "MOVE_REQUEST_CANCELED" | "CONFIRMED_MOVE_CANCELED";
   title: string;
   content: string;
+  /** 언어별 알림 문장을 조립할 변수입니다. 문장에 변수가 없는 알림은 생략합니다. */
+  params?: NotificationParams;
 }
 
 /**
@@ -479,6 +484,7 @@ export async function createMoveRequestCancelNotifications(
       type: input.type,
       title,
       content,
+      params: { customerName: input.customerName, reason: input.reason },
     }),
   );
 

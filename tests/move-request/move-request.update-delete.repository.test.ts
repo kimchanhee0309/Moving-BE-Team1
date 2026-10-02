@@ -161,6 +161,7 @@ describe("Move request 수정/삭제 repository", () => {
           type: "MOVE_REQUEST_CANCELED",
           title: "견적 요청이 취소되었습니다.",
           content: "홍길동 고객님이 보내주신 견적 요청을 취소했습니다.",
+          params: { customerName: "홍길동", reason: "DIRECT_DELETE" },
         },
       ],
     });

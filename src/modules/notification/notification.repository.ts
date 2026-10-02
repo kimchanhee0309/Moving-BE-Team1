@@ -12,6 +12,7 @@ const notificationSelect = {
   type: true,
   title: true,
   content: true,
+  params: true,
   moveRequestId: true,
   quoteId: true,
   readAt: true,

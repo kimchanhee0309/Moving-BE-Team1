@@ -242,6 +242,7 @@ describe("Move request 수정/삭제 service", () => {
         content: "홍길동 고객님이 보내주신 견적 요청을 취소했습니다.",
         moveRequestId: MOVE_REQUEST_ID,
         quoteId: QUOTE_ID_1,
+        params: null,
         createdAt: expect.any(String),
       });
     });

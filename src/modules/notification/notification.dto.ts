@@ -31,6 +31,16 @@ export interface NotificationCursorPayload {
 }
 
 /**
+ * 알림 문장 변수입니다. key는 type별로 정해지며 값은 모두 문자열입니다.
+ * - NEW_QUOTE: moverNickname, serviceType(SMALL·HOME·OFFICE)
+ * - QUOTE_CONFIRMED: 고객 수신 moverNickname / 기사님 수신 customerName
+ * - MOVE_DAY: from, to(주소 약칭)
+ * - MOVE_REQUEST_CANCELED·CONFIRMED_MOVE_CANCELED: customerName, reason(DIRECT_DELETE·WITHDRAWAL)
+ * - NEW_MOVE_REQUEST: 변수 없음
+ */
+export type NotificationParams = Record<string, string>;
+
+/**
  * 알림 목록·읽음 처리 응답 한 건입니다.
  * Prisma Notification row를 그대로 노출하지 않고 화면에 필요한 필드만 선택합니다.
  */
@@ -38,7 +48,10 @@ export interface NotificationListItemDto {
   id: string;
   type: NotificationType;
   title: string;
+  /** 한국어 완성 문장입니다. params 번역이 없는 클라이언트·기존 알림의 대체 문구로 쓰입니다. */
   content: string;
+  /** 문장 변수입니다. 이 컬럼 추가 전에 만들어진 알림과 변수 없는 알림은 null입니다. */
+  params: NotificationParams | null;
   /** 관련 이사 요청이 삭제되면 Prisma가 SetNull로 처리하므로 null일 수 있습니다. */
   moveRequestId: string | null;
   /** 관련 견적이 삭제되면 Prisma가 SetNull로 처리하므로 null일 수 있습니다. */
@@ -74,6 +87,8 @@ export interface NotificationStreamPayload {
   type: NotificationType;
   title: string;
   content: string;
+  /** 문장 변수입니다. 변수 없는 알림은 null입니다. */
+  params: NotificationParams | null;
   moveRequestId: string | null;
   quoteId: string | null;
   createdAt: string;

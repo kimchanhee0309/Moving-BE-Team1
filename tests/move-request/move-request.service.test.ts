@@ -199,6 +199,7 @@ describe("Move request service", () => {
         content: "고객님이 새로운 이사 견적을 요청했습니다.",
         moveRequestId: MOVE_REQUEST_ID,
         quoteId: null,
+        params: null,
         createdAt: expect.any(String),
       });
       expect(publishNotificationToUser).toHaveBeenNthCalledWith(2, SECOND_MOVER_USER_ID, {
@@ -207,6 +208,7 @@ describe("Move request service", () => {
         content: "고객님이 새로운 이사 견적을 요청했습니다.",
         moveRequestId: MOVE_REQUEST_ID,
         quoteId: null,
+        params: null,
         createdAt: expect.any(String),
       });
     });

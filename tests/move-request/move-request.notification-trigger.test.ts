@@ -126,6 +126,7 @@ describe("createMoveRequestForCustomer의 NEW_MOVE_REQUEST 알림 push", () => {
       content: "고객님이 새로운 이사 견적을 요청했습니다.",
       moveRequestId: MOVE_REQUEST_ID,
       quoteId: null,
+      params: null,
       createdAt: expect.any(String),
     });
     expect(publishNotificationToUser).toHaveBeenCalledWith(OTHER_MOVER_USER_ID, {
@@ -134,6 +135,7 @@ describe("createMoveRequestForCustomer의 NEW_MOVE_REQUEST 알림 push", () => {
       content: "고객님이 새로운 이사 견적을 요청했습니다.",
       moveRequestId: MOVE_REQUEST_ID,
       quoteId: null,
+      params: null,
       createdAt: expect.any(String),
     });
   });

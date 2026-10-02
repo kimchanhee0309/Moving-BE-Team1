@@ -36,7 +36,7 @@ describe("Favorite validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.code).toBe("VALIDATION_ERROR");
         expect(error.details).toEqual([
-          { field: "moverId", reason: "UUID 형식이어야 합니다." },
+          expect.objectContaining({ field: "moverId", reason: "UUID 형식이어야 합니다." }),
         ]);
       }
     }
@@ -59,7 +59,7 @@ describe("Favorite validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "pageSize", reason: "50 이하여야 합니다." },
+          expect.objectContaining({ field: "pageSize", reason: "50 이하여야 합니다." }),
         ]);
       }
     }
@@ -94,7 +94,7 @@ describe("Favorite validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "page", reason: `${FAVORITE_LIST_MAX_PAGE} 이하여야 합니다.` },
+          expect.objectContaining({ field: "page", reason: `${FAVORITE_LIST_MAX_PAGE} 이하여야 합니다.` }),
         ]);
       }
     }
@@ -132,7 +132,7 @@ describe("Favorite validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.code).toBe("VALIDATION_ERROR");
         expect(error.details).toEqual([
-          { field: "page", reason: "조회 위치가 허용 범위를 넘습니다." },
+          expect.objectContaining({ field: "page", reason: "조회 위치가 허용 범위를 넘습니다." }),
         ]);
       }
     }
@@ -149,7 +149,7 @@ describe("Favorite validator", () => {
       if (error instanceof BadRequestError) {
         expect(error.code).toBe("VALIDATION_ERROR");
         expect(error.details).toEqual([
-          { field: "page", reason: "허용된 정수 범위를 벗어났습니다." },
+          expect.objectContaining({ field: "page", reason: "허용된 정수 범위를 벗어났습니다." }),
         ]);
       }
     }
@@ -165,7 +165,7 @@ describe("Favorite validator", () => {
 
       if (error instanceof BadRequestError) {
         expect(error.details).toEqual([
-          { field: "page", reason: "허용된 정수 범위를 벗어났습니다." },
+          expect.objectContaining({ field: "page", reason: "허용된 정수 범위를 벗어났습니다." }),
         ]);
       }
     }

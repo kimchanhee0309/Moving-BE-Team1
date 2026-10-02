@@ -153,6 +153,12 @@ const swaggerSpecification = swaggerJsdoc({
                         type: "string",
                         example: "올바른 이메일 형식이 아닙니다.",
                       },
+                      code: {
+                        type: "string",
+                        description:
+                          "사유 식별자(선택). REQUIRED, INVALID_TYPE, TOO_SMALL, TOO_BIG, INVALID_FORMAT, INVALID_VALUE, UNRECOGNIZED_FIELD, 이미지 업로드 오류 code 등",
+                        example: "INVALID_FORMAT",
+                      },
                     },
                   },
                 },
