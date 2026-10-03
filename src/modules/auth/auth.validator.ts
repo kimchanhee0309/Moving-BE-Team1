@@ -28,14 +28,6 @@ const roleSchema = z.enum(["CUSTOMER", "MOVER"], {
   error: "CUSTOMER 또는 MOVER만 사용할 수 있습니다.",
 });
 
-// 질문 목록은 과거 복구 기능의 식별자를 재사용합니다. 답변 원문은 저장하지 않습니다.
-const recoveryQuestionSchema = z.enum(["CHILDHOOD_NICKNAME", "MEMORABLE_PLACE", "PERSONAL_PHRASE"], {
-  error: "제공된 복구 질문 중 하나를 선택해 주세요.",
-});
-const recoveryAnswerSchema = z.string({ error: "복구 답변을 입력해 주세요." })
-  .transform((value) => value.normalize("NFKC").trim().toLowerCase())
-  .pipe(z.string().min(2, { error: "복구 답변은 2자 이상 입력해 주세요." }).max(100, { error: "복구 답변은 100자 이내로 입력해 주세요." }));
-
 const emailSchema = requiredString
   .transform((value) => value.toLowerCase())
   .pipe(
@@ -66,14 +58,12 @@ const signUpSchema = z
       ),
     password: passwordSchema,
     role: roleSchema,
-    recoveryQuestion: recoveryQuestionSchema.optional(),
-    recoveryAnswer: recoveryAnswerSchema.optional(),
+    recoveryQuestion: z.unknown().optional(),
+    recoveryAnswer: z.unknown().optional(),
   })
   .strict()
-  .refine((value) => Boolean(value.recoveryQuestion) === Boolean(value.recoveryAnswer), {
-    error: "복구 질문과 답변을 함께 입력해 주세요.",
-    path: ["recoveryAnswer"],
-  });
+  // 구버전 FE가 전송한 두 필드만 허용해 제거하며 다른 미지의 필드는 계속 거절합니다.
+  .transform(({ name, email, phone, password, role }) => ({ name, email, phone, password, role }));
 
 const loginSchema = z
   .object({
@@ -104,9 +94,11 @@ const confirmPasswordResetSchema = z
   .object({
     token: requiredString.max(4096, { error: "재설정 인증이 올바르지 않습니다." }),
     newPassword: passwordSchema,
-    recoveryAnswer: recoveryAnswerSchema.optional(),
+    recoveryAnswer: z.unknown().optional(),
   })
-  .strict();
+  .strict()
+  // 배포 중 구버전 FE의 답변만 무시하고 토큰·새 비밀번호 검증은 유지합니다.
+  .transform(({ token, newPassword }) => ({ token, newPassword }));
 
 const verifyPasswordResetCodeSchema = z
   .object({

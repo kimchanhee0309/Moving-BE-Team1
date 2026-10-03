@@ -183,7 +183,6 @@ describe("Password reset challenge repository", () => {
       id: "challenge-id",
       codeHash: "old-hash",
       failedAttempts: 2,
-      recoveryAnswerAttempts: 0,
       sentAt: new Date("2026-09-29T00:00:00.000Z"),
       expiresAt: new Date("2026-09-29T00:05:00.000Z"),
       verifiedAt: null,
@@ -209,7 +208,6 @@ describe("Password reset challenge repository", () => {
       data: {
         codeHash: "old-hash",
         failedAttempts: 2,
-        recoveryAnswerAttempts: 0,
         expiresAt: previous.expiresAt,
         sentAt: previous.sentAt,
         verifiedAt: null,

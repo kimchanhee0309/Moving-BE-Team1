@@ -71,17 +71,11 @@ import {
   markPasswordResetChallengeVerified,
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
-  reserveRecoveryAnswerAttempt,
   restorePasswordResetChallenge,
   runAuthTransaction,
   updateEmailUserPassword,
 } from "./auth.repository";
-import {
-  hashPassword,
-  hashRecoveryAnswer,
-  verifyPassword,
-  verifyRecoveryAnswer,
-} from "./password";
+import { hashPassword, verifyPassword } from "./password";
 
 /**
  * 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다.
@@ -104,19 +98,13 @@ export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
     throw new ConflictError("이미 사용 중인 전화번호입니다.", "PHONE_ALREADY_EXISTS");
   }
 
-  // 구버전 가입 요청은 두 필드를 모두 생략할 수 있으나 새 가입 화면은 질문과 답변을 함께 보냅니다.
-  const [passwordHash, recoveryAnswerHash] = await Promise.all([
-    hashPassword(input.password),
-    input.recoveryAnswer ? hashRecoveryAnswer(input.recoveryAnswer) : Promise.resolve(undefined),
-  ]);
+  const passwordHash = await hashPassword(input.password);
   const user = await createEmailUser({
     name: input.name,
     email: input.email,
     phone: input.phone,
     passwordHash,
     role: input.role,
-    recoveryQuestion: input.recoveryQuestion,
-    recoveryAnswerHash,
   });
 
   return {
@@ -342,28 +330,25 @@ export async function verifyPasswordResetCode(
       reservedAttempt.user.passwordHash,
       reservedAttempt.id,
     ),
-    recoveryQuestion: reservedAttempt.user.recoveryQuestion ?? null,
   };
 }
 
-/** 링크의 서명·만료·현재 password hash를 확인한 뒤 조건부로 새 hash를 저장합니다. */
+/** 이메일 코드 검증으로 발급한 토큰의 서명·만료·현재 password hash를 확인한 뒤 새 hash를 저장합니다. */
 export async function confirmPasswordReset(
   input: ConfirmPasswordResetRequestDto,
 ): Promise<void> {
   const payload = verifyPasswordResetToken(input.token);
 
-  // 이미 사용됐거나 검증되지 않은 challenge, 그리고 역할·비밀번호가 바뀐 뒤의 오래된 토큰은 답변 횟수 예약 전에 거절합니다.
-  // 먼저 확인하지 않으면 재사용 토큰이 RECOVERY_ANSWER_ATTEMPTS_EXCEEDED로 잘못 응답하거나,
-  // 비밀번호 변경 후 같은 challenge로 새 재설정을 시작했을 때 이전 토큰이 새 재설정의 답변 기회를 소모할 수 있습니다.
+  // 이미 사용됐거나 비밀번호가 바뀐 토큰은 bcrypt 비용을 쓰기 전에 거절합니다.
   // 경쟁 상황은 아래 transaction 안에서 같은 조건을 다시 확인합니다.
-  const answerChallenge = await findPasswordResetChallengeById(payload.challengeId);
+  const challengeBeforeUpdate = await findPasswordResetChallengeById(payload.challengeId);
   if (
-    !answerChallenge?.verifiedAt ||
-    answerChallenge.consumedAt ||
-    answerChallenge.user.id !== payload.userId ||
-    answerChallenge.user.role !== payload.role ||
-    !answerChallenge.user.passwordHash ||
-    !matchesCredentialVersion(answerChallenge.user.passwordHash, payload.credentialVersion)
+    !challengeBeforeUpdate?.verifiedAt ||
+    challengeBeforeUpdate.consumedAt ||
+    challengeBeforeUpdate.user.id !== payload.userId ||
+    challengeBeforeUpdate.user.role !== payload.role ||
+    !challengeBeforeUpdate.user.passwordHash ||
+    !matchesCredentialVersion(challengeBeforeUpdate.user.passwordHash, payload.credentialVersion)
   ) {
     throw new BadRequestError(
       "비밀번호 재설정 인증이 만료되었거나 올바르지 않습니다.",
@@ -371,21 +356,6 @@ export async function confirmPasswordReset(
     );
   }
 
-  // 토큰만으로 답변을 무제한 추측하지 못하도록 실패 횟수를 transaction 밖에서 먼저 예약합니다.
-  if (answerChallenge.user.recoveryQuestion && answerChallenge.user.recoveryAnswerHash) {
-    if (!input.recoveryAnswer) {
-      throw new BadRequestError("복구 답변을 입력해 주세요.", "RECOVERY_ANSWER_REQUIRED");
-    }
-    const reservation = await reserveRecoveryAnswerAttempt(payload.challengeId, payload.userId, 5);
-    if (reservation.count !== 1) {
-      throw new TooManyRequestsError("복구 답변 확인 횟수를 초과했습니다. 새 인증코드를 요청해 주세요.", "RECOVERY_ANSWER_ATTEMPTS_EXCEEDED");
-    }
-    if (!await verifyRecoveryAnswer(input.recoveryAnswer, answerChallenge.user.recoveryAnswerHash)) {
-      throw new UnauthorizedError("복구 답변이 올바르지 않습니다.", "RECOVERY_ANSWER_INVALID");
-    }
-  }
-
-  // 답변 확인을 통과한 요청만 bcrypt 비용을 쓰도록 새 비밀번호 hash는 이 시점에 만듭니다.
   const nextPasswordHash = await hashPassword(input.newPassword);
 
   await runAuthTransaction(async (transaction) => {
@@ -401,8 +371,7 @@ export async function confirmPasswordReset(
       !user?.passwordHash ||
       user.id !== payload.userId ||
       user.role !== payload.role ||
-      !matchesCredentialVersion(user.passwordHash, payload.credentialVersion) ||
-      Boolean(user.recoveryQuestion) !== Boolean(user.recoveryAnswerHash)
+      !matchesCredentialVersion(user.passwordHash, payload.credentialVersion)
     ) {
       throw new BadRequestError(
         "비밀번호 재설정 인증이 만료되었거나 올바르지 않습니다.",

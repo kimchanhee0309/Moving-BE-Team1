@@ -58,8 +58,8 @@ export const authRouter = Router();
  *         phone: { type: string, example: "01012345678" }
  *         password: { type: string, format: password, minLength: 8, example: "Password1!" }
  *         role: { $ref: "#/components/schemas/UserRole" }
- *         recoveryQuestion: { type: string, enum: [CHILDHOOD_NICKNAME, MEMORABLE_PLACE, PERSONAL_PHRASE], description: "복구 답변과 함께 제출하는 고정 질문. 구버전 가입 요청에서는 둘 다 생략 가능" }
- *         recoveryAnswer: { type: string, minLength: 2, maxLength: 100, description: "질문과 함께 제출하며 정규화 후 hash만 저장" }
+ *         recoveryQuestion: { deprecated: true, description: "구버전 FE 호환용 필드. 배포 전환 기간에만 받으며 값은 검증·저장하지 않고 무시" }
+ *         recoveryAnswer: { deprecated: true, description: "구버전 FE 호환용 필드. 배포 전환 기간에만 받으며 값은 검증·저장하지 않고 무시" }
  *     LoginRequest:
  *       type: object
  *       required: [email, password, role]
@@ -81,10 +81,9 @@ export const authRouter = Router();
  *         success: { type: boolean, example: true }
  *         data:
  *           type: object
- *           required: [resetToken, recoveryQuestion]
+ *           required: [resetToken]
  *           properties:
  *             resetToken: { type: string, description: "15분 만료 비밀번호 재설정 토큰" }
- *             recoveryQuestion: { type: string, nullable: true, enum: [CHILDHOOD_NICKNAME, MEMORABLE_PLACE, PERSONAL_PHRASE], description: "null이면 기존 계정으로 추가 답변이 필요 없음" }
  *     AccountRecoveryRequest:
  *       type: object
  *       additionalProperties: false
@@ -100,7 +99,7 @@ export const authRouter = Router();
  *       properties:
  *         token: { type: string, description: "이메일 코드 검증 후 발급된 15분 만료 토큰" }
  *         newPassword: { type: string, format: password, minLength: 8, example: "NextPassword1!" }
- *         recoveryAnswer: { type: string, minLength: 2, maxLength: 100, description: "복구 질문을 등록한 계정에서는 필수. 이메일 코드 확인 뒤 5회까지 시도 가능" }
+ *         recoveryAnswer: { deprecated: true, description: "구버전 FE 호환용 필드. 배포 전환 기간에만 받으며 값은 검증·저장하지 않고 무시" }
  *     WithdrawAccountRequest:
  *       type: object
  *       additionalProperties: false
@@ -297,7 +296,7 @@ authRouter.post(
  *   post:
  *     tags: [Auth]
  *     summary: Verify Password Reset Code
- *     description: 6자리 코드의 HMAC·5분 만료·실패 횟수를 확인하고 성공하면 15분 만료 재설정 토큰과 등록된 복구 질문(또는 null)을 반환합니다.
+ *     description: 6자리 코드의 HMAC·5분 만료·실패 횟수를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다.
  *     requestBody:
  *       required: true
  *       content:
@@ -305,7 +304,7 @@ authRouter.post(
  *           schema: { $ref: "#/components/schemas/PasswordResetCodeVerifyRequest" }
  *     responses:
  *       200:
- *         description: 이메일 코드 확인 및 재설정 토큰·복구 질문 반환
+ *         description: 이메일 코드 확인 및 재설정 토큰 반환
  *         content:
  *           application/json:
  *             schema: { $ref: "#/components/schemas/PasswordResetCodeVerifyResponse" }
@@ -326,7 +325,7 @@ authRouter.post(
  *   post:
  *     tags: [Auth]
  *     summary: Confirm Password Reset
- *     description: 단기 재설정 토큰과 새 비밀번호를 검증하고 질문 등록 계정에는 복구 답변을 추가 확인해 비밀번호를 교체합니다. 기존 계정은 이메일 인증만 사용합니다. 오류 code는 PASSWORD_RESET_TOKEN_INVALID(400, 만료·재사용 토큰), RECOVERY_ANSWER_REQUIRED(400), RECOVERY_ANSWER_INVALID(401), RECOVERY_ANSWER_ATTEMPTS_EXCEEDED(429, 새 인증코드 필요)입니다.
+ *     description: 이메일 코드 확인 뒤 발급된 단기 재설정 토큰과 새 비밀번호를 검증해 비밀번호를 교체합니다. 이전에 복구 질문을 등록한 계정도 이메일 코드만 사용합니다. 만료·재사용 토큰은 PASSWORD_RESET_TOKEN_INVALID(400)입니다.
  *     requestBody:
  *       required: true
  *       content:

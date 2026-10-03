@@ -15,7 +15,6 @@ jest.mock("../../src/modules/auth/auth.repository", () => ({
   restorePasswordResetChallenge: jest.fn(),
   findPasswordResetChallengeById: jest.fn(),
   reservePasswordResetCodeAttempt: jest.fn(),
-  reserveRecoveryAnswerAttempt: jest.fn(),
   markPasswordResetChallengeVerified: jest.fn(),
   findPasswordResetChallengeForCompletion: jest.fn(),
   consumePasswordResetChallenge: jest.fn(),
@@ -31,9 +30,7 @@ jest.mock("../../src/modules/auth/auth-recovery", () => ({
 
 jest.mock("../../src/modules/auth/password", () => ({
   hashPassword: jest.fn(),
-  hashRecoveryAnswer: jest.fn(),
   verifyPassword: jest.fn(),
-  verifyRecoveryAnswer: jest.fn(),
 }));
 
 jest.mock("../../src/modules/auth/auth-email", () => ({
@@ -100,7 +97,6 @@ import {
   restorePasswordResetChallenge,
   findPasswordResetChallengeById,
   reservePasswordResetCodeAttempt,
-  reserveRecoveryAnswerAttempt,
   markPasswordResetChallengeVerified,
   findPasswordResetChallengeForCompletion,
   consumePasswordResetChallenge,
@@ -121,12 +117,7 @@ import {
   signUp,
   withdrawAccount,
 } from "../../src/modules/auth/auth.service";
-import {
-  hashPassword,
-  hashRecoveryAnswer,
-  verifyPassword,
-  verifyRecoveryAnswer,
-} from "../../src/modules/auth/password";
+import { hashPassword, verifyPassword } from "../../src/modules/auth/password";
 import { removeReplacedLocalProfileImage } from "../../src/modules/customer-profile/customer-profile.image";
 import {
   createMoveRequestCancelNotifications,
@@ -170,7 +161,6 @@ const passwordResetChallenge = {
   userId: customerWithoutProfile.id,
   codeHash: "code-hash",
   failedAttempts: 0,
-  recoveryAnswerAttempts: 0,
   sentAt: new Date("2026-09-29T00:00:00.000Z"),
   expiresAt: new Date("2026-09-29T00:05:00.000Z"),
   verifiedAt: null,
@@ -179,8 +169,6 @@ const passwordResetChallenge = {
     id: customerWithoutProfile.id,
     role: customerWithoutProfile.role,
     passwordHash: customerWithoutProfile.passwordHash,
-    recoveryQuestion: null,
-    recoveryAnswerHash: null,
   },
 };
 
@@ -256,14 +244,13 @@ describe("Auth service", () => {
     );
   });
 
-  test("신규 이메일 가입의 복구 답변은 원문 대신 hash만 저장한다", async () => {
+  test("신규 이메일 가입은 비밀번호 hash만 저장하고 복구 질문은 만들지 않는다", async () => {
     jest.mocked(findUserByEmail).mockResolvedValue(null);
     jest.mocked(findUserByPhone).mockResolvedValue(null);
     jest.mocked(hashPassword).mockResolvedValue("password-hash");
-    jest.mocked(hashRecoveryAnswer).mockResolvedValue("answer-hash");
     jest.mocked(createEmailUser).mockResolvedValue(customerWithoutProfile);
-    await signUp({ name: "홍길동", email: "user@example.com", phone: "01012345678", password: "Password1!", role: "CUSTOMER", recoveryQuestion: "CHILDHOOD_NICKNAME", recoveryAnswer: "별명" });
-    expect(createEmailUser).toHaveBeenCalledWith(expect.objectContaining({ passwordHash: "password-hash", recoveryQuestion: "CHILDHOOD_NICKNAME", recoveryAnswerHash: "answer-hash" }));
+    await signUp({ name: "홍길동", email: "user@example.com", phone: "01012345678", password: "Password1!", role: "CUSTOMER" });
+    expect(createEmailUser).toHaveBeenCalledWith({ name: "홍길동", email: "user@example.com", phone: "01012345678", role: "CUSTOMER", passwordHash: "password-hash" });
   });
 
   test("중복 이메일은 EMAIL_ALREADY_EXISTS로 거절한다", async () => {
@@ -345,7 +332,6 @@ describe("Auth service", () => {
       id: passwordResetChallenge.id,
       codeHash: "previous-code-hash",
       failedAttempts: 2,
-      recoveryAnswerAttempts: 0,
       sentAt: passwordResetChallenge.sentAt,
       expiresAt: passwordResetChallenge.expiresAt,
       verifiedAt: null,
@@ -405,7 +391,7 @@ describe("Auth service", () => {
     await expect(verifyPasswordResetCode({
       challengeId: passwordResetChallenge.id,
       code: "123456",
-    }, new Date("2026-09-29T00:01:00.000Z"))).resolves.toEqual({ resetToken: "reset-token", recoveryQuestion: null });
+    }, new Date("2026-09-29T00:01:00.000Z"))).resolves.toEqual({ resetToken: "reset-token" });
     expect(createPasswordResetToken).toHaveBeenCalledWith(
       "customer-user-id", "CUSTOMER", "bcrypt-hash", passwordResetChallenge.id,
     );
@@ -481,65 +467,50 @@ describe("Auth service", () => {
     );
   });
 
-  test("질문 등록 계정은 이메일 인증 뒤 답변을 추가 검증하며 실패 횟수를 보존한다", async () => {
+  test("과거에 질문을 등록한 계정도 이메일 코드 검증 뒤 답변 없이 재설정한다", async () => {
     const challenge = { ...passwordResetChallenge, verifiedAt: new Date("2026-09-29T00:01:00.000Z"), user: { ...passwordResetChallenge.user, recoveryQuestion: "CHILDHOOD_NICKNAME" as const, recoveryAnswerHash: "answer-hash" } };
     jest.mocked(verifyPasswordResetToken).mockReturnValue({ userId: "customer-user-id", role: "CUSTOMER", credentialVersion: "version", challengeId: challenge.id });
     jest.mocked(findPasswordResetChallengeById).mockResolvedValue(challenge);
     jest.mocked(matchesCredentialVersion).mockReturnValue(true);
-    jest.mocked(reserveRecoveryAnswerAttempt).mockResolvedValue({ count: 1 });
-    jest.mocked(verifyRecoveryAnswer).mockResolvedValue(false);
-    await expect(confirmPasswordReset({ token: "reset-token", newPassword: "NextPassword1!", recoveryAnswer: "틀린 답" })).rejects.toMatchObject({ code: "RECOVERY_ANSWER_INVALID", status: 401 });
-    expect(reserveRecoveryAnswerAttempt).toHaveBeenCalledWith(challenge.id, "customer-user-id", 5);
-    expect(runAuthTransaction).not.toHaveBeenCalled();
-
-    jest.mocked(reserveRecoveryAnswerAttempt).mockResolvedValue({ count: 0 });
-    await expect(confirmPasswordReset({ token: "reset-token", newPassword: "NextPassword1!", recoveryAnswer: "틀린 답" })).rejects.toMatchObject({ code: "RECOVERY_ANSWER_ATTEMPTS_EXCEEDED", status: 429 });
-
-    jest.mocked(reserveRecoveryAnswerAttempt).mockResolvedValue({ count: 1 });
-    jest.mocked(verifyRecoveryAnswer).mockResolvedValue(true);
+    jest.mocked(hashPassword).mockResolvedValue("next-hash");
     jest.mocked(findPasswordResetChallengeForCompletion).mockResolvedValue(challenge);
     jest.mocked(consumePasswordResetChallenge).mockResolvedValue({ count: 1 });
     jest.mocked(updateEmailUserPassword).mockResolvedValue({ count: 1 });
-    await expect(confirmPasswordReset({ token: "reset-token", newPassword: "NextPassword1!", recoveryAnswer: "정답" })).resolves.toBeUndefined();
-    expect(verifyRecoveryAnswer).toHaveBeenCalledWith("정답", "answer-hash");
+    await expect(confirmPasswordReset({ token: "reset-token", newPassword: "NextPassword1!" })).resolves.toBeUndefined();
     expect(consumePasswordResetChallenge).toHaveBeenCalledTimes(1);
   });
 
   /**
    * 시나리오: 이미 소비된 challenge의 재설정 토큰을 다시 제출합니다.
-   * 기대 결과: 답변 횟수를 예약하거나 hash를 만들지 않고 PASSWORD_RESET_TOKEN_INVALID(400)로 거절합니다.
+   * 기대 결과: hash를 만들지 않고 PASSWORD_RESET_TOKEN_INVALID(400)로 거절합니다.
    */
-  test("이미 사용된 재설정 토큰은 답변 횟수 예약 없이 토큰 오류로 거절한다", async () => {
+  test("이미 사용된 재설정 토큰은 새 hash 생성 없이 토큰 오류로 거절한다", async () => {
     const consumedChallenge = {
       ...passwordResetChallenge,
       verifiedAt: new Date("2026-09-29T00:01:00.000Z"),
       consumedAt: new Date("2026-09-29T00:02:00.000Z"),
-      user: { ...passwordResetChallenge.user, recoveryQuestion: "CHILDHOOD_NICKNAME" as const, recoveryAnswerHash: "answer-hash" },
     };
     jest.mocked(verifyPasswordResetToken).mockReturnValue({ userId: "customer-user-id", role: "CUSTOMER", credentialVersion: "version", challengeId: consumedChallenge.id });
     jest.mocked(findPasswordResetChallengeById).mockResolvedValue(consumedChallenge);
 
-    await expect(confirmPasswordReset({ token: "reset-token", newPassword: "NextPassword1!", recoveryAnswer: "정답" })).rejects.toMatchObject({ code: "PASSWORD_RESET_TOKEN_INVALID", status: 400 });
-    expect(reserveRecoveryAnswerAttempt).not.toHaveBeenCalled();
+    await expect(confirmPasswordReset({ token: "reset-token", newPassword: "NextPassword1!" })).rejects.toMatchObject({ code: "PASSWORD_RESET_TOKEN_INVALID", status: 400 });
     expect(hashPassword).not.toHaveBeenCalled();
   });
 
   /**
    * 시나리오: 비밀번호가 바뀐 뒤 같은 challenge로 새 재설정이 검증된 상태에서, 이전 비밀번호 기준 토큰을 제출합니다.
-   * 기대 결과: 새 재설정의 답변 기회를 소모하지 않고 PASSWORD_RESET_TOKEN_INVALID(400)로 거절합니다.
+   * 기대 결과: PASSWORD_RESET_TOKEN_INVALID(400)로 거절합니다.
    */
-  test("비밀번호 변경 전 발급된 오래된 토큰은 답변 횟수를 예약하지 않는다", async () => {
+  test("비밀번호 변경 전 발급된 오래된 토큰은 거절한다", async () => {
     const reverifiedChallenge = {
       ...passwordResetChallenge,
       verifiedAt: new Date("2026-09-29T00:10:00.000Z"),
-      user: { ...passwordResetChallenge.user, recoveryQuestion: "CHILDHOOD_NICKNAME" as const, recoveryAnswerHash: "answer-hash" },
     };
     jest.mocked(verifyPasswordResetToken).mockReturnValue({ userId: "customer-user-id", role: "CUSTOMER", credentialVersion: "old-version", challengeId: reverifiedChallenge.id });
     jest.mocked(findPasswordResetChallengeById).mockResolvedValue(reverifiedChallenge);
     jest.mocked(matchesCredentialVersion).mockReturnValue(false);
 
-    await expect(confirmPasswordReset({ token: "old-reset-token", newPassword: "NextPassword1!", recoveryAnswer: "정답" })).rejects.toMatchObject({ code: "PASSWORD_RESET_TOKEN_INVALID", status: 400 });
-    expect(reserveRecoveryAnswerAttempt).not.toHaveBeenCalled();
+    await expect(confirmPasswordReset({ token: "old-reset-token", newPassword: "NextPassword1!" })).rejects.toMatchObject({ code: "PASSWORD_RESET_TOKEN_INVALID", status: 400 });
   });
 
   test("역할이 다르면 계정 노출 없이 INVALID_CREDENTIALS를 반환한다", async () => {

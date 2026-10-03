@@ -247,12 +247,12 @@ Vercel 기본 도메인과 AWS 기본 도메인을 그대로 사용하면 서로
 ## 비밀번호 재설정
 
 - 로그인 ID가 이메일이므로 별도 아이디 찾기 API(`POST /auth/recovery/account`)는 제공하지 않습니다. SNS 가입 계정 여부는 아래 인증코드 요청의 `delivery: SOCIAL`로 안내합니다.
-- 이메일 회원가입은 고정 복구 질문(`CHILDHOOD_NICKNAME`, `MEMORABLE_PLACE`, `PERSONAL_PHRASE`)과 답변을 함께 받을 수 있습니다. 배포 중 구버전 프론트 호환을 위해 두 필드 모두 생략할 수 있으며, 새 프론트에서는 필수 입력입니다. 답변은 정규화 후 SHA-256으로 고정 길이화한 값을 bcrypt hash로만 저장합니다(긴 한글 답변이 bcrypt 72바이트 제한에 잘리지 않도록). OAuth 가입은 질문을 받지 않습니다.
+- 이메일 회원가입에서는 복구 질문을 받지 않습니다. 배포 중 구버전 프론트가 질문·답변을 보내도 두 필드는 무시하며 저장하지 않습니다.
 - `POST /auth/recovery/password/code`: 이름·이메일·역할이 일치하는 이메일 계정에 6자리 인증코드를 보냅니다. 코드는 5분간 유효하고 60초 뒤 재발송할 수 있으며 IP별 1시간 5회로 제한합니다.
 - 위 endpoint는 이메일 계정에 `delivery: EMAIL`과 challenge ID를, OAuth 계정에 `delivery: SOCIAL`을, 불일치 계정에 `delivery: NONE`을 반환합니다. OAuth 계정은 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.
 - `POST /auth/recovery/password/code/verify`: challenge ID와 6자리 코드를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다. challenge별 5회 및 IP별 1시간 5회로 대입을 제한합니다.
-- 코드 검증 응답의 `recoveryQuestion`은 가입 시 등록한 질문 식별자이며, 등록하지 않은 기존 계정은 `null`입니다.
-- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전·검증된 challenge를 확인합니다. 질문 등록 계정은 정규화한 `recoveryAnswer`를 추가 확인하며 challenge별 5회 실패 시 새 이메일 코드를 요청해야 합니다. 기존 계정은 이메일 코드만으로 진행합니다. challenge와 토큰은 한 번만 사용할 수 있습니다.
+- 코드 검증 응답은 `resetToken`만 반환합니다. 구버전 프론트가 `recoveryQuestion` 누락을 질문 없음으로 처리할 수 있도록 백엔드를 먼저 배포합니다.
+- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전·검증된 challenge를 확인합니다. 과거에 질문을 등록한 계정도 이메일 코드만으로 진행하며 구버전 프론트의 `recoveryAnswer`는 무시합니다. challenge와 토큰은 한 번만 사용할 수 있습니다.
 - 인증코드 원문은 메일로만 전송하고 DB에는 사용자 ID와 별도 Secret으로 생성한 HMAC만 저장합니다. 기존 비밀번호는 표시하지 않고 새 비밀번호만 설정합니다.
 - 로그인은 이메일·역할별 5번째 실패 응답부터 15분 동안 `LOGIN_ATTEMPTS_EXCEEDED`로 제한하며, 별도로 IP별 요청 제한도 적용합니다. 다중 서버 운영 시 공용 rate-limit store를 연결해야 동일한 제한이 전체 인스턴스에 적용됩니다.
 
@@ -271,3 +271,5 @@ SMTP_FROM=발신자 표시명과 주소
 ```
 
 로컬 개발에서는 `PASSWORD_RESET_DELIVERY=console`로 설정해 인증코드를 백엔드 터미널에서 확인할 수 있습니다. 이 모드는 production 환경에서 서버 시작 단계에 거절됩니다. 실제 발송 환경에서는 `smtp`로 설정하고 모든 `SMTP_*` 값을 연결합니다.
+
+질문 관련 DB 열과 적용된 migration은 호환성을 위해 이번 배포에서 유지합니다. 새 요청은 해당 열을 읽거나 쓰지 않으며, 데이터 삭제가 수반되는 열 제거는 구버전 인스턴스 종료와 데이터 보존 정책 확인 뒤 별도 migration으로 진행합니다.
