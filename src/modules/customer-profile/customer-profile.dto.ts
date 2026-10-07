@@ -20,6 +20,7 @@ export interface CreateCustomerProfileInput {
 /** 프로필 수정 시 전달된 필드만 변경하며 phone의 null은 전화번호 삭제를 뜻합니다. */
 export interface UpdateCustomerProfileInput {
   name?: string;
+  /** 가입 이메일은 수정할 수 없습니다. 구버전 화면 호환용으로 현재 이메일과 같은 값만 허용합니다. */
   email?: string;
   phone?: string | null;
   currentPassword?: string;

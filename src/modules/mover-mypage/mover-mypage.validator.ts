@@ -69,6 +69,7 @@ const updateMoverBasicInfoSchema = z
   .superRefine((value, context) => {
     const hasNewPassword = value.newPassword !== undefined;
 
+    // email이 함께 오면 Service가 최신 가입 이메일과 비교해 EMAIL_CHANGE_NOT_ALLOWED를 먼저 판단하도록 여기서는 거절하지 않습니다.
     if (
       value.currentPassword !== undefined &&
       value.email === undefined &&
@@ -77,7 +78,7 @@ const updateMoverBasicInfoSchema = z
       context.addIssue({
         code: "custom",
         path: ["currentPassword"],
-        message: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+        message: "현재 비밀번호는 비밀번호를 변경할 때만 입력할 수 있습니다.",
       });
     }
 
