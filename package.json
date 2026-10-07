@@ -16,7 +16,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:ci": "jest --runInBand --coverage"
+    "test:ci": "jest --runInBand --coverage",
+    "ssh": "dotenv -- bash -c 'ssh -i \"$SSH_KEY_PATH\" -L 5433:$DB_HOST:5432 $EC2_USER@$EC2_HOST'"
   },
   "repository": {
     "type": "git",
@@ -31,6 +32,8 @@
   },
   "homepage": "https://github.com/kimchanhee0309/Moving-BE-Team1#readme",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1142.0",
+    "@aws-sdk/s3-request-presigner": "^3.1142.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bcrypt": "^6.0.0",
@@ -41,8 +44,12 @@
     "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
+<<<<<<< Updated upstream
     "node-cron": "^4.6.0",
     "nodemailer": "^10.0.12",
+=======
+    "multer-s3": "^3.0.1",
+>>>>>>> Stashed changes
     "pg": "^8.23.0",
     "sharp": "^0.35.4",
     "swagger-jsdoc": "^6.3.0",
@@ -63,6 +70,7 @@
     "@types/pg": "^8.23.1",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^10.10.0",
     "jest": "^30.5.1",
     "nodemon": "^3.1.14",

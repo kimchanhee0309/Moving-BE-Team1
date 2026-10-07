@@ -1,0 +1,59 @@
+name: Deploy To EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  Deploy:
+    runs-on: ubuntu-latest # 깃헙액션 워크플로우가 실행되는 OS 환경. EC2 OS와 같은 필요 없음
+    steps:
+      - name: 깃헙 레포지토리 불러오기
+        uses: actions/checkout@v4
+
+      - name: Node 버전 고정 (EC2와 동일하게)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: .env 파일 생성
+        run: |
+          echo "${{ secrets.ENV }}" > .env
+
+      - name: 테스트 코드 실행
+        run: npm run test
+
+      - name: 빌드
+        run: npm run build
+
+      - name: 빌드파일 압축하기
+        run: tar -czvf project.tar.gz dist .env package.json package-lock.json
+
+      - name: scp 사용하여 EC2에 빌드파일 전송하기
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_PRIVATE_KEY }}
+          source: project.tar.gz
+          target: /home/ec2-user/cicd-practice
+
+      - name: SSH로 EC2에 접속하기
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }} # EC2의 주소
+          username: ${{ secrets.EC2_USERNAME }} # EC2 접속 username
+          key: ${{ secrets.EC2_PRIVATE_KEY }} # EC2의 Key 파일의 내부 텍스트
+          script_stop: true # 아래 script 중 실패하는 명령이 하나라도 있으면 실패로 처리
+          script: |
+            cd /home/ec2-user/cicd-practice
+            tar -xvf project.tar.gz
+            rm -rf project.tar.gz
+            npm ci
+            pm2 kill
+            pm2 start dist/app.js --name "backend-server"
