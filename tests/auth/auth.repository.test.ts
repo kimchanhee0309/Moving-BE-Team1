@@ -116,6 +116,12 @@ describe("Password reset challenge repository", () => {
 
     expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
     expect(transaction.passwordResetChallenge.upsert).toHaveBeenCalledTimes(1);
+    // 남겨 둔 호환 컬럼(recoveryAnswerAttempts)도 새 코드 발급 때 함께 초기화되어야 합니다.
+    expect(transaction.passwordResetChallenge.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ failedAttempts: 0, recoveryAnswerAttempts: 0 }),
+      }),
+    );
   });
 
   test("아직 재발송할 수 없으면 행 잠금 뒤 challenge를 교체하지 않는다", async () => {
@@ -183,7 +189,6 @@ describe("Password reset challenge repository", () => {
       id: "challenge-id",
       codeHash: "old-hash",
       failedAttempts: 2,
-      recoveryAnswerAttempts: 0,
       sentAt: new Date("2026-09-29T00:00:00.000Z"),
       expiresAt: new Date("2026-09-29T00:05:00.000Z"),
       verifiedAt: null,
@@ -209,7 +214,6 @@ describe("Password reset challenge repository", () => {
       data: {
         codeHash: "old-hash",
         failedAttempts: 2,
-        recoveryAnswerAttempts: 0,
         expiresAt: previous.expiresAt,
         sentAt: previous.sentAt,
         verifiedAt: null,

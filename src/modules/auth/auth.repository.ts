@@ -2,7 +2,7 @@
  * Auth Service에 필요한 User 조회·생성과 회원 탈퇴 transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
-import type { PasswordRecoveryQuestion, Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
+import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 
 const authUserSelect = {
@@ -43,8 +43,6 @@ interface CreateEmailUserData {
   phone: string;
   passwordHash: string;
   role: UserRole;
-  recoveryQuestion?: PasswordRecoveryQuestion;
-  recoveryAnswerHash?: string;
 }
 
 interface CreateOAuthUserData {
@@ -117,7 +115,6 @@ const passwordResetChallengeSelect = {
   userId: true,
   codeHash: true,
   failedAttempts: true,
-  recoveryAnswerAttempts: true,
   expiresAt: true,
   sentAt: true,
   verifiedAt: true,
@@ -127,8 +124,6 @@ const passwordResetChallengeSelect = {
       id: true,
       role: true,
       passwordHash: true,
-      recoveryQuestion: true,
-      recoveryAnswerHash: true,
     },
   },
 } satisfies Prisma.PasswordResetChallengeSelect;
@@ -141,7 +136,6 @@ const passwordResetChallengeStateSelect = {
   id: true,
   codeHash: true,
   failedAttempts: true,
-  recoveryAnswerAttempts: true,
   expiresAt: true,
   sentAt: true,
   verifiedAt: true,
@@ -193,6 +187,8 @@ export function reservePasswordResetChallenge(
         sentAt,
         expiresAt,
         failedAttempts: 0,
+        // 복구 답변 확인은 제거했지만 컬럼은 남겨 두었으므로, 새 코드를 발급할 때 이전 challenge의 답변 시도 횟수가 남지 않게 초기화합니다.
+        // 구버전 서버가 같은 challenge를 읽더라도 소진된 횟수 때문에 새 재설정이 막히지 않습니다. 컬럼 제거 시 함께 삭제합니다.
         recoveryAnswerAttempts: 0,
         verifiedAt: null,
         consumedAt: null,
@@ -224,7 +220,6 @@ export function restorePasswordResetChallenge(
       data: {
         codeHash: previous.codeHash,
         failedAttempts: previous.failedAttempts,
-        recoveryAnswerAttempts: previous.recoveryAnswerAttempts,
         expiresAt: previous.expiresAt,
         sentAt: previous.sentAt,
         verifiedAt: previous.verifiedAt,
@@ -301,24 +296,6 @@ export function findPasswordResetChallengeForCompletion(
   return transaction.passwordResetChallenge.findUnique({
     where: { id: challengeId },
     select: passwordResetChallengeSelect,
-  });
-}
-
-/** 이메일 코드 검증 후 답변 대입을 challenge당 5회로 제한합니다. 실패도 rollback되지 않도록 별도 원자 갱신합니다. */
-export function reserveRecoveryAnswerAttempt(
-  challengeId: string,
-  userId: string,
-  maxAttempts: number,
-): Promise<{ count: number }> {
-  return prisma.passwordResetChallenge.updateMany({
-    where: {
-      id: challengeId,
-      userId,
-      verifiedAt: { not: null },
-      consumedAt: null,
-      recoveryAnswerAttempts: { lt: maxAttempts },
-    },
-    data: { recoveryAnswerAttempts: { increment: 1 } },
   });
 }
 

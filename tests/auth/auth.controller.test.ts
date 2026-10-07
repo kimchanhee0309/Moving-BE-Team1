@@ -198,10 +198,10 @@ describe("Auth controller response contract", () => {
   test("인증코드 확인 성공 시 단기 토큰을 반환한다", async () => {
     const input = { challengeId: "11111111-1111-4111-8111-111111111111", code: "123456" };
     jest.mocked(parseVerifyPasswordResetCodeInput).mockReturnValue(input);
-    jest.mocked(verifyPasswordResetCode).mockResolvedValue({ resetToken: "reset-token", recoveryQuestion: null });
+    jest.mocked(verifyPasswordResetCode).mockResolvedValue({ resetToken: "reset-token" });
     const response = createResponse();
     await verifyPasswordResetCodeController({ body: input } as Request, response, jest.fn() as NextFunction);
-    expect(response.json).toHaveBeenCalledWith({ success: true, data: { resetToken: "reset-token", recoveryQuestion: null } });
+    expect(response.json).toHaveBeenCalledWith({ success: true, data: { resetToken: "reset-token" } });
   });
 
   test("새 비밀번호 확인 성공은 빈 성공 응답을 반환한다", async () => {
