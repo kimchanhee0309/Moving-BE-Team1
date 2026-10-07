@@ -187,6 +187,9 @@ export function reservePasswordResetChallenge(
         sentAt,
         expiresAt,
         failedAttempts: 0,
+        // 복구 답변 확인은 제거했지만 컬럼은 남겨 두었으므로, 새 코드를 발급할 때 이전 challenge의 답변 시도 횟수가 남지 않게 초기화합니다.
+        // 구버전 서버가 같은 challenge를 읽더라도 소진된 횟수 때문에 새 재설정이 막히지 않습니다. 컬럼 제거 시 함께 삭제합니다.
+        recoveryAnswerAttempts: 0,
         verifiedAt: null,
         consumedAt: null,
       },
