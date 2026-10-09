@@ -94,6 +94,30 @@ export const passwordResetCodeVerifyRateLimiter = rateLimit({
   handler: rejectRateLimitedRequest,
 });
 
+/**
+ * 임의 주소로 메일을 반복 발송하는 것을 줄이기 위해 회원가입 인증코드 발송을 IP별 1시간에 10회로 제한합니다.
+ * 이메일을 잘못 입력해 다시 받는 경우와 같은 공유기를 쓰는 여러 가입자를 고려해 재설정 코드(5회)보다 넓게 둡니다.
+ */
+export const signupEmailCodeSendRateLimiter = rateLimit({
+  windowMs: ONE_HOUR_MS,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: rejectRateLimitedRequest,
+});
+
+/**
+ * 6자리 코드 무차별 대입을 줄이기 위해 회원가입 인증코드 확인을 IP별 1시간에 20회로 제한합니다.
+ * 코드 한 건의 시도 횟수(5회)는 Service가 DB로 따로 제한합니다.
+ */
+export const signupEmailCodeVerifyRateLimiter = rateLimit({
+  windowMs: ONE_HOUR_MS,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: rejectRateLimitedRequest,
+});
+
 /** 자동 계정 생성을 줄이기 위해 회원가입을 IP별 1시간에 10회로 제한합니다. */
 export const signUpRateLimiter = rateLimit({
   windowMs: ONE_HOUR_MS,

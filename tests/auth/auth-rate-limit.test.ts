@@ -16,6 +16,8 @@ import {
   passwordResetCodeVerifyRateLimiter,
   refreshRateLimiter,
   sessionRefreshRateLimiter,
+  signupEmailCodeSendRateLimiter,
+  signupEmailCodeVerifyRateLimiter,
 } from "../../src/modules/auth/auth-rate-limit";
 
 const TEST_IPS = [
@@ -26,6 +28,7 @@ const TEST_IPS = [
   "192.0.2.14",
   "192.0.2.15",
   "192.0.2.16",
+  "192.0.2.17",
 ] as const;
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
@@ -72,6 +75,14 @@ app.post("/auth/recovery/password/code", passwordResetCodeSendRateLimiter, (_req
 });
 
 app.post("/auth/recovery/password/code/verify", passwordResetCodeVerifyRateLimiter, (_request, response) => {
+  return response.status(401).json({ success: false });
+});
+
+app.post("/auth/signup/email-code", signupEmailCodeSendRateLimiter, (_request, response) => {
+  return response.status(200).json({ success: true });
+});
+
+app.post("/auth/signup/email-code/verify", signupEmailCodeVerifyRateLimiter, (_request, response) => {
   return response.status(401).json({ success: false });
 });
 
@@ -139,6 +150,8 @@ describe("Auth rate limit", () => {
       accountRecoveryRateLimiter.resetKey(ip);
       passwordResetCodeSendRateLimiter.resetKey(ip);
       passwordResetCodeVerifyRateLimiter.resetKey(ip);
+      signupEmailCodeSendRateLimiter.resetKey(ip);
+      signupEmailCodeVerifyRateLimiter.resetKey(ip);
     }
   });
 
@@ -253,6 +266,27 @@ describe("Auth rate limit", () => {
     expect(sendResponses[5]?.status).toBe(429);
     expect(verifyResponses.slice(0, 5).every(({ status }) => status === 401)).toBe(true);
     expect(verifyResponses[5]?.status).toBe(429);
+  });
+
+  test("회원가입 인증코드 발송은 10회, 확인은 20회로 제한하며 재설정 코드 한도를 소비하지 않는다", async () => {
+    const sendResponses = await repeatRequest(11, () =>
+      post("/auth/signup/email-code", TEST_IPS[7]),
+    );
+    const verifyResponses = await repeatRequest(21, () =>
+      post("/auth/signup/email-code/verify", TEST_IPS[7]),
+    );
+    const passwordResetResponse = await post("/auth/recovery/password/code", TEST_IPS[7]);
+
+    expect(sendResponses.slice(0, 10).every(({ status }) => status === 200)).toBe(true);
+    expect(sendResponses[10]?.status).toBe(429);
+    expect(sendResponses[10]?.body).toMatchObject({
+      error: { code: "AUTH_RATE_LIMIT_EXCEEDED" },
+    });
+    expect(sendResponses[0]?.rateLimitPolicy).toBe("10;w=3600");
+    expect(verifyResponses.slice(0, 20).every(({ status }) => status === 401)).toBe(true);
+    expect(verifyResponses[20]?.status).toBe(429);
+    // 가입 인증 요청이 같은 IP의 비밀번호 재설정 코드 발송을 막지 않습니다.
+    expect(passwordResetResponse.status).toBe(200);
   });
 
   test("15분 제한 시간이 지나면 잘못된 Refresh 요청을 다시 처리한다", async () => {

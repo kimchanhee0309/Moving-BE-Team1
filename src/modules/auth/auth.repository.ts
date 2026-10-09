@@ -1,5 +1,5 @@
 /**
- * Auth Service에 필요한 User 조회·생성과 회원 탈퇴 transaction을 Prisma로 수행합니다.
+ * Auth Service에 필요한 User 조회·생성, 회원가입 이메일 인증·비밀번호 재설정 기록, 회원 탈퇴 transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
 import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
@@ -82,6 +82,198 @@ export function findUserBySocialAccount(
 /** 검증·해싱이 끝난 일반 이메일 사용자를 생성하며 역할별 profile은 별도 기능에서 만듭니다. */
 export function createEmailUser(data: CreateEmailUserData): Promise<AuthUserRecord> {
   return prisma.user.create({ data, select: authUserSelect });
+}
+
+/** 이메일 인증 기록 소비와 같은 transaction에서 일반 이메일 사용자를 생성합니다. */
+export function createEmailUserInTransaction(
+  transaction: AuthTransaction,
+  data: CreateEmailUserData,
+): Promise<AuthUserRecord> {
+  return transaction.user.create({ data, select: authUserSelect });
+}
+
+const signupEmailVerificationSelect = {
+  id: true,
+  email: true,
+  codeHash: true,
+  failedAttempts: true,
+  expiresAt: true,
+  sentAt: true,
+  verifiedAt: true,
+} satisfies Prisma.SignupEmailVerificationSelect;
+
+/** 회원가입 이메일 인증의 코드 hash·만료·시도 횟수·검증 상태입니다. 코드 원문은 포함하지 않습니다. */
+export type SignupEmailVerificationRecord =
+  Prisma.SignupEmailVerificationGetPayload<{
+    select: typeof signupEmailVerificationSelect;
+  }>;
+
+export interface SignupEmailVerificationReservation {
+  verificationId: string;
+  /** 발송 실패 시 되돌릴 직전 상태이며 첫 요청이면 null입니다. */
+  previous: SignupEmailVerificationRecord | null;
+}
+
+/**
+ * 가입 전에는 잠글 User row가 없으므로 이메일 단위 advisory lock으로 같은 이메일의 동시 요청을 직렬화합니다.
+ * transaction이 끝나면 자동으로 풀리며, hashtext 충돌은 서로 다른 이메일이 잠깐 기다리는 것 외에 영향이 없습니다.
+ */
+async function lockSignupEmail(
+  transaction: AuthTransaction,
+  email: string,
+): Promise<void> {
+  await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${email}))`;
+}
+
+/**
+ * 이메일 lock 안에서 재발송 간격을 확인하고 새 인증코드 상태를 한 번만 예약합니다.
+ * @param email 소문자 정규화 이메일
+ * @param codeHash 새 코드의 HMAC
+ * @param sentAt 발송 기준 시각
+ * @param expiresAt 코드 만료 시각
+ * @param resendAllowedAt 이 시각보다 늦게 보낸 기록이 있으면 재발송을 거절합니다
+ * @param staleBefore 이 시각 전에 만료된 다른 이메일의 기록을 정리합니다
+ * @returns 예약 결과이며 재발송 간격이 지나지 않았으면 null
+ * @remarks 가입하지 않고 떠난 이메일이 계속 쌓이지 않도록 오래된 기록을 같은 transaction에서 삭제합니다.
+ */
+export function reserveSignupEmailVerification(
+  email: string,
+  codeHash: string,
+  sentAt: Date,
+  expiresAt: Date,
+  resendAllowedAt: Date,
+  staleBefore: Date,
+): Promise<SignupEmailVerificationReservation | null> {
+  return prisma.$transaction(async (transaction) => {
+    await lockSignupEmail(transaction, email);
+    await transaction.signupEmailVerification.deleteMany({
+      where: { expiresAt: { lt: staleBefore } },
+    });
+
+    const previous = await transaction.signupEmailVerification.findUnique({
+      where: { email },
+      select: signupEmailVerificationSelect,
+    });
+
+    if (previous && previous.sentAt.getTime() > resendAllowedAt.getTime()) {
+      return null;
+    }
+
+    const verification = await transaction.signupEmailVerification.upsert({
+      where: { email },
+      create: { email, codeHash, sentAt, expiresAt },
+      // 새 코드를 보내면 이전 코드와 그 코드로 받은 인증 토큰을 모두 무효화합니다.
+      update: {
+        codeHash,
+        sentAt,
+        expiresAt,
+        failedAttempts: 0,
+        verifiedAt: null,
+      },
+      select: { id: true },
+    });
+
+    return { verificationId: verification.id, previous };
+  });
+}
+
+/** 발송 실패한 예약이 여전히 최신일 때만 직전 인증 상태를 복원하거나 최초 예약을 삭제합니다. */
+export function restoreSignupEmailVerification(
+  email: string,
+  failedCodeHash: string,
+  previous: SignupEmailVerificationRecord | null,
+): Promise<{ count: number }> {
+  return prisma.$transaction(async (transaction) => {
+    await lockSignupEmail(transaction, email);
+
+    if (!previous) {
+      return transaction.signupEmailVerification.deleteMany({
+        where: { email, codeHash: failedCodeHash },
+      });
+    }
+
+    return transaction.signupEmailVerification.updateMany({
+      where: { email, codeHash: failedCodeHash },
+      data: {
+        codeHash: previous.codeHash,
+        failedAttempts: previous.failedAttempts,
+        expiresAt: previous.expiresAt,
+        sentAt: previous.sentAt,
+        verifiedAt: previous.verifiedAt,
+      },
+    });
+  });
+}
+
+/** 입력 코드 확인에 필요한 이메일의 최신 인증 기록을 조회합니다. */
+export function findSignupEmailVerificationByEmail(
+  email: string,
+): Promise<SignupEmailVerificationRecord | null> {
+  return prisma.signupEmailVerification.findUnique({
+    where: { email },
+    select: signupEmailVerificationSelect,
+  });
+}
+
+/** 만료·검증 완료·최대 횟수를 조건으로 코드 확인 시도 한 건을 먼저 원자적으로 예약합니다. */
+export function reserveSignupEmailCodeAttempt(
+  verificationId: string,
+  expectedCodeHash: string,
+  attemptedAt: Date,
+  maxAttempts: number,
+): Promise<SignupEmailVerificationRecord | null> {
+  return prisma.$transaction(async (transaction) => {
+    const reservation = await transaction.signupEmailVerification.updateMany({
+      where: {
+        id: verificationId,
+        codeHash: expectedCodeHash,
+        expiresAt: { gt: attemptedAt },
+        failedAttempts: { lt: maxAttempts },
+        verifiedAt: null,
+      },
+      data: { failedAttempts: { increment: 1 } },
+    });
+
+    if (reservation.count !== 1) return null;
+
+    return transaction.signupEmailVerification.findUnique({
+      where: { id: verificationId },
+      select: signupEmailVerificationSelect,
+    });
+  });
+}
+
+/** 현재 코드 hash와 제한 상태가 그대로인 인증 기록 한 건만 검증 완료 처리합니다. */
+export function markSignupEmailVerificationVerified(
+  verificationId: string,
+  codeHash: string,
+  verifiedAt: Date,
+  maxFailedAttempts: number,
+): Promise<{ count: number }> {
+  return prisma.signupEmailVerification.updateMany({
+    where: {
+      id: verificationId,
+      codeHash,
+      expiresAt: { gt: verifiedAt },
+      failedAttempts: { lte: maxFailedAttempts },
+      verifiedAt: null,
+    },
+    data: { verifiedAt },
+  });
+}
+
+/**
+ * 가입 transaction에서 검증 완료된 인증 기록을 삭제해 같은 인증 토큰의 재사용과 병렬 가입을 차단합니다.
+ * 가입이 실패해 transaction이 rollback되면 기록이 남아 같은 토큰으로 다시 시도할 수 있습니다.
+ */
+export function consumeSignupEmailVerification(
+  transaction: AuthTransaction,
+  verificationId: string,
+  email: string,
+): Promise<{ count: number }> {
+  return transaction.signupEmailVerification.deleteMany({
+    where: { id: verificationId, email, verifiedAt: { not: null } },
+  });
 }
 
 const passwordResetUserSelect = {

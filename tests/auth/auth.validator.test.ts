@@ -7,7 +7,9 @@ import {
   parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
+  parseSignupEmailCodeInput,
   parseVerifyPasswordResetCodeInput,
+  parseVerifySignupEmailCodeInput,
   parseWithdrawAccountInput,
 } from "../../src/modules/auth/auth.validator";
 
@@ -37,6 +39,38 @@ describe("Auth validator", () => {
     expect(() => parseSignUpInput({ ...base, unrelated: true })).toThrow(BadRequestError);
     expect(parseConfirmPasswordResetInput({ token: "token", newPassword: "Password1!", recoveryAnswer: "별명" })).toEqual({ token: "token", newPassword: "Password1!" });
     expect(() => parseConfirmPasswordResetInput({ token: "token", newPassword: "Password1!", unrelated: true })).toThrow(BadRequestError);
+  });
+
+  test("회원가입의 이메일 인증 토큰은 선택이며 보내면 문자열 형식만 검증해 전달한다", () => {
+    const base = { name: "홍길동", email: "user@example.com", phone: "01012345678", password: "Password1!", role: "CUSTOMER" };
+
+    // 구버전 FE처럼 토큰이 없으면 DTO에 key 자체가 생기지 않습니다.
+    expect(parseSignUpInput(base)).not.toHaveProperty("emailVerificationToken");
+    expect(parseSignUpInput({ ...base, emailVerificationToken: " token " })).toEqual({
+      ...base,
+      emailVerificationToken: "token",
+    });
+    expect(() => parseSignUpInput({ ...base, emailVerificationToken: "" })).toThrow(BadRequestError);
+    expect(() => parseSignUpInput({ ...base, emailVerificationToken: 123 })).toThrow(BadRequestError);
+    expect(() => parseSignUpInput({ ...base, emailVerificationToken: "a".repeat(4097) })).toThrow(BadRequestError);
+  });
+
+  test("회원가입 인증코드 발송·확인 입력의 이메일을 정규화하고 형식을 검증한다", () => {
+    expect(parseSignupEmailCodeInput({ email: " USER@Example.com " })).toEqual({
+      email: "user@example.com",
+    });
+    expect(() => parseSignupEmailCodeInput({ email: "invalid-email" })).toThrow(BadRequestError);
+    expect(() => parseSignupEmailCodeInput({})).toThrow(BadRequestError);
+    expect(() => parseSignupEmailCodeInput({ email: "user@example.com", role: "CUSTOMER" })).toThrow(BadRequestError);
+
+    expect(parseVerifySignupEmailCodeInput({ email: " USER@Example.com ", code: "012345" })).toEqual({
+      email: "user@example.com",
+      code: "012345",
+    });
+    expect(() => parseVerifySignupEmailCodeInput({ email: "user@example.com", code: "12345" })).toThrow(BadRequestError);
+    expect(() => parseVerifySignupEmailCodeInput({ email: "user@example.com", code: "12345a" })).toThrow(BadRequestError);
+    expect(() => parseVerifySignupEmailCodeInput({ email: "user@example.com", code: 123456 })).toThrow(BadRequestError);
+    expect(() => parseVerifySignupEmailCodeInput({ code: "123456" })).toThrow(BadRequestError);
   });
 
   test.each(["김지훈", "홍 길동", "Jihoon Kim", "Anne-Marie", "O'Connor", "김·지훈"])(
