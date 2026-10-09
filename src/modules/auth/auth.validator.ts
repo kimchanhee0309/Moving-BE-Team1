@@ -11,7 +11,9 @@ import type {
   ConfirmPasswordResetRequestDto,
   LoginRequestDto,
   SignUpRequestDto,
+  SignupEmailCodeRequestDto,
   VerifyPasswordResetCodeRequestDto,
+  VerifySignupEmailCodeRequestDto,
   WithdrawAccountRequestDto,
 } from "./auth.dto";
 
@@ -58,12 +60,35 @@ const signUpSchema = z
       ),
     password: passwordSchema,
     role: roleSchema,
+    // 필수 여부는 SIGNUP_EMAIL_VERIFICATION_REQUIRED에 따라 Service가 판단하므로 여기서는 형식만 확인합니다.
+    emailVerificationToken: requiredString
+      .max(4096, { error: "이메일 인증 정보가 올바르지 않습니다." })
+      .optional(),
     recoveryQuestion: z.unknown().optional(),
     recoveryAnswer: z.unknown().optional(),
   })
   .strict()
   // 구버전 FE가 전송한 두 필드만 허용해 제거하며 다른 미지의 필드는 계속 거절합니다.
-  .transform(({ name, email, phone, password, role }) => ({ name, email, phone, password, role }));
+  .transform(({ name, email, phone, password, role, emailVerificationToken }) => ({
+    name,
+    email,
+    phone,
+    password,
+    role,
+    // 구버전 FE처럼 토큰이 없을 때 undefined key를 남기지 않아 기존 DTO 모양을 유지합니다.
+    ...(emailVerificationToken === undefined ? {} : { emailVerificationToken }),
+  }));
+
+const signupEmailCodeSchema = z.object({ email: emailSchema }).strict();
+
+const verifySignupEmailCodeSchema = z
+  .object({
+    email: emailSchema,
+    code: z.string({ error: "인증코드는 문자열이어야 합니다." }).regex(/^\d{6}$/, {
+      error: "인증코드는 6자리 숫자여야 합니다.",
+    }),
+  })
+  .strict();
 
 const loginSchema = z
   .object({
@@ -118,6 +143,34 @@ const verifyPasswordResetCodeSchema = z
  */
 export function parseSignUpInput(value: unknown): SignUpRequestDto {
   return parseWithZod(signUpSchema, value, { fallbackField: "body" });
+}
+
+/**
+ * 회원가입 인증코드를 받을 이메일의 형식을 검증하고 소문자로 정규화합니다.
+ * @param value Express가 전달한 신뢰하지 않는 요청 Body
+ * @returns 정규화된 이메일만 포함한 DTO
+ * @throws 형식·필수값·허용 필드 검증 실패 시 VALIDATION_ERROR
+ * @remarks 가입 여부는 조회하지 않으며 DB·cookie·token을 변경하지 않습니다.
+ */
+export function parseSignupEmailCodeInput(
+  value: unknown,
+): SignupEmailCodeRequestDto {
+  return parseWithZod(signupEmailCodeSchema, value, { fallbackField: "body" });
+}
+
+/**
+ * 회원가입 인증코드 확인 입력의 이메일과 6자리 숫자 형식을 검증합니다.
+ * @param value Express가 전달한 신뢰하지 않는 요청 Body
+ * @returns 정규화된 이메일과 코드 DTO
+ * @throws 형식·필수값·허용 필드 검증 실패 시 VALIDATION_ERROR
+ * @remarks 코드 일치 여부는 Service가 DB의 HMAC으로 확인합니다.
+ */
+export function parseVerifySignupEmailCodeInput(
+  value: unknown,
+): VerifySignupEmailCodeRequestDto {
+  return parseWithZod(verifySignupEmailCodeSchema, value, {
+    fallbackField: "body",
+  });
 }
 
 /**

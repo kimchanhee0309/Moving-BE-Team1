@@ -19,8 +19,10 @@ import {
   getCurrentUser,
   login,
   requestPasswordResetCode,
+  requestSignupEmailCode,
   refreshAuth,
   verifyPasswordResetCode,
+  verifySignupEmailCode,
   restoreOptionalAuthSession,
   signUp,
   withdrawAccount,
@@ -30,13 +32,38 @@ import {
   parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
+  parseSignupEmailCodeInput,
   parseVerifyPasswordResetCodeInput,
+  parseVerifySignupEmailCodeInput,
   parseWithdrawAccountInput,
 } from "./auth.validator";
 import { markOptionalSessionRefreshFailure } from "./auth-rate-limit";
 
 /** Express가 파싱한 외부 body를 Validator 전까지 신뢰하지 않는 Auth Controller 계약입니다. */
 type UnknownBodyRequestHandler = RequestHandler<ParamsDictionary, unknown, unknown>;
+
+/** 가입 예정 이메일로 인증코드를 발송하고 화면 타이머용 만료·재발송 시간을 반환합니다. */
+export const requestSignupEmailCodeController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const input = parseSignupEmailCodeInput(request.body);
+  const result = await requestSignupEmailCode(input);
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
+
+/**
+ * 메일로 받은 숫자 코드를 확인해 15분 만료 이메일 인증 토큰을 반환합니다.
+ * 이 토큰은 로그인 권한이 없는 가입 전용 값이라 cookie가 아닌 Body로 전달하며 인증 쿠키는 발급하지 않습니다.
+ */
+export const verifySignupEmailCodeController: UnknownBodyRequestHandler = async (
+  request,
+  response,
+) => {
+  const input = parseVerifySignupEmailCodeInput(request.body);
+  const result = await verifySignupEmailCode(input);
+  return sendSuccess(response, HTTP_STATUS.OK, result);
+};
 
 /** 회원가입 요청을 검증하고 사용자를 생성한 뒤 인증 쿠키와 data.user를 201로 반환합니다. */
 export const signUpController: UnknownBodyRequestHandler = async (request, response) => {
