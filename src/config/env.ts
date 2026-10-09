@@ -9,6 +9,8 @@ type NodeEnvironment = "development" | "test" | "production";
 
 type CookieSameSite = "lax" | "strict" | "none";
 type PasswordResetDelivery = "console" | "smtp";
+/** local: 서버 디스크(/uploads), s3: 비공개 S3 버킷에 저장하고 CloudFront URL로 공개합니다. */
+type ProfileImageStorageDriver = "local" | "s3";
 
 function getRequiredEnvironmentVariable(name: string): string {
   const value = process.env[name]?.trim();
@@ -108,6 +110,36 @@ function parsePasswordResetDelivery(
   }
 
   return delivery;
+}
+
+function parseProfileImageStorageDriver(
+  value: string | undefined,
+): ProfileImageStorageDriver {
+  const driver = value?.trim().toLowerCase() || "local";
+
+  if (driver !== "local" && driver !== "s3") {
+    throw new Error("PROFILE_IMAGE_STORAGE는 local 또는 s3여야 합니다.");
+  }
+
+  return driver;
+}
+
+/**
+ * CloudFront 배포 도메인을 hostname으로만 받습니다.
+ * scheme이나 경로가 섞이면 DB에 저장하는 이미지 URL과 삭제 대상 판정이 어긋나므로 시작 단계에서 거절합니다.
+ */
+function parseCloudFrontDomain(value: string | undefined): string | undefined {
+  const domain = value?.trim().toLowerCase();
+
+  if (!domain) return undefined;
+
+  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) {
+    throw new Error(
+      "CLOUDFRONT_DOMAIN에는 https://와 경로를 뺀 도메인만 설정해야 합니다. 예: d1234abcd.cloudfront.net",
+    );
+  }
+
+  return domain;
 }
 
 function parseCorsOrigins(
@@ -215,6 +247,20 @@ if (!corsOrigins.includes(frontendUrl)) {
   throw new Error("FRONTEND_URL은 CORS_ORIGINS에 포함되어야 합니다.");
 }
 
+const profileImageStorage = parseProfileImageStorageDriver(
+  process.env.PROFILE_IMAGE_STORAGE,
+);
+const awsBucketName = getOptionalEnvironmentVariable("AWS_BUCKET_NAME");
+const cloudFrontDomain = parseCloudFrontDomain(process.env.CLOUDFRONT_DOMAIN);
+
+// 업로드 요청이 들어온 뒤에야 설정 누락을 알게 되지 않도록 s3 선택 시 필요한 값을 서버 시작 전에 확인합니다.
+// AWS 자격 증명은 여기서 읽지 않습니다. SDK가 AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 또는 EC2 IAM Role에서 직접 찾습니다.
+if (profileImageStorage === "s3" && (!awsBucketName || !cloudFrontDomain)) {
+  throw new Error(
+    "PROFILE_IMAGE_STORAGE=s3에는 AWS_BUCKET_NAME과 CLOUDFRONT_DOMAIN이 필요합니다.",
+  );
+}
+
 export const env = {
   NODE_ENV: nodeEnvironment,
 
@@ -270,6 +316,14 @@ export const env = {
   SMTP_PASS: getOptionalEnvironmentVariable("SMTP_PASS"),
 
   SMTP_FROM: getOptionalEnvironmentVariable("SMTP_FROM"),
+
+  PROFILE_IMAGE_STORAGE: profileImageStorage,
+
+  AWS_REGION: process.env.AWS_REGION?.trim() || "ap-northeast-2",
+
+  AWS_BUCKET_NAME: awsBucketName,
+
+  CLOUDFRONT_DOMAIN: cloudFrontDomain,
 
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
 

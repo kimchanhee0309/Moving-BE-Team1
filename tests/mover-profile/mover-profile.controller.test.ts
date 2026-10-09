@@ -3,7 +3,7 @@
  * 실제 Multer 파일, DB와 JWT 처리는 mock으로 격리합니다.
  */
 jest.mock("../../src/modules/mover-profile/mover-profile.image", () => ({
-  getUploadedMoverProfileImageUrl: jest.fn(),
+  saveUploadedMoverProfileImage: jest.fn(),
   removeUploadedMoverProfileImage: jest.fn(),
   validateUploadedMoverProfileImage: jest.fn(),
 }));
@@ -27,7 +27,7 @@ import {
   updateMoverProfileController,
 } from "../../src/modules/mover-profile/mover-profile.controller";
 import {
-  getUploadedMoverProfileImageUrl,
+  saveUploadedMoverProfileImage,
   removeUploadedMoverProfileImage,
   validateUploadedMoverProfileImage,
 } from "../../src/modules/mover-profile/mover-profile.image";
@@ -70,7 +70,7 @@ describe("Mover Profile controller", () => {
       ...profile,
       profileImageUrl: null,
     };
-    jest.mocked(getUploadedMoverProfileImageUrl).mockReturnValue(undefined);
+    jest.mocked(saveUploadedMoverProfileImage).mockResolvedValue(undefined);
     jest.mocked(parseCreateMoverProfileRequest).mockReturnValue(input);
     jest.mocked(createMoverProfile).mockResolvedValue(profile);
     const response = createResponse();
@@ -116,7 +116,7 @@ describe("Mover Profile controller", () => {
 
   test("DB 실패 시 이번 요청에서 업로드한 새 이미지를 정리한다", async () => {
     const file = { path: "new-image" } as Express.Multer.File;
-    jest.mocked(getUploadedMoverProfileImageUrl).mockReturnValue(
+    jest.mocked(saveUploadedMoverProfileImage).mockResolvedValue(
       "/uploads/mover-profiles/new-image.jpg",
     );
     jest.mocked(parseUpdateMoverProfileRequest).mockReturnValue({

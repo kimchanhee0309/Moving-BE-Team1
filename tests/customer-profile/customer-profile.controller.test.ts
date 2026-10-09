@@ -3,7 +3,7 @@
  * 실제 multer 파일, DB와 인증 토큰 처리는 mock으로 분리합니다.
  */
 jest.mock("../../src/modules/customer-profile/customer-profile.image", () => ({
-  getUploadedProfileImageUrl: jest.fn(),
+  saveUploadedProfileImage: jest.fn(),
   removeUploadedProfileImage: jest.fn(),
   validateUploadedProfileImage: jest.fn(),
 }));
@@ -27,7 +27,7 @@ import {
   updateCustomerProfileController,
 } from "../../src/modules/customer-profile/customer-profile.controller";
 import {
-  getUploadedProfileImageUrl,
+  saveUploadedProfileImage,
   validateUploadedProfileImage,
 } from "../../src/modules/customer-profile/customer-profile.image";
 import {
@@ -65,7 +65,7 @@ describe("Customer Profile controller", () => {
 
   test("생성은 토큰의 userId를 사용하고 201 data.profile을 반환한다", async () => {
     const input = { profileImageUrl: null, serviceTypes: ["SMALL" as const], region: "서울" as const };
-    jest.mocked(getUploadedProfileImageUrl).mockReturnValue(undefined);
+    jest.mocked(saveUploadedProfileImage).mockResolvedValue(undefined);
     jest.mocked(parseCreateCustomerProfileInput).mockReturnValue(input);
     jest.mocked(createCustomerProfile).mockResolvedValue(profile);
     const response = createResponse();
@@ -100,7 +100,7 @@ describe("Customer Profile controller", () => {
 
   test("수정은 profileId와 검증된 DTO를 Service에 전달한다", async () => {
     const input = { phone: null };
-    jest.mocked(getUploadedProfileImageUrl).mockReturnValue(undefined);
+    jest.mocked(saveUploadedProfileImage).mockResolvedValue(undefined);
     jest.mocked(parseUpdateCustomerProfileInput).mockReturnValue(input);
     jest.mocked(updateCustomerProfile).mockResolvedValue(profile);
     const response = createResponse();
