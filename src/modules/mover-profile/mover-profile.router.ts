@@ -76,7 +76,7 @@ export const moverProfileRouter = Router();
  *             properties:
  *               profileImage: { type: string, format: binary, description: "선택, JPEG/PNG/WebP, 최대 5 MiB" }
  *               nickname: { type: string, minLength: 1, maxLength: 50 }
- *               careerYears: { type: integer, minimum: 0, maximum: 50 }
+ *               careerYears: { type: integer, minimum: 1, maximum: 40 }
  *               shortIntroduction: { type: string, minLength: 1, maxLength: 255 }
  *               description: { type: string, minLength: 1, maxLength: 1000 }
  *               serviceTypes:
@@ -128,7 +128,7 @@ export const moverProfileRouter = Router();
  *             properties:
  *               profileImage: { type: string, format: binary, description: "JPEG/PNG/WebP, 최대 5 MiB" }
  *               nickname: { type: string, minLength: 1, maxLength: 50 }
- *               careerYears: { type: integer, minimum: 0, maximum: 50 }
+ *               careerYears: { type: integer, minimum: 1, maximum: 40 }
  *               shortIntroduction: { type: string, minLength: 1, maxLength: 255 }
  *               description: { type: string, minLength: 1, maxLength: 1000 }
  *               serviceTypes:

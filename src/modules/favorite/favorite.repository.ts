@@ -146,10 +146,11 @@ async function attachReviewStats(row: FavoriteRow): Promise<FavoriteRecord> {
 /**
  * 찜 대상 기사님이 실제로 존재하는지 확인합니다.
  * 없는 moverId로 Favorite를 만들면 FK 오류가 나므로 Service가 404로 바꾸기 위해 먼저 조회합니다.
+ * 탈퇴한 기사님은 프로필 row가 남아 있어도 새로 찜할 수 없도록 없는 기사님으로 취급합니다.
  */
 export function findMoverId(moverId: string): Promise<{ id: string } | null> {
-  return prisma.mover.findUnique({
-    where: { id: moverId },
+  return prisma.mover.findFirst({
+    where: { id: moverId, user: { deletedAt: null } },
     select: { id: true },
   });
 }
@@ -193,6 +194,13 @@ export async function createFavorite(
 }
 
 /**
+ * 고객의 찜 목록 조건입니다. 찜 row는 탈퇴 뒤에도 남기지만, 탈퇴한 기사님은 상세로 이동할 수 없으므로 목록에서 제외합니다.
+ */
+function activeFavoriteWhere(customerId: string): Prisma.FavoriteWhereInput {
+  return { customerId, mover: { user: { deletedAt: null } } };
+}
+
+/**
  * 고객의 찜을 최신순으로 페이지 조회합니다.
  * skip/take로 한 페이지 분량만 읽고, 리뷰는 mover별 COUNT/AVG만 추가로 집계합니다.
  * createdAt만 정렬하면 같은 밀리초에 여러 건이 있을 때 페이지 경계가 흔들릴 수 있어 id를 보조 기준으로 둡니다.
@@ -203,7 +211,7 @@ export async function findFavoritesByCustomer(
   take: number,
 ): Promise<FavoriteRecord[]> {
   const rows = await prisma.favorite.findMany({
-    where: { customerId },
+    where: activeFavoriteWhere(customerId),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     skip,
     take,
@@ -213,10 +221,10 @@ export async function findFavoritesByCustomer(
   return withReviewStats(rows);
 }
 
-/** 목록 pagination의 totalCount를 계산하기 위해 해당 고객의 찜 전체 건수를 셉니다. */
+/** 목록 pagination의 totalCount를 계산하기 위해 해당 고객의 찜 전체 건수를 셉니다. 목록과 같은 조건을 써야 페이지 수가 어긋나지 않습니다. */
 export function countFavoritesByCustomer(customerId: string): Promise<number> {
   return prisma.favorite.count({
-    where: { customerId },
+    where: activeFavoriteWhere(customerId),
   });
 }
 

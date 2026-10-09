@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 
+import { isWithdrawnMoverNickname } from "../../common/constants/withdrawn-account";
 import { BadRequestError } from "../../common/errors/app-error";
 import { parseWithZod } from "../../common/validation/zod-parser";
 import {
@@ -70,6 +71,10 @@ const nicknameSchema = z
   .min(1, { error: "닉네임을 입력해 주세요." })
   .max(MOVER_NICKNAME_MAX_LENGTH, {
     error: `닉네임은 ${MOVER_NICKNAME_MAX_LENGTH}자 이하여야 합니다.`,
+  })
+  // 탈퇴 계정에 저장하는 닉네임 형식을 직접 고르면 탈퇴한 기사님으로 표시되므로 거절합니다.
+  .refine((nickname) => !isWithdrawnMoverNickname(nickname), {
+    error: "사용할 수 없는 닉네임입니다.",
   });
 
 const careerYearsSchema = z.preprocess(

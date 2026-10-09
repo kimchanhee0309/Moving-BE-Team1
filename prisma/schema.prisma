@@ -49,6 +49,7 @@ enum NotificationType {
   MOVE_DAY
   MOVE_REQUEST_CANCELED // 신규: WAITING 요청이 취소됨(대기 중이던 PROPOSED 견적 기사님들에게)
   CONFIRMED_MOVE_CANCELED // 신규: CONFIRMED 요청이 취소됨(확정 기사님에게)
+  QUOTE_CANCELED_BY_MOVER_WITHDRAWAL // 신규: 기사님 탈퇴로 대기 중이던 견적이 삭제됨(견적을 받은 고객에게)
 }
 
 model User {
@@ -62,6 +63,8 @@ model User {
   phone              String?                   @unique @db.VarChar(20)
   socialProvider     SocialProvider?
   socialId           String?                   @db.VarChar(255)
+  /// 탈퇴 시각입니다. 값이 있으면 탈퇴 계정이며 이름·이메일·전화번호·인증 수단은 탈퇴 즉시 익명화됩니다. 리뷰와 완료된 견적 보존을 위해 row는 삭제하지 않습니다.
+  deletedAt          DateTime?                 @db.Timestamptz(3)
   createdAt          DateTime                  @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime                  @updatedAt @db.Timestamptz(3)
 
