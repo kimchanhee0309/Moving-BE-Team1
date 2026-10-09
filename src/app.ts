@@ -41,7 +41,8 @@ app.use(
 app.use(cookieParser());
 app.use(csrfOriginGuard);
 setupSwagger(app);
-// UUID로 저장된 개발용 이미지 파일만 공개하며 업로드·검증은 공통 이미지 경계가 담당합니다.
+// local 저장소의 UUID 이미지 파일만 공개하며 업로드·검증은 공통 이미지 경계가 담당합니다.
+// S3 저장소로 전환한 뒤에도 전환 전에 올린 /uploads/... 이미지를 계속 제공하기 위해 유지합니다. 새 이미지는 CloudFront가 제공합니다.
 app.use(
   "/uploads/customer-profiles",
   express.static(CUSTOMER_PROFILE_UPLOAD_DIRECTORY, {

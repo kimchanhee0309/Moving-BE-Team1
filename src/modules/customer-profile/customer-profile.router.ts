@@ -30,7 +30,7 @@ export const customerProfileRouter = Router();
  *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
  *         email: { type: string, format: email, example: "customer@example.com" }
  *         phone: { type: string, nullable: true, example: "01012345678" }
- *         profileImageUrl: { type: string, nullable: true, example: "/uploads/customer-profiles/example.jpg" }
+ *         profileImageUrl: { type: string, nullable: true, description: "local 저장소는 API origin 기준 상대 경로(/uploads/...), S3 저장소는 CloudFront 절대 URL(https://...)", example: "https://d1234abcd.cloudfront.net/profile-images/customers/00000000-0000-4000-8000-000000000000.jpg" }
  *         serviceTypes:
  *           type: array
  *           minItems: 1
@@ -88,6 +88,7 @@ export const customerProfileRouter = Router();
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       403: { $ref: "#/components/responses/Forbidden" }
  *       409: { $ref: "#/components/responses/Conflict" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
  *   get:
  *     tags: [Customers]
  *     summary: Get Customer Profile
@@ -137,6 +138,7 @@ export const customerProfileRouter = Router();
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       403: { $ref: "#/components/responses/Forbidden" }
  *       409: { $ref: "#/components/responses/Conflict" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
  */
 customerProfileRouter.post(
   "/me/profile",

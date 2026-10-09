@@ -27,7 +27,7 @@ export const moverProfileRouter = Router();
  *       required: [id, profileImageUrl, nickname, careerYears, shortIntroduction, description, serviceTypes, regions, createdAt, updatedAt]
  *       properties:
  *         id: { type: string, format: uuid }
- *         profileImageUrl: { type: string, nullable: true, example: "/uploads/mover-profiles/example.jpg" }
+ *         profileImageUrl: { type: string, nullable: true, description: "local 저장소는 API origin 기준 상대 경로(/uploads/...), S3 저장소는 CloudFront 절대 URL(https://...)", example: "https://d1234abcd.cloudfront.net/profile-images/movers/00000000-0000-4000-8000-000000000000.jpg" }
  *         nickname: { type: string, minLength: 1, maxLength: 50, example: "김코드" }
  *         careerYears: { type: integer, minimum: 0, maximum: 50, example: 8 }
  *         shortIntroduction: { type: string, minLength: 1, maxLength: 255, example: "꼼꼼하고 안전한 이사를 도와드립니다." }
@@ -101,6 +101,7 @@ export const moverProfileRouter = Router();
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       403: { $ref: "#/components/responses/Forbidden" }
  *       409: { $ref: "#/components/responses/Conflict" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
  *   get:
  *     tags: [Movers]
  *     summary: Get Mover Profile
@@ -153,6 +154,7 @@ export const moverProfileRouter = Router();
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       403: { $ref: "#/components/responses/Forbidden" }
  *       409: { $ref: "#/components/responses/Conflict" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
  */
 moverProfileRouter.post(
   "/me/profile",

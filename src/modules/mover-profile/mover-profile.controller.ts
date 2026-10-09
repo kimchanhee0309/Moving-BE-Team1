@@ -11,8 +11,8 @@ import {
   getProfileAuthContext,
 } from "../../common/utils/auth-context";
 import {
-  getUploadedMoverProfileImageUrl,
   removeUploadedMoverProfileImage,
+  saveUploadedMoverProfileImage,
   validateUploadedMoverProfileImage,
 } from "./mover-profile.image";
 import {
@@ -41,15 +41,16 @@ export const createMoverProfileController: RequestHandler = async (
   try {
     await validateUploadedMoverProfileImage(request.file);
     const { userId } = getAuthContext(request);
+    // 검증을 통과한 파일만 저장소(local 또는 S3)에 올리고 그 공개 URL을 DTO에 넣습니다.
     const input = parseCreateMoverProfileRequest(
       request.body,
-      getUploadedMoverProfileImageUrl(request.file) ?? null,
+      (await saveUploadedMoverProfileImage(request.file)) ?? null,
     );
     const profile = await createMoverProfile(userId, input);
 
     return sendSuccess(response, HTTP_STATUS.CREATED, { profile });
   } catch (error: unknown) {
-    // multer가 먼저 만든 파일은 validation·권한·DB 처리 중 어느 단계가 실패해도 남기지 않습니다.
+    // 이번 요청에서 저장한 새 이미지는 validation·권한·DB 처리 중 어느 단계가 실패해도 남기지 않습니다.
     await safelyRemoveNewUpload(request.file);
     throw error;
   }
@@ -76,7 +77,7 @@ export const updateMoverProfileController: RequestHandler = async (
     const { profileId } = getProfileAuthContext(request);
     const input = parseUpdateMoverProfileRequest(
       request.body,
-      getUploadedMoverProfileImageUrl(request.file),
+      await saveUploadedMoverProfileImage(request.file),
     );
     const profile = await updateMoverProfile(profileId, input);
 
