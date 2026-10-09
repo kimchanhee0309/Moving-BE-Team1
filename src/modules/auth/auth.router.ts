@@ -370,7 +370,7 @@ authRouter.get("/me", authenticate, meController);
  *   delete:
  *     tags: [Auth]
  *     summary: Withdraw Current Account
- *     description: 이메일 계정은 현재 비밀번호를 다시 확인하고 OAuth 계정은 현재 세션으로 본인 계정과 연관 데이터를 삭제합니다.
+ *     description: 이메일 계정은 현재 비밀번호를 다시 확인하고 OAuth 계정은 현재 세션으로 본인 계정을 탈퇴 처리합니다. 계정은 soft delete되고 이름·이메일·전화번호·인증 수단은 즉시 익명화되어 복구할 수 없으며 같은 이메일·SNS로 바로 재가입할 수 있습니다. 리뷰와 완료된 이사의 견적은 '탈퇴한 회원'·'탈퇴한 기사님'으로 남고, 확정 전 대기 중인 요청·견적은 삭제되며 상대방에게 알림이 갑니다. 확정됐고 이사일이 지나지 않은 이사가 있으면 WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE(409)로 거절합니다.
  *     security: [{ accessTokenCookie: [] }]
  *     requestBody:
  *       required: false

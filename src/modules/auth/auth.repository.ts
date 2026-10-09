@@ -1,5 +1,5 @@
 /**
- * Auth Service에 필요한 User 조회·생성과 회원 탈퇴 transaction을 Prisma로 수행합니다.
+ * Auth Service에 필요한 User 조회·생성과 회원 탈퇴(soft delete·익명화) transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
 import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
@@ -18,11 +18,13 @@ const authUserSelect = {
 
 const withdrawalUserSelect = {
   id: true,
+  role: true,
   passwordHash: true,
   socialProvider: true,
   socialId: true,
   customer: { select: { id: true, profileImageUrl: true } },
-  mover: { select: { id: true, profileImageUrl: true } },
+  // nickname은 익명화 전에 고객에게 보낼 탈퇴 알림 문구에 사용합니다.
+  mover: { select: { id: true, profileImageUrl: true, nickname: true } },
 } satisfies Prisma.UserSelect;
 
 export type AuthUserRecord = Prisma.UserGetPayload<{
@@ -63,9 +65,15 @@ export function findUserByPhone(phone: string): Promise<AuthUserRecord | null> {
   return prisma.user.findUnique({ where: { phone }, select: authUserSelect });
 }
 
-/** 토큰 subject가 현재 존재하는 사용자에 해당하는지 확인합니다. */
+/**
+ * 토큰 subject가 현재 존재하는 사용자에 해당하는지 확인합니다.
+ * 탈퇴(soft delete) 계정은 row가 남아 있어도 없는 사용자로 취급해 탈퇴 전에 발급된 Access/Refresh Token을 거절합니다.
+ */
 export function findUserById(userId: string): Promise<AuthUserRecord | null> {
-  return prisma.user.findUnique({ where: { id: userId }, select: authUserSelect });
+  return prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
+    select: authUserSelect,
+  });
 }
 
 /** 공급자와 공급자 고유 ID의 복합 식별자로 기존 OAuth 사용자를 조회합니다. */
@@ -342,49 +350,221 @@ export function runAuthTransaction<T>(
   return prisma.$transaction(operation);
 }
 
-/** 탈퇴 transaction 안에서 최신 인증 수단과 역할별 profile 식별자를 조회합니다. */
+/** 탈퇴 transaction 안에서 최신 인증 수단과 역할별 profile 식별자를 조회합니다. 이미 탈퇴한 계정은 null입니다. */
 export function findUserForWithdrawal(
   transaction: AuthTransaction,
   userId: string,
 ): Promise<WithdrawalUserRecord | null> {
-  return transaction.user.findUnique({
-    where: { id: userId },
+  return transaction.user.findFirst({
+    where: { id: userId, deletedAt: null },
     select: withdrawalUserSelect,
   });
 }
 
 /**
- * Cascade가 아닌 RequestRejection FK를 User 삭제 전에 정리합니다.
- * Customer의 요청에 달린 반려와 Mover 본인의 반려를 모두 처리해 비정상 복수 profile 데이터도 막지 않게 합니다.
+ * 탈퇴를 막아야 하는 "확정됐고 이사일이 아직 지나지 않은 이사" 건수를 셉니다.
+ * 고객은 본인의 CONFIRMED 요청, 기사님은 본인의 CONFIRMED 견적이 걸린 CONFIRMED 요청이 대상입니다.
+ * 이사일 기준은 이사 요청 취소 가능 판정(move-request.repository)과 같은 UTC 자정입니다.
+ * @param now 판정 기준 시각
+ * @returns 0이면 탈퇴를 진행할 수 있습니다
  */
-export async function deleteRestrictedWithdrawalRelations(
+export async function countUpcomingConfirmedMoves(
   transaction: AuthTransaction,
   user: WithdrawalUserRecord,
-): Promise<void> {
-  if (user.customer) {
-    await transaction.requestRejection.deleteMany({
-      where: { moveRequest: { customerId: user.customer.id } },
-    });
-  }
+  now: Date,
+): Promise<number> {
+  const todayUtcMidnight = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const upcomingConfirmedMove = {
+    status: "CONFIRMED",
+    moveDate: { gte: todayUtcMidnight },
+  } satisfies Prisma.MoveRequestWhereInput;
 
-  if (user.mover) {
-    await transaction.requestRejection.deleteMany({
-      where: { moverId: user.mover.id },
-    });
-  }
+  const [customerMoves, moverMoves] = await Promise.all([
+    user.customer
+      ? transaction.moveRequest.count({
+          where: { customerId: user.customer.id, ...upcomingConfirmedMove },
+        })
+      : 0,
+    user.mover
+      ? transaction.quote.count({
+          where: {
+            moverId: user.mover.id,
+            status: "CONFIRMED",
+            moveRequest: upcomingConfirmedMove,
+          },
+        })
+      : 0,
+  ]);
+
+  return customerMoves + moverMoves;
 }
 
-/** 조회 후 인증 수단이 바뀌지 않은 User만 삭제하여 비밀번호 변경과 탈퇴의 경쟁을 차단합니다. */
-export function deleteUserWithAuthState(
+/** 기사님 탈퇴로 삭제될 대기 견적 한 건과 알림을 받을 고객입니다. */
+export interface PendingMoverQuoteRecord {
+  quoteId: string;
+  moveRequestId: string;
+  customerUserId: string;
+}
+
+/** 탈퇴하는 기사님이 보낸 견적 중 고객이 아직 확정하지 않은 대기 견적을 조회합니다. */
+export async function findPendingQuotesByMoverId(
+  transaction: AuthTransaction,
+  moverId: string,
+): Promise<PendingMoverQuoteRecord[]> {
+  const quotes = await transaction.quote.findMany({
+    where: { moverId, status: "PROPOSED", moveRequest: { status: "WAITING" } },
+    select: {
+      id: true,
+      moveRequestId: true,
+      moveRequest: { select: { customer: { select: { userId: true } } } },
+    },
+  });
+
+  return quotes.map((quote) => ({
+    quoteId: quote.id,
+    moveRequestId: quote.moveRequestId,
+    customerUserId: quote.moveRequest.customer.userId,
+  }));
+}
+
+/** QUOTE_CANCELED_BY_MOVER_WITHDRAWAL 알림으로 저장한 내용입니다. */
+export interface CreatedMoverWithdrawalNotificationRecord {
+  userId: string;
+  moveRequestId: string;
+  quoteId: string;
+  type: "QUOTE_CANCELED_BY_MOVER_WITHDRAWAL";
+  title: string;
+  content: string;
+  /** 언어별 알림 문장을 조립할 변수입니다. */
+  params: { moverNickname: string };
+}
+
+/**
+ * 기사님 탈퇴로 대기 견적이 사라지는 고객들에게 알림을 일괄 생성합니다.
+ * 반드시 견적을 지우기 전에 호출합니다. Notification.quoteId는 Quote를 참조하므로 참조 대상이 있을 때 insert해야 하며,
+ * 이후 견적이 삭제되면 onDelete: SetNull로 quoteId만 비워지고 알림 문구는 남습니다.
+ * @param transaction 탈퇴 transaction client
+ * @param input 익명화 전의 기사님 닉네임과 삭제될 대기 견적 목록
+ * @returns 저장한 알림 목록(0건일 수 있음). Service가 transaction 커밋 뒤 SSE push에 사용합니다.
+ */
+export async function createMoverWithdrawalNotifications(
+  transaction: AuthTransaction,
+  input: { moverNickname: string; quotes: PendingMoverQuoteRecord[] },
+): Promise<CreatedMoverWithdrawalNotificationRecord[]> {
+  if (input.quotes.length === 0) return [];
+
+  const notifications: CreatedMoverWithdrawalNotificationRecord[] = input.quotes.map(
+    (quote) => ({
+      userId: quote.customerUserId,
+      moveRequestId: quote.moveRequestId,
+      quoteId: quote.quoteId,
+      type: "QUOTE_CANCELED_BY_MOVER_WITHDRAWAL",
+      title: "받은 견적이 취소되었습니다.",
+      content: `${input.moverNickname} 기사님이 계정을 탈퇴하여 보내드린 견적이 취소되었습니다.`,
+      params: { moverNickname: input.moverNickname },
+    }),
+  );
+
+  await transaction.notification.createMany({ data: notifications });
+
+  return notifications;
+}
+
+/**
+ * 탈퇴하는 기사님의 미완료 흔적을 지우고 검색·매칭 대상에서 빠지도록 관계를 정리합니다.
+ * 확정된 견적(CONFIRMED)과 리뷰는 고객의 완료 이력으로 남깁니다.
+ * RequestRejection은 FK가 Restrict라 Mover row를 남기더라도 반려 목록에 계속 노출되지 않게 함께 지웁니다.
+ */
+export async function deleteMoverWithdrawalRelations(
+  transaction: AuthTransaction,
+  moverId: string,
+): Promise<void> {
+  await transaction.quote.deleteMany({
+    where: { moverId, status: { not: "CONFIRMED" } },
+  });
+  // 아직 견적을 받는 중인 요청의 지정만 지워 고객이 다른 기사님을 지정할 수 있게 합니다.
+  await transaction.designatedRequest.deleteMany({
+    where: { moverId, moveRequest: { status: "WAITING" } },
+  });
+  await transaction.requestRejection.deleteMany({ where: { moverId } });
+  // 활동 지역·서비스가 없으면 기사님 찾기와 새 요청 알림 매칭에서 제외됩니다.
+  await transaction.moverRegion.deleteMany({ where: { moverId } });
+  await transaction.moverServiceType.deleteMany({ where: { moverId } });
+}
+
+/** 탈퇴 계정에 덮어쓸 익명화 값입니다. */
+export interface WithdrawnAccountData {
+  name: string;
+  email: string;
+  /** 기사님 계정일 때만 사용하는 유일한 대체 닉네임입니다. */
+  moverNickname: string;
+  deletedAt: Date;
+}
+
+/**
+ * 조회 후 인증 수단이 바뀌지 않은 User만 탈퇴 처리해 비밀번호 변경과 탈퇴의 경쟁을 차단합니다.
+ * 이름·이메일·전화번호·비밀번호·SNS 연결·복구 질문을 지워 같은 이메일·SNS로 즉시 재가입할 수 있게 하고,
+ * 이 계정으로는 다시 로그인하거나 복구할 수 없게 합니다.
+ * @returns count가 0이면 그사이 인증 수단이 바뀌었거나 이미 탈퇴한 계정입니다
+ */
+export function anonymizeUserWithAuthState(
   transaction: AuthTransaction,
   user: WithdrawalUserRecord,
+  data: WithdrawnAccountData,
 ): Promise<{ count: number }> {
-  return transaction.user.deleteMany({
+  return transaction.user.updateMany({
     where: {
       id: user.id,
+      deletedAt: null,
       passwordHash: user.passwordHash,
       socialProvider: user.socialProvider,
       socialId: user.socialId,
     },
+    data: {
+      name: data.name,
+      email: data.email,
+      phone: null,
+      passwordHash: null,
+      recoveryQuestion: null,
+      recoveryAnswerHash: null,
+      socialProvider: null,
+      socialId: null,
+      deletedAt: data.deletedAt,
+    },
   });
+}
+
+/**
+ * User 익명화가 성공한 뒤 역할 profile의 개인정보와 본인만 보던 데이터를 정리합니다.
+ * Customer/Mover row와 리뷰·완료된 견적·찜은 남기고, 프로필 이미지 주소·소개글·알림·재설정 코드는 지웁니다.
+ */
+export async function clearWithdrawnProfileData(
+  transaction: AuthTransaction,
+  user: WithdrawalUserRecord,
+  data: WithdrawnAccountData,
+): Promise<void> {
+  if (user.customer) {
+    await transaction.customer.update({
+      where: { id: user.customer.id },
+      data: { profileImageUrl: null },
+    });
+    await transaction.customerServiceType.deleteMany({
+      where: { customerId: user.customer.id },
+    });
+  }
+
+  if (user.mover) {
+    await transaction.mover.update({
+      where: { id: user.mover.id },
+      data: {
+        profileImageUrl: null,
+        nickname: data.moverNickname,
+        shortIntroduction: "",
+        description: "",
+      },
+    });
+  }
+
+  await transaction.notification.deleteMany({ where: { userId: user.id } });
+  await transaction.passwordResetChallenge.deleteMany({ where: { userId: user.id } });
 }

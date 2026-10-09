@@ -62,7 +62,9 @@ describe("Mover Profile validator", () => {
 
   test.each([
     ["음수 경력", { careerYears: "-1" }],
-    ["상한 초과 경력", { careerYears: "51" }],
+    ["하한(1년) 미만 경력", { careerYears: "0" }],
+    ["상한(40년) 초과 경력", { careerYears: "41" }],
+    ["탈퇴 계정 저장 형식의 닉네임", { nickname: "탈퇴한 기사님#550e8400e29b41d4a716446655440000" }],
     ["소수 경력", { careerYears: "1.5" }],
     ["빈 닉네임", { nickname: " " }],
     ["한 줄 소개 길이 초과", { shortIntroduction: "가".repeat(256) }],
@@ -71,6 +73,12 @@ describe("Mover Profile validator", () => {
     expect(() =>
       parseCreateMoverProfileRequest({ ...validCreateBody, ...override }, null),
     ).toThrow(BadRequestError);
+  });
+
+  test.each(["1", "40"])("경력 허용 범위의 경계값 %s년을 통과시킨다", (careerYears) => {
+    expect(
+      parseCreateMoverProfileRequest({ ...validCreateBody, careerYears }, null).careerYears,
+    ).toBe(Number(careerYears));
   });
 
   test("중복·허용되지 않은 서비스 유형과 지역을 거절한다", () => {

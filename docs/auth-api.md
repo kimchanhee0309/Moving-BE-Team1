@@ -99,7 +99,7 @@
 
 ## 회원 탈퇴
 
-`DELETE /auth/me`는 Access Token으로 확인한 본인의 계정만 삭제합니다.
+`DELETE /auth/me`는 Access Token으로 확인한 본인의 계정만 탈퇴 처리합니다.
 
 이메일·비밀번호 계정 요청:
 
@@ -112,13 +112,43 @@
 OAuth 계정 요청은 빈 객체 또는 Body 생략을 허용합니다. OAuth 재인증은 현재 MVP 범위에 포함하지 않습니다.
 
 - 이메일 계정의 비밀번호 누락은 `400 CURRENT_PASSWORD_REQUIRED`, 불일치는 `401 INVALID_CURRENT_PASSWORD`입니다.
-- 최신 User의 비밀번호 hash와 인증 수단을 transaction 안에서 확인하고 같은 인증 상태인 User만 조건부 삭제합니다.
-- `RequestRejection`은 FK가 `Restrict`이므로 먼저 삭제하고, 나머지는 Prisma Schema의 Cascade/SetNull 정책을 따릅니다.
-- Customer 탈퇴는 본인의 MoveRequest와 이에 연결된 Quote·Review·DesignatedRequest 등을 함께 삭제합니다.
-- Mover 탈퇴는 본인의 Quote·Review·Favorite·DesignatedRequest·RequestRejection 등을 함께 삭제합니다.
-- User 소유 Notification은 삭제되며 다른 사용자 알림이 참조하던 삭제 Quote·MoveRequest FK는 `SetNull`로 남습니다.
-- soft-delete 필드가 없는 현재 스키마에 맞춰 hard delete하므로 User의 이메일·전화번호 unique 값은 즉시 해제되어 재가입할 수 있습니다.
-- 성공 후 Access/Refresh Cookie를 삭제합니다. 삭제된 User를 가리키는 기존 토큰은 `/auth/me`와 Refresh에서 각각 `USER_NOT_FOUND`, `REFRESH_TOKEN_INVALID`로 거절됩니다.
+- 탈퇴는 **soft delete**입니다. `User.deletedAt`에 탈퇴 시각을 기록하고 row는 남기되 개인정보는 탈퇴 즉시 익명화합니다. 탈퇴 계정은 복구할 수 없습니다.
+- 최신 User의 비밀번호 hash와 인증 수단을 transaction 안에서 확인하고 같은 인증 상태인 User만 조건부로 탈퇴 처리합니다.
+
+### 탈퇴가 거절되는 경우
+
+- 견적이 확정됐고 이사일이 아직 지나지 않은 이사가 있으면 `409 WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE`로 거절합니다. 고객은 본인의 확정 요청, 기사님은 본인의 확정 견적이 대상이며 이사일 기준은 UTC 자정입니다.
+- 그사이 인증 수단이 바뀌었거나 같은 계정의 탈퇴가 동시에 끝났다면 `409 ACCOUNT_STATE_CHANGED`입니다.
+
+### 익명화하는 값
+
+| 대상 | 처리 |
+| --- | --- |
+| `User.name` | 일반 유저 `탈퇴한 회원`, 기사님 `탈퇴한 기사님` |
+| `User.email` | `withdrawn-{userId}@withdrawn.invalid` (원래 이메일은 unique에서 풀려 즉시 재가입 가능) |
+| `User.phone`, `passwordHash`, `socialProvider`, `socialId`, 복구 질문·답변 | `null` (같은 SNS 계정으로도 새 계정 가입 가능) |
+| `Customer.profileImageUrl` | `null`, 이미지 파일 삭제. 이용 서비스 선택 삭제 |
+| `Mover.profileImageUrl` | `null`, 이미지 파일 삭제 |
+| `Mover.nickname` | `탈퇴한 기사님#{userId hex}`로 저장하고 응답에서는 `탈퇴한 기사님`으로 표시 (nickname이 unique라 유일한 값이 필요) |
+| `Mover.shortIntroduction`, `description` | 빈 문자열. 활동 지역·서비스 유형 삭제 |
+| 본인 `Notification`, 비밀번호 재설정 코드 | 삭제 |
+
+### 남기는 데이터와 삭제하는 데이터
+
+| 구분 | 남김 | 삭제 |
+| --- | --- | --- |
+| 고객 탈퇴 | 완료됐거나 이사일이 지난 확정 요청과 그 견적, 작성한 리뷰, 찜 | 확정 전 대기 중인 이사 요청과 거기에 달린 견적·지정·반려 기록 |
+| 기사님 탈퇴 | 확정된 견적(완료 이력), 받은 리뷰, 받은 찜 | 확정되지 않은 견적(대기·반려), 대기 요청의 지정, 본인의 반려 기록 |
+
+- 고객의 대기 요청을 삭제할 때 견적을 보낸 기사님에게 `MOVE_REQUEST_CANCELED`(reason `WITHDRAWAL`) 알림을 보냅니다.
+- 기사님의 대기 견적을 삭제할 때 견적을 받은 고객에게 `QUOTE_CANCELED_BY_MOVER_WITHDRAWAL`(params `moverNickname`) 알림을 보냅니다.
+
+### 탈퇴 뒤의 조회
+
+- 탈퇴 전에 발급된 토큰은 `/auth/me`와 Refresh, profile guard에서 각각 `USER_NOT_FOUND`, `REFRESH_TOKEN_INVALID`, `USER_NOT_FOUND`로 거절됩니다.
+- 탈퇴한 기사님은 기사님 찾기 목록·추천과 찜 목록에서 제외되고, 상세·리뷰 목록·찜 추가·지정 요청은 `404 MOVER_NOT_FOUND`입니다.
+- 탈퇴한 기사님이 남는 화면(고객의 견적 이력, 작성한 리뷰)의 닉네임은 `탈퇴한 기사님`, 탈퇴한 고객이 남는 화면(기사님의 견적·받은 리뷰)의 이름은 `탈퇴한 회원`입니다.
+- 성공 후 Access/Refresh Cookie를 삭제합니다.
 
 `POST /auth/logout`도 stateless 계약에 따라 현재 브라우저의 두 HttpOnly Cookie만 만료시킵니다. Refresh Cookie는 요청 경로가 `/auth/refresh`라 로그아웃 요청에는 포함되지 않지만, 응답은 발급 때와 같은 Path로 해당 Cookie를 삭제합니다. 서버 폐기 저장소가 없으므로 로그아웃 전에 별도로 복사된 Refresh Token의 즉시 무효화는 보장하지 않습니다.
 

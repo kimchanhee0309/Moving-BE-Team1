@@ -36,6 +36,7 @@ export interface NotificationCursorPayload {
  * - QUOTE_CONFIRMED: 고객 수신 moverNickname / 기사님 수신 customerName
  * - MOVE_DAY: from, to(주소 약칭)
  * - MOVE_REQUEST_CANCELED·CONFIRMED_MOVE_CANCELED: customerName, reason(DIRECT_DELETE·WITHDRAWAL)
+ * - QUOTE_CANCELED_BY_MOVER_WITHDRAWAL: moverNickname(기사님 탈퇴로 대기 견적이 삭제된 고객에게 발송)
  * - NEW_MOVE_REQUEST: 변수 없음
  */
 export type NotificationParams = Record<string, string>;

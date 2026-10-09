@@ -22,7 +22,7 @@ export const notificationRouter = Router();
  *       required: [id, type, title, content, params, moveRequestId, quoteId, readAt, createdAt]
  *       properties:
  *         id: { type: string, format: uuid }
- *         type: { type: string, enum: [NEW_QUOTE, QUOTE_CONFIRMED, NEW_MOVE_REQUEST, MOVE_DAY, MOVE_REQUEST_CANCELED, CONFIRMED_MOVE_CANCELED] }
+ *         type: { type: string, enum: [NEW_QUOTE, QUOTE_CONFIRMED, NEW_MOVE_REQUEST, MOVE_DAY, MOVE_REQUEST_CANCELED, CONFIRMED_MOVE_CANCELED, QUOTE_CANCELED_BY_MOVER_WITHDRAWAL] }
  *         title: { type: string, example: "새로운 견적이 도착했습니다." }
  *         content: { type: string, example: "기사님이 새로운 이사 견적을 보냈습니다.", description: "한국어 완성 문장. params 번역이 없을 때의 대체 문구" }
  *         params:
