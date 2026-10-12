@@ -154,6 +154,16 @@ describe("Auth validator", () => {
     );
   });
 
+  test.each(["탈퇴한 회원", "탈퇴한 기사님"])(
+    "계정 복구는 예약어 규칙 이전에 가입한 계정도 찾을 수 있도록 이름 %s를 통과시킨다",
+    (name) => {
+      // 사전 조건: 저장된 이름과 대조만 하는 입력이라 새 이름을 저장하지 않습니다.
+      expect(
+        parseAccountRecoveryInput({ name, email: "user@example.com", role: "CUSTOMER" }).name,
+      ).toBe(name);
+    },
+  );
+
   test("계정 복구 입력을 정규화하고 새 비밀번호 정책을 검증한다", () => {
     expect(parseAccountRecoveryInput({
       name: " 홍길동 ",

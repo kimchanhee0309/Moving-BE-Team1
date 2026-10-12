@@ -4,7 +4,10 @@
  */
 import { z } from "zod";
 
-import { userNameSchema } from "../../common/validation/user-name-schema";
+import {
+  userNameFormatSchema,
+  userNameSchema,
+} from "../../common/validation/user-name-schema";
 import { parseWithZod } from "../../common/validation/zod-parser";
 import type {
   AccountRecoveryRequestDto,
@@ -109,7 +112,8 @@ const withdrawAccountSchema = z
 
 const accountRecoverySchema = z
   .object({
-    name: userNameSchema,
+    // 저장된 이름과 대조만 하므로 형식만 검증합니다. 예약어 규칙 이전에 가입한 계정도 비밀번호를 재설정할 수 있어야 합니다.
+    name: userNameFormatSchema,
     email: emailSchema,
     role: roleSchema,
   })
