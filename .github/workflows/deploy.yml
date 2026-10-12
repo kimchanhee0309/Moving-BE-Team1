@@ -21,6 +21,9 @@ jobs:
       - name: 의존성 설치
         run: npm ci
 
+      - name: migration
+        run: npx prisma generate
+
       - name: .env 파일 생성
         run: |
           echo "${{ secrets.ENV }}" > .env
@@ -56,4 +59,4 @@ jobs:
             rm -rf project.tar.gz
             npm ci
             pm2 kill
-            pm2 start dist/app.js --name "backend-server"
+            pm2 start dist/server.js --name "backend-server"
