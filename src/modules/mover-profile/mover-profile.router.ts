@@ -75,7 +75,7 @@ export const moverProfileRouter = Router();
  *             required: [nickname, careerYears, shortIntroduction, description, serviceTypes, regions]
  *             properties:
  *               profileImage: { type: string, format: binary, description: "선택, JPEG/PNG/WebP, 최대 5 MiB" }
- *               nickname: { type: string, minLength: 1, maxLength: 50 }
+ *               nickname: { type: string, minLength: 1, maxLength: 50, description: "탈퇴 계정 표시용 예약어(탈퇴한 회원, 탈퇴한 기사님)는 VALIDATION_ERROR로 거절" }
  *               careerYears: { type: integer, minimum: 1, maximum: 40 }
  *               shortIntroduction: { type: string, minLength: 1, maxLength: 255 }
  *               description: { type: string, minLength: 1, maxLength: 1000 }
@@ -128,7 +128,7 @@ export const moverProfileRouter = Router();
  *             minProperties: 1
  *             properties:
  *               profileImage: { type: string, format: binary, description: "JPEG/PNG/WebP, 최대 5 MiB" }
- *               nickname: { type: string, minLength: 1, maxLength: 50 }
+ *               nickname: { type: string, minLength: 1, maxLength: 50, description: "탈퇴 계정 표시용 예약어(탈퇴한 회원, 탈퇴한 기사님)는 VALIDATION_ERROR로 거절" }
  *               careerYears: { type: integer, minimum: 1, maximum: 40 }
  *               shortIntroduction: { type: string, minLength: 1, maxLength: 255 }
  *               description: { type: string, minLength: 1, maxLength: 1000 }

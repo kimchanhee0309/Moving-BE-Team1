@@ -1,6 +1,7 @@
 /**
  * 탈퇴(soft delete) 계정을 익명화할 때 저장하는 값과, 화면에 보일 고정 문구 변환을 한 곳에서 정의합니다.
  * 탈퇴 계정의 row는 리뷰와 완료된 견적을 보존하기 위해 남기되 개인정보는 이 값들로 즉시 교체합니다.
+ * 응답에는 탈퇴 여부 필드가 없어 화면이 이 고정 문구로 탈퇴 계정을 구분하므로, 활동 중인 사용자가 같은 문구를 쓰지 못하게 예약어로도 관리합니다.
  * 탈퇴 여부 판정(User.deletedAt)과 탈퇴 처리 transaction은 auth 모듈이 담당합니다.
  */
 
@@ -30,6 +31,17 @@ export function createWithdrawnEmail(userId: string): string {
  */
 export function createWithdrawnMoverNickname(userId: string): string {
   return `${WITHDRAWN_MOVER_NAME}#${userId.replace(/-/g, "").toLowerCase()}`;
+}
+
+/**
+ * 사용자가 입력한 이름·닉네임이 탈퇴 계정 표시용 고정 문구와 같은지 확인합니다.
+ * @param value 앞뒤 공백을 제거한 이름 또는 닉네임
+ * @returns "탈퇴한 회원" 또는 "탈퇴한 기사님"과 정확히 같으면 true
+ * @remarks 활동 중인 계정이 이 문구를 쓰면 리뷰·견적 화면에서 탈퇴 계정으로 잘못 표시되므로 가입·수정 검증에서 거절합니다.
+ * 역할과 필드를 가리지 않고 두 문구를 모두 막아, 이름과 닉네임 어느 쪽으로도 탈퇴 계정을 흉내 낼 수 없게 합니다.
+ */
+export function isReservedWithdrawnAccountName(value: string): boolean {
+  return value === WITHDRAWN_CUSTOMER_NAME || value === WITHDRAWN_MOVER_NAME;
 }
 
 /** 기사님이 직접 고른 닉네임이 탈퇴 계정 저장 형식과 겹치는지 확인합니다. 겹치면 탈퇴 기사님으로 잘못 표시되므로 등록을 거절합니다. */

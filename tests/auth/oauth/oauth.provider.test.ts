@@ -44,6 +44,22 @@ describe("OAuth provider", () => {
     });
   });
 
+  test("공급자 이름이 탈퇴 계정 표시용 예약어이면 이메일 앞부분을 이름으로 대신 쓴다", async () => {
+    jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ access_token: "provider-token" }))
+      .mockResolvedValueOnce(jsonResponse({
+        sub: "google-id",
+        email: "user@example.com",
+        email_verified: true,
+        name: " 탈퇴한 회원 ",
+      }));
+
+    // 기대 결과: 가입은 막지 않되, 탈퇴 계정으로 표시될 이름은 저장하지 않습니다.
+    await expect(fetchOAuthProfile("google", "code", "state")).resolves.toMatchObject({
+      name: "user",
+    });
+  });
+
   test("Kakao 이메일이 누락되면 profile에 이메일을 만들지 않는다", async () => {
     jest.spyOn(global, "fetch")
       .mockResolvedValueOnce(jsonResponse({ access_token: "provider-token" }))

@@ -7,6 +7,7 @@ import {
   WITHDRAWN_MOVER_NAME,
   createWithdrawnEmail,
   createWithdrawnMoverNickname,
+  isReservedWithdrawnAccountName,
   isWithdrawnMoverNickname,
   toDisplayMoverNickname,
 } from "../../src/common/constants/withdrawn-account";
@@ -37,6 +38,15 @@ describe("Withdrawn account values", () => {
     for (const nickname of ["김기사", "탈퇴한 기사님", "탈퇴한 기사님#1234", "탈퇴한 기사님 이사"]) {
       expect(isWithdrawnMoverNickname(nickname)).toBe(false);
       expect(toDisplayMoverNickname(nickname)).toBe(nickname);
+    }
+  });
+
+  test("탈퇴 계정 표시용 고정 문구와 정확히 같은 값만 예약어로 본다", () => {
+    expect(isReservedWithdrawnAccountName(WITHDRAWN_CUSTOMER_NAME)).toBe(true);
+    expect(isReservedWithdrawnAccountName(WITHDRAWN_MOVER_NAME)).toBe(true);
+    // 문구를 포함하기만 한 이름·닉네임은 화면에서 탈퇴 계정으로 오인되지 않으므로 허용합니다.
+    for (const value of ["탈퇴한", "탈퇴한 회원님", "탈퇴한 기사님 이사", "회원", "김기사"]) {
+      expect(isReservedWithdrawnAccountName(value)).toBe(false);
     }
   });
 

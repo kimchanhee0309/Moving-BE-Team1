@@ -57,7 +57,7 @@ export const authRouter = Router();
  *       type: object
  *       required: [name, email, phone, password, role]
  *       properties:
- *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
+ *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용. 탈퇴 계정 표시용 예약어(탈퇴한 회원, 탈퇴한 기사님)는 VALIDATION_ERROR로 거절", example: "홍길동" }
  *         email: { type: string, format: email, example: "user@example.com" }
  *         phone: { type: string, example: "01012345678" }
  *         password: { type: string, format: password, minLength: 8, example: "Password1!" }

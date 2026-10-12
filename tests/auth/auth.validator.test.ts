@@ -103,6 +103,29 @@ describe("Auth validator", () => {
     },
   );
 
+  test.each([
+    ["탈퇴한 회원", "CUSTOMER"],
+    ["탈퇴한 기사님", "MOVER"],
+    // 역할이 달라도, 앞뒤 공백을 붙여도 탈퇴 계정 표시용 예약어는 쓸 수 없습니다.
+    ["탈퇴한 기사님", "CUSTOMER"],
+    [" 탈퇴한 회원 ", "MOVER"],
+  ])("회원가입에서 탈퇴 계정 표시용 예약어 이름을 거절한다: %s (%s)", (name, role) => {
+    expect(() =>
+      parseSignUpInput({
+        name,
+        email: "user@example.com",
+        phone: "01012345678",
+        password: "Password1!",
+        role,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "VALIDATION_ERROR",
+        details: [expect.objectContaining({ field: "name", reason: "사용할 수 없는 이름입니다." })],
+      }),
+    );
+  });
+
   test("여러 필드가 잘못되면 details 배열에 모두 기록한다", () => {
     expect.assertions(2);
 

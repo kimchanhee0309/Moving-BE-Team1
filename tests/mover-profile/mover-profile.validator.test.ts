@@ -65,6 +65,8 @@ describe("Mover Profile validator", () => {
     ["하한(1년) 미만 경력", { careerYears: "0" }],
     ["상한(40년) 초과 경력", { careerYears: "41" }],
     ["탈퇴 계정 저장 형식의 닉네임", { nickname: "탈퇴한 기사님#550e8400e29b41d4a716446655440000" }],
+    ["탈퇴한 기사님 표시 문구와 같은 닉네임", { nickname: " 탈퇴한 기사님 " }],
+    ["탈퇴한 회원 표시 문구와 같은 닉네임", { nickname: "탈퇴한 회원" }],
     ["소수 경력", { careerYears: "1.5" }],
     ["빈 닉네임", { nickname: " " }],
     ["한 줄 소개 길이 초과", { shortIntroduction: "가".repeat(256) }],
