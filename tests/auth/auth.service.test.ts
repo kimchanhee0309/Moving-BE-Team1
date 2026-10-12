@@ -10,6 +10,8 @@ jest.mock("../../src/modules/auth/auth.repository", () => ({
   createMoverWithdrawalNotifications: jest.fn(),
   deleteMoverWithdrawalRelations: jest.fn(),
   findPendingQuotesByMoverId: jest.fn(),
+  lockMoveRequestsForWithdrawal: jest.fn(),
+  lockUserForWithdrawal: jest.fn(),
   findUserByEmail: jest.fn(),
   findUserById: jest.fn(),
   findUserByPhone: jest.fn(),
@@ -70,6 +72,7 @@ jest.mock("../../src/modules/move-request/move-request.repository", () => ({
   deleteMoveRequestById: jest.fn(),
   deleteRequestRejectionsByMoveRequestId: jest.fn(),
   findCancelableMoveRequestsByCustomerId: jest.fn(),
+  findMoveRequestForCancelByIdForUpdate: jest.fn(),
   findQuoteRecipientsByMoveRequestIdAndStatus: jest.fn(),
 }));
 
@@ -98,6 +101,8 @@ import {
   createMoverWithdrawalNotifications,
   deleteMoverWithdrawalRelations,
   findPendingQuotesByMoverId,
+  lockMoveRequestsForWithdrawal,
+  lockUserForWithdrawal,
   findUserByEmail,
   findUserById,
   findUserByPhone,
@@ -134,6 +139,7 @@ import {
   deleteMoveRequestById,
   deleteRequestRejectionsByMoveRequestId,
   findCancelableMoveRequestsByCustomerId,
+  findMoveRequestForCancelByIdForUpdate,
   findQuoteRecipientsByMoveRequestIdAndStatus,
 } from "../../src/modules/move-request/move-request.repository";
 import { removeReplacedMoverProfileImage } from "../../src/modules/mover-profile/mover-profile.image";
@@ -784,6 +790,11 @@ describe("Auth service", () => {
         emailWithdrawalUser,
         withdrawnAccount,
       );
+      // 기대 결과: 프로필 수정과 직렬화하기 위해 User row를 조회보다 먼저 잠급니다.
+      expect(lockUserForWithdrawal).toHaveBeenCalledWith(transaction, "customer-user-id");
+      expect(jest.mocked(lockUserForWithdrawal).mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+        jest.mocked(findUserForWithdrawal).mock.invocationCallOrder[0] ?? 0,
+      );
       // 고객 계정에는 기사님 정리를 실행하지 않습니다.
       expect(deleteMoverWithdrawalRelations).not.toHaveBeenCalled();
       expect(removeReplacedLocalProfileImage).toHaveBeenCalledWith(
@@ -839,6 +850,13 @@ describe("Auth service", () => {
           customer: { user: { name: "홍길동" } },
         },
       ]);
+      // 잠금을 잡고 다시 읽어도 여전히 대기 상태인 경우입니다.
+      jest.mocked(findMoveRequestForCancelByIdForUpdate).mockResolvedValue({
+        id: "move-request-id",
+        customerId: "customer-profile-id",
+        status: "WAITING",
+        customer: { user: { name: "홍길동" } },
+      });
       jest.mocked(findQuoteRecipientsByMoveRequestIdAndStatus).mockResolvedValue([
         { quoteId: "quote-id", moverUserId: "mover-user-id" },
       ]);
@@ -858,6 +876,11 @@ describe("Auth service", () => {
         withdrawAccount("customer-user-id", { currentPassword: "Password1!" }, now),
       ).resolves.toBeUndefined();
 
+      // 기대 결과: 견적 확정과 같은 row 잠금을 잡은 뒤에 알림·삭제를 진행합니다.
+      expect(findMoveRequestForCancelByIdForUpdate).toHaveBeenCalledWith("move-request-id", transaction);
+      expect(jest.mocked(findMoveRequestForCancelByIdForUpdate).mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+        jest.mocked(createMoveRequestCancelNotifications).mock.invocationCallOrder[0] ?? 0,
+      );
       // 대기 요청이므로 PROPOSED 견적을 보낸 기사님에게 알립니다.
       expect(findQuoteRecipientsByMoveRequestIdAndStatus).toHaveBeenCalledWith(
         "move-request-id",
@@ -891,22 +914,50 @@ describe("Auth service", () => {
       );
     });
 
-    test("차단 검사 뒤에 견적이 확정된 요청은 삭제하지 않고 탈퇴를 막는다", async () => {
+    test("잠금을 기다리는 동안 고객이 견적을 확정한 요청은 삭제하지 않고 탈퇴를 막는다", async () => {
+      // 사전 조건: 잠금 없는 조회에서는 WAITING이었지만, 잠금을 잡고 다시 읽으니 CONFIRMED로 바뀌어 있습니다.
       jest.mocked(findUserForWithdrawal).mockResolvedValue(emailWithdrawalUser);
       jest.mocked(findCancelableMoveRequestsByCustomerId).mockResolvedValue([
         {
           id: "move-request-id",
           customerId: "customer-profile-id",
-          status: "CONFIRMED",
+          status: "WAITING",
           customer: { user: { name: "홍길동" } },
         },
       ]);
+      jest.mocked(findMoveRequestForCancelByIdForUpdate).mockResolvedValue({
+        id: "move-request-id",
+        customerId: "customer-profile-id",
+        status: "CONFIRMED",
+        customer: { user: { name: "홍길동" } },
+      });
 
       await expect(
         withdrawAccount("customer-user-id", { currentPassword: "Password1!" }, now),
       ).rejects.toMatchObject({ code: "WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE" });
+      expect(createMoveRequestCancelNotifications).not.toHaveBeenCalled();
       expect(deleteMoveRequestById).not.toHaveBeenCalled();
       expect(anonymizeUserWithAuthState).not.toHaveBeenCalled();
+    });
+
+    test("잠금을 기다리는 동안 고객이 직접 삭제한 요청은 건너뛰고 탈퇴를 마친다", async () => {
+      jest.mocked(findUserForWithdrawal).mockResolvedValue(emailWithdrawalUser);
+      jest.mocked(findCancelableMoveRequestsByCustomerId).mockResolvedValue([
+        {
+          id: "move-request-id",
+          customerId: "customer-profile-id",
+          status: "WAITING",
+          customer: { user: { name: "홍길동" } },
+        },
+      ]);
+      jest.mocked(findMoveRequestForCancelByIdForUpdate).mockResolvedValue(null);
+
+      await expect(
+        withdrawAccount("customer-user-id", { currentPassword: "Password1!" }, now),
+      ).resolves.toBeUndefined();
+      expect(createMoveRequestCancelNotifications).not.toHaveBeenCalled();
+      expect(deleteMoveRequestById).not.toHaveBeenCalled();
+      expect(anonymizeUserWithAuthState).toHaveBeenCalledTimes(1);
     });
 
     test("OAuth 기사 계정은 현재 세션만으로 탈퇴하고 대기 견적 고객에게 알린 뒤 관계를 정리한다", async () => {
@@ -930,6 +981,12 @@ describe("Auth service", () => {
       await expect(withdrawAccount("mover-user-id", {}, now)).resolves.toBeUndefined();
 
       expect(verifyPassword).not.toHaveBeenCalled();
+      // 기대 결과: 대기 견적이 걸린 요청을 잠근 뒤 확정 여부를 다시 세고, 그다음 알림을 만듭니다.
+      expect(lockMoveRequestsForWithdrawal).toHaveBeenCalledWith(transaction, ["move-request-id"]);
+      expect(countUpcomingConfirmedMoves).toHaveBeenCalledTimes(2);
+      expect(jest.mocked(lockMoveRequestsForWithdrawal).mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+        jest.mocked(createMoverWithdrawalNotifications).mock.invocationCallOrder[0] ?? 0,
+      );
       expect(createMoverWithdrawalNotifications).toHaveBeenCalledWith(transaction, {
         // 익명화 전의 닉네임을 알림 문구에 사용합니다.
         moverNickname: "김기사",
@@ -956,6 +1013,26 @@ describe("Auth service", () => {
       expect(removeReplacedMoverProfileImage).toHaveBeenCalledWith(
         oauthWithdrawalUser.mover?.profileImageUrl,
       );
+    });
+
+    test("잠금을 기다리는 동안 고객이 기사님의 견적을 확정하면 알림·삭제 없이 탈퇴를 막는다", async () => {
+      // 사전 조건: 첫 차단 검사는 0건이었지만 요청 잠금 뒤 다시 세면 확정 이사가 1건입니다.
+      jest.mocked(findUserForWithdrawal).mockResolvedValue(oauthWithdrawalUser);
+      jest.mocked(findPendingQuotesByMoverId).mockResolvedValue([
+        { quoteId: "quote-id", moveRequestId: "move-request-id", customerUserId: "customer-user-id" },
+      ]);
+      jest.mocked(countUpcomingConfirmedMoves)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(1);
+
+      await expect(withdrawAccount("mover-user-id", {}, now)).rejects.toMatchObject({
+        code: "WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE",
+        status: 409,
+      });
+      expect(createMoverWithdrawalNotifications).not.toHaveBeenCalled();
+      expect(deleteMoverWithdrawalRelations).not.toHaveBeenCalled();
+      expect(anonymizeUserWithAuthState).not.toHaveBeenCalled();
+      expect(publishNotificationToUser).not.toHaveBeenCalled();
     });
 
     test("이미 탈퇴한 계정의 재요청은 아무것도 바꾸지 않고 멱등 성공한다", async () => {

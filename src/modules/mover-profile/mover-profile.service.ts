@@ -8,6 +8,10 @@ import {
   UnauthorizedError,
 } from "../../common/errors/app-error";
 import {
+  lockActiveUserById,
+  lockActiveUserByMoverId,
+} from "../../common/utils/active-user-lock";
+import {
   DB_NAME_TO_MOVER_REGION,
   MOVER_REGIONS,
   MOVER_REGION_TO_DB_NAME,
@@ -207,6 +211,8 @@ export async function createMoverProfile(
 ): Promise<MoverProfileResponseDto> {
   try {
     return await runMoverProfileTransaction(async (transaction) => {
+      // 회원 탈퇴와 겹치지 않도록 User row를 잠그고, 이미 탈퇴한 계정이면 profile을 만들지 않습니다.
+      await lockActiveUserById(transaction, userId);
       const user = await findUserForMoverProfileCreation(transaction, userId);
 
       if (!user) {
@@ -294,6 +300,8 @@ export async function updateMoverProfile(
 ): Promise<MoverProfileResponseDto> {
   try {
     const result = await runMoverProfileTransaction(async (transaction) => {
+      // 탈퇴 직전에 guard를 통과한 수정이 익명화된 닉네임·소개·이미지·활동 지역을 되살리지 못하게 먼저 잠급니다.
+      await lockActiveUserByMoverId(transaction, moverId);
       const currentProfile = await findMoverProfileByIdInTransaction(
         transaction,
         moverId,

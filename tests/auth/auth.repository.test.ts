@@ -15,6 +15,8 @@ import {
   deleteMoverWithdrawalRelations,
   findPendingQuotesByMoverId,
   findUserForWithdrawal,
+  lockMoveRequestsForWithdrawal,
+  lockUserForWithdrawal,
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
   restorePasswordResetChallenge,
@@ -60,6 +62,33 @@ describe("Auth withdrawal repository", () => {
         socialId: true,
       }),
     });
+  });
+
+  test("탈퇴는 User row와 대기 견적의 요청 row를 FOR UPDATE로 잠근다", async () => {
+    const queryRaw = jest.fn().mockResolvedValue([{ id: "row-id" }]);
+    const transaction = { $queryRaw: queryRaw } as unknown as AuthTransaction;
+
+    await lockUserForWithdrawal(transaction, "user-id");
+    // 같은 요청이 여러 번 들어와도 한 번만, 교착을 피하도록 id 순서로 잠급니다.
+    await lockMoveRequestsForWithdrawal(transaction, ["request-b", "request-a", "request-b"]);
+
+    const calls = queryRaw.mock.calls.map(([strings, value]) => ({
+      sql: (strings as string[]).join("?").replace(/\s+/g, " ").trim(),
+      value,
+    }));
+    expect(calls).toEqual([
+      { sql: 'SELECT "id" FROM "User" WHERE "id" = ?::uuid FOR UPDATE', value: "user-id" },
+      { sql: 'SELECT "id" FROM "MoveRequest" WHERE "id" = ?::uuid FOR UPDATE', value: "request-a" },
+      { sql: 'SELECT "id" FROM "MoveRequest" WHERE "id" = ?::uuid FOR UPDATE', value: "request-b" },
+    ]);
+  });
+
+  test("대기 견적이 없으면 요청 잠금 쿼리를 실행하지 않는다", async () => {
+    const queryRaw = jest.fn();
+
+    await lockMoveRequestsForWithdrawal({ $queryRaw: queryRaw } as unknown as AuthTransaction, []);
+
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   test("확정됐고 이사일이 오늘(UTC 자정) 이후인 고객 요청과 기사님 확정 견적을 함께 센다", async () => {

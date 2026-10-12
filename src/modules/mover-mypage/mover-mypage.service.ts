@@ -7,6 +7,7 @@ import {
   ForbiddenError,
   UnauthorizedError,
 } from "../../common/errors/app-error";
+import { lockActiveUserByMoverId } from "../../common/utils/active-user-lock";
 import {
   DB_NAME_TO_MOVER_REGION,
   MOVER_REGIONS,
@@ -193,6 +194,8 @@ export async function updateMoverBasicInfo(
 
   try {
     return await runMoverMyPageTransaction(async (transaction) => {
+      // 탈퇴 직전에 guard를 통과한 수정이 익명화된 이름·이메일·전화번호·비밀번호를 되살리지 못하게 먼저 잠급니다.
+      await lockActiveUserByMoverId(transaction, moverId);
       const profile = await findMoverBasicInfoInTransaction(transaction, moverId);
 
       if (!profile) {

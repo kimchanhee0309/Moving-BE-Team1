@@ -21,6 +21,7 @@ import {
   deleteMoveRequestById,
   deleteRequestRejectionsByMoveRequestId,
   findCancelableMoveRequestsByCustomerId,
+  findMoveRequestForCancelByIdForUpdate,
   findQuoteRecipientsByMoveRequestIdAndStatus,
   type CreatedMoveRequestCancelNotificationRecord,
 } from "../move-request/move-request.repository";
@@ -80,6 +81,8 @@ import {
   findPasswordResetChallengeById,
   findPasswordResetChallengeForCompletion,
   findPasswordResetUserByEmail,
+  lockMoveRequestsForWithdrawal,
+  lockUserForWithdrawal,
   markPasswordResetChallengeVerified,
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
@@ -578,12 +581,14 @@ function createWithdrawalBlockedError(): ConflictError {
  * @throws 이메일 계정 비밀번호 누락 시 CURRENT_PASSWORD_REQUIRED, 불일치 시 INVALID_CURRENT_PASSWORD,
  * 확정됐고 이사일이 지나지 않은 이사가 있으면 WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE(409)
  * @remarks 처리 순서와 남기는 데이터는 다음과 같습니다.
- * 1) 본인 재확인 → 2) 확정 이사가 있으면 차단(상대방 일정 보호) →
+ * 1) User row 잠금 후 본인 재확인 → 2) 확정 이사가 있으면 차단(상대방 일정 보호) →
  * 3) 고객: 대기 중인 이사 요청을 삭제하고 견적을 보낸 기사님에게 MOVE_REQUEST_CANCELED 알림 →
  * 4) 기사님: 대기 중인 견적을 삭제하고 고객에게 QUOTE_CANCELED_BY_MOVER_WITHDRAWAL 알림, 활동 지역·서비스 삭제 →
  * 5) User 익명화(이름·이메일·전화번호·비밀번호·SNS 연결 제거, deletedAt 기록) → 6) 프로필 이미지·소개·본인 알림 정리.
  * 리뷰, 완료된 이사의 요청·확정 견적, 찜은 남깁니다. 같은 이메일·SNS로 즉시 재가입할 수 있고 탈퇴 계정은 복구할 수 없습니다.
  * User row를 남기므로 탈퇴 전에 발급된 토큰은 findUserById와 profile guard의 deletedAt 조건으로 거절합니다.
+ * 동시성: 요청·견적은 견적 확정과 같은 MoveRequest row 잠금을 잡은 뒤 상태를 다시 읽고 삭제하며,
+ * 프로필·기본정보 수정과는 User row 잠금으로 직렬화해 늦게 커밋된 수정이 익명화를 되돌리지 못하게 합니다.
  */
 export async function withdrawAccount(
   userId: string,
@@ -592,6 +597,8 @@ export async function withdrawAccount(
 ): Promise<void> {
   const result = await runAuthTransaction(async (transaction) => {
     // 1) 본인 재확인
+    // 프로필·기본정보 수정과 같은 User row를 먼저 잠가, 이후 읽는 인증 수단·프로필 이미지가 탈퇴가 끝날 때까지 바뀌지 않게 합니다.
+    await lockUserForWithdrawal(transaction, userId);
     const user = await findUserForWithdrawal(transaction, userId);
 
     // 서명된 이전 토큰으로 동시에 재요청한 경우 이미 달성된 탈퇴를 멱등 성공으로 처리합니다.
@@ -643,8 +650,18 @@ export async function withdrawAccount(
         transaction,
       );
 
-      for (const moveRequest of moveRequests) {
-        // 위 차단 검사와 이 조회 사이에 견적이 확정됐다면 삭제하지 않고 탈퇴를 막습니다.
+      for (const candidate of moveRequests) {
+        // 위 조회는 잠금 없는 snapshot이라, 삭제 직전에 고객이 견적을 확정하면 확정된 요청을 지울 수 있습니다.
+        // 견적 확정과 같은 MoveRequest row 잠금을 잡고 다시 읽은 상태로만 판단합니다.
+        const moveRequest = await findMoveRequestForCancelByIdForUpdate(
+          candidate.id,
+          transaction,
+        );
+
+        // 그사이 고객이 직접 삭제한 요청은 정리할 것이 없습니다.
+        if (!moveRequest) continue;
+
+        // 잠금을 기다리는 동안 견적이 확정됐다면 삭제하지 않고 탈퇴를 막습니다.
         if (moveRequest.status !== "WAITING") {
           throw createWithdrawalBlockedError();
         }
@@ -674,6 +691,19 @@ export async function withdrawAccount(
 
     // 4) 기사님: 고객이 아직 확정하지 않은 견적을 삭제하고 그 고객에게 알립니다.
     if (user.mover) {
+      // 잠금 없는 조회로 대상 요청을 찾은 뒤, 견적 확정과 같은 MoveRequest row 잠금을 잡습니다.
+      const candidateQuotes = await findPendingQuotesByMoverId(transaction, user.mover.id);
+      await lockMoveRequestsForWithdrawal(
+        transaction,
+        candidateQuotes.map((quote) => quote.moveRequestId),
+      );
+
+      // 잠금을 기다리는 동안 고객이 이 기사님의 견적을 확정했다면 대기 견적이 아니라 확정 이사이므로 탈퇴를 막습니다.
+      if ((await countUpcomingConfirmedMoves(transaction, user, now)) > 0) {
+        throw createWithdrawalBlockedError();
+      }
+
+      // 잠금 이후에는 확정될 수 없으므로 이 목록의 견적만 알림을 보내고 삭제합니다.
       const pendingQuotes = await findPendingQuotesByMoverId(transaction, user.mover.id);
 
       notifications.push(

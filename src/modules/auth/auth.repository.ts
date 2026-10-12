@@ -350,6 +350,34 @@ export function runAuthTransaction<T>(
   return prisma.$transaction(operation);
 }
 
+/**
+ * 탈퇴 transaction의 첫 단계로 User row를 잠급니다.
+ * 프로필·기본정보 수정(common/utils/active-user-lock)도 같은 row를 잠그므로 두 작업이 한 줄로 실행되어,
+ * 탈퇴가 읽은 프로필 이미지·인증 수단이 그사이 바뀌거나 늦게 커밋된 수정이 익명화를 되돌리지 못합니다.
+ */
+export async function lockUserForWithdrawal(
+  transaction: AuthTransaction,
+  userId: string,
+): Promise<void> {
+  await lockPasswordResetUser(transaction, userId);
+}
+
+/**
+ * 기사님의 대기 견적이 걸린 이사 요청들을 견적 확정(customer-quote의 lockMoveRequestForConfirm)과 같은 방식으로 잠급니다.
+ * 잠금을 잡은 뒤에는 고객이 그 견적을 확정할 수 없으므로, 이후 다시 읽은 견적 상태를 믿고 삭제할 수 있습니다.
+ * 여러 transaction이 같은 요청들을 반대 순서로 잠가 교착되지 않도록 id 순서로 잠급니다.
+ */
+export async function lockMoveRequestsForWithdrawal(
+  transaction: AuthTransaction,
+  moveRequestIds: string[],
+): Promise<void> {
+  for (const moveRequestId of [...new Set(moveRequestIds)].sort()) {
+    await transaction.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "MoveRequest" WHERE "id" = ${moveRequestId}::uuid FOR UPDATE
+    `;
+  }
+}
+
 /** 탈퇴 transaction 안에서 최신 인증 수단과 역할별 profile 식별자를 조회합니다. 이미 탈퇴한 계정은 null입니다. */
 export function findUserForWithdrawal(
   transaction: AuthTransaction,

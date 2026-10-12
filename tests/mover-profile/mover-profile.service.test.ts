@@ -2,6 +2,12 @@
  * Mover Profile Service의 transaction 생성·수정, 중복, 기준 데이터와 이미지 교체 규칙을 검증합니다.
  * Prisma와 로컬 파일 삭제는 mock으로 격리하여 실제 DB·파일 상태를 변경하지 않습니다.
  */
+jest.mock("../../src/common/utils/active-user-lock", () => ({
+  lockActiveUserByCustomerId: jest.fn(),
+  lockActiveUserById: jest.fn(),
+  lockActiveUserByMoverId: jest.fn(),
+}));
+
 jest.mock("../../src/modules/mover-profile/mover-profile.image", () => ({
   removeReplacedMoverProfileImage: jest.fn(),
 }));
@@ -26,6 +32,11 @@ import type {
   MoverProfileRecord,
   MoverProfileTransaction,
 } from "../../src/modules/mover-profile/mover-profile.repository";
+import { UnauthorizedError } from "../../src/common/errors/app-error";
+import {
+  lockActiveUserById,
+  lockActiveUserByMoverId,
+} from "../../src/common/utils/active-user-lock";
 import {
   createMoverProfileRecord,
   findMoverProfileById,
@@ -274,5 +285,31 @@ describe("Mover Profile service", () => {
     });
 
     expect(removeReplacedMoverProfileImage).not.toHaveBeenCalled();
+  });
+
+  test("탈퇴가 먼저 끝난 계정의 프로필 수정은 익명화된 정보를 되살리지 않고 USER_NOT_FOUND로 거절한다", async () => {
+    // 사전 조건: guard는 탈퇴 전에 통과했지만 transaction의 User row 잠금 시점에는 이미 탈퇴한 계정입니다.
+    jest.mocked(lockActiveUserByMoverId).mockRejectedValue(new UnauthorizedError("사용자 정보를 확인할 수 없습니다.", "USER_NOT_FOUND"));
+
+    await expect(
+      updateMoverProfile("mover-id", { nickname: "새닉네임" }),
+    ).rejects.toMatchObject({ code: "USER_NOT_FOUND", status: 401 });
+
+    expect(lockActiveUserByMoverId).toHaveBeenCalledWith(transaction, "mover-id");
+    // 기대 결과: 잠금에서 거절되면 조회·수정 쿼리를 하나도 실행하지 않습니다.
+    expect(findMoverProfileByIdInTransaction).not.toHaveBeenCalled();
+    expect(updateMoverProfileRecord).not.toHaveBeenCalled();
+  });
+
+  test("탈퇴한 계정의 토큰으로는 프로필을 새로 만들 수 없다", async () => {
+    jest.mocked(lockActiveUserById).mockRejectedValue(new UnauthorizedError("사용자 정보를 확인할 수 없습니다.", "USER_NOT_FOUND"));
+
+    await expect(createMoverProfile("user-id", createInput)).rejects.toMatchObject({
+      code: "USER_NOT_FOUND",
+    });
+
+    expect(lockActiveUserById).toHaveBeenCalledWith(transaction, "user-id");
+    expect(findUserForMoverProfileCreation).not.toHaveBeenCalled();
+    expect(createMoverProfileRecord).not.toHaveBeenCalled();
   });
 });

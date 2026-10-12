@@ -11,6 +11,10 @@ import {
   UnauthorizedError,
 } from "../../common/errors/app-error";
 import {
+  lockActiveUserByCustomerId,
+  lockActiveUserById,
+} from "../../common/utils/active-user-lock";
+import {
   CUSTOMER_SERVICE_TYPES,
   DB_NAME_TO_REGION,
   REGION_TO_DB_NAME,
@@ -175,6 +179,8 @@ export async function createCustomerProfile(
 ): Promise<CustomerProfileDto> {
   try {
     const profile = await runCustomerProfileTransaction(async (transaction) => {
+      // 회원 탈퇴와 겹치지 않도록 User row를 잠그고, 이미 탈퇴한 계정이면 profile을 만들지 않습니다.
+      await lockActiveUserById(transaction, userId);
       const user = await findUserForCustomerProfileCreation(transaction, userId);
 
       if (!user) {
@@ -244,6 +250,8 @@ export async function updateCustomerProfile(
   try {
     const updatedProfile = await runCustomerProfileTransaction(async (transaction) => {
       // 최신 이메일·passwordHash를 기준으로 민감정보 변경 여부와 재인증을 함께 판단합니다.
+      // 탈퇴 직전에 guard를 통과한 수정이 익명화된 이름·전화번호·이미지를 되살리지 못하게 먼저 잠급니다.
+      await lockActiveUserByCustomerId(transaction, customerId);
       const profile = await findCustomerProfileByIdInTransaction(transaction, customerId);
 
       if (!profile) {
