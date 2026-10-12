@@ -8,8 +8,8 @@ import { HTTP_STATUS } from "../../common/constants/http-status";
 import { sendSuccess } from "../../common/response/api-response";
 import { getAuthContext, getProfileAuthContext } from "../../common/utils/auth-context";
 import {
-  getUploadedProfileImageUrl,
   removeUploadedProfileImage,
+  saveUploadedProfileImage,
   validateUploadedProfileImage,
 } from "./customer-profile.image";
 import {
@@ -35,15 +35,16 @@ export const createCustomerProfileController: RequestHandler = async (request, r
   try {
     await validateUploadedProfileImage(request.file);
     const { userId } = getAuthContext(request);
+    // 검증을 통과한 파일만 저장소(local 또는 S3)에 올리고 그 공개 URL을 DTO에 넣습니다.
     const input = parseCreateCustomerProfileInput(
       request.body,
-      getUploadedProfileImageUrl(request.file) ?? null,
+      (await saveUploadedProfileImage(request.file)) ?? null,
     );
     const profile = await createCustomerProfile(userId, input);
 
     return sendSuccess(response, HTTP_STATUS.CREATED, { profile });
   } catch (error: unknown) {
-    // multer가 먼저 만든 파일은 validation·권한·DB 처리 중 어느 단계가 실패해도 남기지 않습니다.
+    // 이번 요청에서 저장한 새 이미지는 validation·권한·DB 처리 중 어느 단계가 실패해도 남기지 않습니다.
     await safelyRemoveNewUpload(request.file);
     throw error;
   }
@@ -64,7 +65,7 @@ export const updateCustomerProfileController: RequestHandler = async (request, r
     const { profileId } = getProfileAuthContext(request);
     const input = parseUpdateCustomerProfileInput(
       request.body,
-      getUploadedProfileImageUrl(request.file),
+      await saveUploadedProfileImage(request.file),
     );
     const profile = await updateCustomerProfile(profileId, input);
 

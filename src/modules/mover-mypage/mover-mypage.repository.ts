@@ -110,17 +110,6 @@ export function findMoverBasicInfoInTransaction(
   });
 }
 
-export function findOtherUserByEmail(
-  transaction: MoverMyPageTransaction,
-  email: string,
-  userId: string,
-): Promise<{ id: string } | null> {
-  return transaction.user.findFirst({
-    where: { email, id: { not: userId } },
-    select: { id: true },
-  });
-}
-
 export function findOtherUserByPhone(
   transaction: MoverMyPageTransaction,
   phone: string,
@@ -137,7 +126,6 @@ export function updateMoverUser(
   userId: string,
   data: {
     name?: string;
-    email?: string;
     phone?: string | null;
     passwordHash?: string;
   },
@@ -156,7 +144,6 @@ export function updateMoverUserWithPasswordMatch(
   expectedPasswordHash: string,
   data: {
     name?: string;
-    email?: string;
     phone?: string | null;
     passwordHash: string;
   },

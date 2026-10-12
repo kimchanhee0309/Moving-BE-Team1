@@ -17,6 +17,41 @@ export interface SignUpRequestDto {
   password: string;
   /** 가입할 계정 유형이며 CUSTOMER 또는 MOVER입니다. */
   role: UserRole;
+  /**
+   * 이메일 인증코드 확인 뒤 받은 15분 만료 토큰입니다.
+   * SIGNUP_EMAIL_VERIFICATION_REQUIRED=false인 호환 기간에는 생략할 수 있지만, 보내면 항상 검증합니다.
+   */
+  emailVerificationToken?: string;
+}
+
+/** POST /auth/signup/email-code에서 인증코드를 받을 가입 예정 이메일입니다. */
+export interface SignupEmailCodeRequestDto {
+  /** 소문자로 정규화된 이메일이며 최대 255자입니다. */
+  email: string;
+}
+
+/** 인증코드 발송 결과이며 화면의 만료·재발송 타이머에 사용합니다. */
+export interface SignupEmailCodeResultDto {
+  /** 인증코드 유효 시간(초)입니다. */
+  expiresInSeconds: number;
+  /** 같은 이메일로 다시 요청할 수 있을 때까지의 대기 시간(초)입니다. */
+  resendAfterSeconds: number;
+}
+
+/** POST /auth/signup/email-code/verify에서 확인할 이메일과 6자리 코드입니다. */
+export interface VerifySignupEmailCodeRequestDto {
+  /** 코드를 받은 소문자 정규화 이메일입니다. */
+  email: string;
+  /** 메일로 받은 6자리 숫자 코드입니다. */
+  code: string;
+}
+
+/** 코드 확인 성공 결과이며 가입 요청의 emailVerificationToken으로 그대로 전달합니다. */
+export interface SignupEmailVerificationResultDto {
+  /** 인증한 이메일에만 유효한 일회성 토큰입니다. */
+  emailVerificationToken: string;
+  /** 토큰 유효 시간(초)입니다. */
+  expiresInSeconds: number;
 }
 
 /** POST /auth/login에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */

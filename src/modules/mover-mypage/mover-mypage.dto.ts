@@ -7,6 +7,7 @@ import type {
 /** PATCH /movers/me에서 전달된 User 기본정보만 변경합니다. */
 export interface UpdateMoverBasicInfoRequestDto {
   name?: string;
+  /** 가입 이메일은 수정할 수 없습니다. 구버전 화면 호환용으로 현재 이메일과 같은 값만 허용합니다. */
   email?: string;
   phone?: string | null;
   currentPassword?: string;

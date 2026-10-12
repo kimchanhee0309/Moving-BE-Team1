@@ -147,18 +147,6 @@ export function findCustomerProfileByIdInTransaction(
   });
 }
 
-/** 본인을 제외한 이메일 중복을 확인합니다. */
-export function findOtherUserByEmail(
-  transaction: CustomerProfileTransaction,
-  email: string,
-  userId: string,
-): Promise<{ id: string } | null> {
-  return transaction.user.findFirst({
-    where: { email, id: { not: userId } },
-    select: { id: true },
-  });
-}
-
 /** 본인을 제외한 전화번호 중복을 확인합니다. */
 export function findOtherUserByPhone(
   transaction: CustomerProfileTransaction,
@@ -177,7 +165,6 @@ export function updateCustomerUser(
   userId: string,
   data: {
     name?: string;
-    email?: string;
     phone?: string | null;
     passwordHash?: string;
   },
@@ -195,7 +182,6 @@ export function updateCustomerUserWithPasswordMatch(
   expectedPasswordHash: string,
   data: {
     name?: string;
-    email?: string;
     phone?: string | null;
     passwordHash: string;
   },

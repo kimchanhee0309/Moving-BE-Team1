@@ -15,6 +15,8 @@ import {
   refreshRateLimiter,
   sessionRefreshRateLimiter,
   signUpRateLimiter,
+  signupEmailCodeSendRateLimiter,
+  signupEmailCodeVerifyRateLimiter,
 } from "./auth-rate-limit";
 import {
   confirmPasswordResetController,
@@ -24,8 +26,10 @@ import {
   optionalSessionController,
   refreshController,
   requestPasswordResetCodeController,
+  requestSignupEmailCodeController,
   signUpController,
   verifyPasswordResetCodeController,
+  verifySignupEmailCodeController,
   withdrawAccountController,
 } from "./auth.controller";
 import {
@@ -58,8 +62,44 @@ export const authRouter = Router();
  *         phone: { type: string, example: "01012345678" }
  *         password: { type: string, format: password, minLength: 8, example: "Password1!" }
  *         role: { $ref: "#/components/schemas/UserRole" }
+ *         emailVerificationToken: { type: string, maxLength: 4096, description: "POST /auth/signup/email-code/verify가 반환한 15분 만료 일회성 토큰. 호환 기간에는 선택이며 SIGNUP_EMAIL_VERIFICATION_REQUIRED=true 전환 뒤 필수" }
  *         recoveryQuestion: { deprecated: true, description: "구버전 FE 호환용 필드. 배포 전환 기간에만 받으며 값은 검증·저장하지 않고 무시" }
  *         recoveryAnswer: { deprecated: true, description: "구버전 FE 호환용 필드. 배포 전환 기간에만 받으며 값은 검증·저장하지 않고 무시" }
+ *     SignupEmailCodeRequest:
+ *       type: object
+ *       additionalProperties: false
+ *       required: [email]
+ *       properties:
+ *         email: { type: string, format: email, maxLength: 255, example: "user@example.com" }
+ *     SignupEmailCodeResponse:
+ *       type: object
+ *       required: [success, data]
+ *       properties:
+ *         success: { type: boolean, example: true }
+ *         data:
+ *           type: object
+ *           required: [expiresInSeconds, resendAfterSeconds]
+ *           properties:
+ *             expiresInSeconds: { type: integer, example: 300, description: "인증코드 유효 시간(초)" }
+ *             resendAfterSeconds: { type: integer, example: 60, description: "같은 이메일로 다시 요청할 수 있을 때까지의 시간(초)" }
+ *     SignupEmailCodeVerifyRequest:
+ *       type: object
+ *       additionalProperties: false
+ *       required: [email, code]
+ *       properties:
+ *         email: { type: string, format: email, maxLength: 255, example: "user@example.com" }
+ *         code: { type: string, pattern: "^[0-9]{6}$", example: "012345" }
+ *     SignupEmailCodeVerifyResponse:
+ *       type: object
+ *       required: [success, data]
+ *       properties:
+ *         success: { type: boolean, example: true }
+ *         data:
+ *           type: object
+ *           required: [emailVerificationToken, expiresInSeconds]
+ *           properties:
+ *             emailVerificationToken: { type: string, description: "인증한 이메일에만 유효한 15분 만료 일회성 토큰" }
+ *             expiresInSeconds: { type: integer, example: 900, description: "토큰 유효 시간(초)" }
  *     LoginRequest:
  *       type: object
  *       required: [email, password, role]
@@ -219,11 +259,70 @@ authRouter.get(
 
 /**
  * @openapi
+ * /auth/signup/email-code:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Send Signup Email Verification Code
+ *     description: 가입하려는 이메일로 6자리 인증코드를 발송합니다. 코드는 5분간 유효하고 같은 이메일은 60초 뒤 다시 요청할 수 있으며 IP별 1시간 10회로 제한합니다. 이미 가입된 이메일은 코드를 보내지 않고 EMAIL_ALREADY_EXISTS(409)로 안내합니다. 60초 내 재요청은 EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON(429)입니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/SignupEmailCodeRequest" }
+ *     responses:
+ *       200:
+ *         description: 인증코드 발송 완료
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/SignupEmailCodeResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       409: { $ref: "#/components/responses/Conflict" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
+ *       503: { $ref: "#/components/responses/ServiceUnavailable" }
+ */
+authRouter.post(
+  "/signup/email-code",
+  signupEmailCodeSendRateLimiter,
+  requestSignupEmailCodeController,
+);
+
+/**
+ * @openapi
+ * /auth/signup/email-code/verify:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Verify Signup Email Verification Code
+ *     description: 이메일과 6자리 코드를 확인하고 성공하면 15분 만료 이메일 인증 토큰을 반환합니다. 코드 한 건당 5회, IP별 1시간 20회로 대입을 제한합니다. 불일치는 EMAIL_VERIFICATION_CODE_INVALID(401), 만료는 EMAIL_VERIFICATION_CODE_EXPIRED(400), 횟수 초과는 EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED(429)입니다. 인증 쿠키는 발급하지 않습니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: "#/components/schemas/SignupEmailCodeVerifyRequest" }
+ *     responses:
+ *       200:
+ *         description: 이메일 코드 확인 및 이메일 인증 토큰 반환
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/SignupEmailCodeVerifyResponse" }
+ *       400: { $ref: "#/components/responses/BadRequest" }
+ *       401: { $ref: "#/components/responses/Unauthorized" }
+ *       429: { $ref: "#/components/responses/TooManyRequests" }
+ *       503: { $ref: "#/components/responses/ServiceUnavailable" }
+ */
+authRouter.post(
+  "/signup/email-code/verify",
+  signupEmailCodeVerifyRateLimiter,
+  verifySignupEmailCodeController,
+);
+
+/**
+ * @openapi
  * /auth/signup:
  *   post:
  *     tags: [Auth]
  *     summary: Sign Up With Email
- *     description: 이메일 계정을 만들고 인증 쿠키를 발급하며 역할별 profile은 생성하지 않습니다.
+ *     description: 이메일 계정을 만들고 인증 쿠키를 발급하며 역할별 profile은 생성하지 않습니다. emailVerificationToken을 보내면 서명·만료·일회성과 가입 이메일 일치를 확인하며 실패 시 EMAIL_VERIFICATION_TOKEN_INVALID 또는 EMAIL_VERIFICATION_EMAIL_MISMATCH(400)입니다. 서버 설정 SIGNUP_EMAIL_VERIFICATION_REQUIRED가 true이면 토큰이 없을 때 EMAIL_VERIFICATION_REQUIRED(400)로 거절합니다.
  *     requestBody:
  *       required: true
  *       content:

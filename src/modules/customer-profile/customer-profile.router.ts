@@ -30,7 +30,7 @@ export const customerProfileRouter = Router();
  *         name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용", example: "홍길동" }
  *         email: { type: string, format: email, example: "customer@example.com" }
  *         phone: { type: string, nullable: true, example: "01012345678" }
- *         profileImageUrl: { type: string, nullable: true, example: "/uploads/customer-profiles/example.jpg" }
+ *         profileImageUrl: { type: string, nullable: true, description: "local 저장소는 API origin 기준 상대 경로(/uploads/...), S3 저장소는 CloudFront 절대 URL(https://...)", example: "https://d1234abcd.cloudfront.net/profile-images/customers/00000000-0000-4000-8000-000000000000.jpg" }
  *         serviceTypes:
  *           type: array
  *           minItems: 1
@@ -88,6 +88,7 @@ export const customerProfileRouter = Router();
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       403: { $ref: "#/components/responses/Forbidden" }
  *       409: { $ref: "#/components/responses/Conflict" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
  *   get:
  *     tags: [Customers]
  *     summary: Get Customer Profile
@@ -103,7 +104,7 @@ export const customerProfileRouter = Router();
  *   patch:
  *     tags: [Customers]
  *     summary: Update Customer Profile
- *     description: 전달한 필드만 수정합니다. 이메일·비밀번호 계정의 이메일 또는 비밀번호 변경에는 currentPassword가 필요합니다. 서비스·지역·일반 프로필 정보는 로그인 세션으로 수정할 수 있습니다. OAuth 계정은 이메일·비밀번호 변경을 지원하지 않습니다.
+ *     description: 전달한 필드만 수정합니다. 가입 이메일은 수정할 수 없습니다(다른 값이면 400 EMAIL_CHANGE_NOT_ALLOWED). 이메일·비밀번호 계정의 비밀번호 변경에는 currentPassword가 필요합니다. 서비스·지역·일반 프로필 정보는 로그인 세션으로 수정할 수 있습니다. OAuth 계정은 비밀번호 변경을 지원하지 않습니다.
  *     security: [{ accessTokenCookie: [] }]
  *     requestBody:
  *       required: true
@@ -114,9 +115,9 @@ export const customerProfileRouter = Router();
  *             minProperties: 1
  *             properties:
  *               name: { type: string, minLength: 1, maxLength: 50, pattern: "^[가-힣A-Za-z]+(?:[ '·-][가-힣A-Za-z]+)*$", description: "완성형 한글 또는 영문 이름. 단어 사이 공백·하이픈·아포스트로피·가운뎃점 허용" }
- *               email: { type: string, format: email }
+ *               email: { type: string, format: email, deprecated: true, description: "가입 이메일은 수정할 수 없습니다. 구버전 화면 호환을 위해 현재 이메일과 같은 값만 허용하며 다른 값은 400 EMAIL_CHANGE_NOT_ALLOWED로 거절합니다" }
  *               phone: { type: string, nullable: true, description: "빈 문자열이면 null로 초기화" }
- *               currentPassword: { type: string, format: password, description: "이메일·비밀번호 계정의 이메일 또는 비밀번호 변경 시에만 입력하며 해당 변경 시 필수" }
+ *               currentPassword: { type: string, format: password, description: "이메일·비밀번호 계정의 비밀번호 변경 시에만 입력하며 해당 변경 시 필수" }
  *               newPassword: { type: string, format: password, minLength: 8, description: "이메일·비밀번호 계정만 지원. currentPassword 필수, 영문·숫자·특수문자 포함, 8~72바이트" }
  *               profileImage: { type: string, format: binary, description: "JPEG/PNG/WebP, 최대 5 MiB" }
  *               serviceTypes:
@@ -137,6 +138,7 @@ export const customerProfileRouter = Router();
  *       401: { $ref: "#/components/responses/Unauthorized" }
  *       403: { $ref: "#/components/responses/Forbidden" }
  *       409: { $ref: "#/components/responses/Conflict" }
+ *       502: { $ref: "#/components/responses/BadGateway" }
  */
 customerProfileRouter.post(
   "/me/profile",
