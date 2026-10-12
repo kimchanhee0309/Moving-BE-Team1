@@ -1,12 +1,13 @@
 /**
  * 공통 프로필 이미지 저장소의 MIME·크기·전체 디코딩 검증과 local·S3 저장, URL 소유권 경계를 검증합니다.
  * local 저장은 임시 폴더만 사용하고 테스트 종료 후 생성 파일을 모두 제거합니다.
- * S3 저장은 실제 AWS에 접속하지 않고 S3 객체 저장 경계를 mock합니다.
+ * S3 저장과 CloudFront 캐시 무효화는 실제 AWS에 접속하지 않고 S3 객체 저장 경계를 mock합니다.
  */
 jest.mock("../../../src/common/uploads/s3-object-storage", () => ({
   deleteS3Object: jest.fn(),
   findCloudFrontObjectKey: jest.fn(),
   getCloudFrontUrl: jest.fn(),
+  invalidateCloudFrontObject: jest.fn(),
   putS3Object: jest.fn(),
 }));
 
@@ -27,6 +28,7 @@ import {
   deleteS3Object,
   findCloudFrontObjectKey,
   getCloudFrontUrl,
+  invalidateCloudFrontObject,
   putS3Object,
 } from "../../../src/common/uploads/s3-object-storage";
 import { env } from "../../../src/config/env";
@@ -350,6 +352,8 @@ describe("Profile image storage", () => {
       await storage.removeUploadedProfileImage(file);
 
       expect(deleteS3Object).toHaveBeenCalledWith(input?.key);
+      // 기대 결과: 주소가 응답된 적 없는 이미지는 캐시되지 않았으므로 무효화 경로를 쓰지 않습니다.
+      expect(invalidateCloudFrontObject).not.toHaveBeenCalled();
     });
 
     test("교체된 이미지는 이 역할의 UUID key인 CloudFront URL만 삭제한다", async () => {
@@ -364,9 +368,48 @@ describe("Profile image storage", () => {
         `${CLOUDFRONT_ORIGIN}profile-images/tests/sub/00000000-0000-0000-0000-000000000000.jpg`,
       );
       expect(deleteS3Object).not.toHaveBeenCalled();
+      // 소유하지 않은 URL은 삭제하지 않았으므로 캐시도 건드리지 않습니다.
+      expect(invalidateCloudFrontObject).not.toHaveBeenCalled();
 
       await storage.removeReplacedProfileImage(`${CLOUDFRONT_ORIGIN}${ownedKey}`);
       expect(deleteS3Object).toHaveBeenCalledWith(ownedKey);
+    });
+
+    test("교체·탈퇴로 지운 S3 이미지는 삭제가 끝난 뒤 같은 key의 CloudFront 캐시를 무효화한다", async () => {
+      const ownedKey = "profile-images/tests/00000000-0000-0000-0000-000000000000.jpg";
+      const callOrder: string[] = [];
+      jest.mocked(deleteS3Object).mockImplementation(async () => {
+        callOrder.push("delete");
+      });
+      jest.mocked(invalidateCloudFrontObject).mockImplementation(async () => {
+        callOrder.push("invalidate");
+        return true;
+      });
+
+      await storage.removeReplacedProfileImage(`${CLOUDFRONT_ORIGIN}${ownedKey}`);
+
+      expect(invalidateCloudFrontObject).toHaveBeenCalledTimes(1);
+      expect(invalidateCloudFrontObject).toHaveBeenCalledWith(ownedKey);
+      // 원본이 남은 상태에서 무효화하면 다음 요청에 다시 캐시되므로 삭제가 먼저여야 합니다.
+      expect(callOrder).toEqual(["delete", "invalidate"]);
+    });
+
+    test("무효화 요청이 실패해도 프로필 수정·탈퇴를 실패시키지 않고 AWS 오류 원문 없이 고정 문구만 기록한다", async () => {
+      const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      jest.mocked(invalidateCloudFrontObject).mockRejectedValue(
+        new Error("AccessDenied: arn:aws:cloudfront::123456789012:distribution/ESECRET"),
+      );
+
+      await expect(
+        storage.removeReplacedProfileImage(
+          `${CLOUDFRONT_ORIGIN}profile-images/tests/00000000-0000-0000-0000-000000000000.jpg`,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain("ESECRET");
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain("profile-images/tests");
+      consoleError.mockRestore();
     });
 
     test("S3 전환 전에 저장한 local 이미지도 교체되면 디스크에서 정리한다", async () => {
@@ -378,6 +421,8 @@ describe("Profile image storage", () => {
 
       await expect(access(ownedPath)).rejects.toThrow();
       expect(deleteS3Object).not.toHaveBeenCalled();
+      // local 이미지는 CloudFront를 거치지 않으므로 무효화하지 않습니다.
+      expect(invalidateCloudFrontObject).not.toHaveBeenCalled();
     });
 
     test("교체 이미지 삭제가 실패해도 이미 끝난 DB 변경을 되돌리지 않도록 오류를 던지지 않는다", async () => {
@@ -388,6 +433,8 @@ describe("Profile image storage", () => {
           `${CLOUDFRONT_ORIGIN}profile-images/tests/00000000-0000-0000-0000-000000000000.jpg`,
         ),
       ).resolves.toBeUndefined();
+      // 원본이 S3에 남아 있으면 무효화해도 다시 캐시되므로 요청하지 않습니다.
+      expect(invalidateCloudFrontObject).not.toHaveBeenCalled();
     });
   });
 });

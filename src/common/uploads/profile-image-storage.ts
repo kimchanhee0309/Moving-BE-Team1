@@ -2,6 +2,7 @@
  * Customer와 Mover가 공유하는 프로필 이미지 저장 경계를 제공합니다.
  * 처리 흐름: multer가 파일을 메모리로 받음 → 실제 이미지인지 전체 디코딩으로 검증 → 검증을 통과한 파일만 저장소에 저장.
  * 저장소는 PROFILE_IMAGE_STORAGE로 고릅니다. local은 서버 디스크와 상대 URL(/uploads/...), s3는 비공개 버킷과 CloudFront URL을 씁니다.
+ * 교체·탈퇴로 지우는 S3 이미지는 삭제 후 CloudFront 캐시 무효화까지 요청해 예전 주소로 더는 열리지 않게 합니다.
  * 역할별 모듈이 전달한 저장 폴더·URL prefix·S3 key prefix만 사용하며 DB 저장과 정적 파일 공개는 담당하지 않습니다.
  */
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,7 @@ import {
   deleteS3Object,
   findCloudFrontObjectKey,
   getCloudFrontUrl,
+  invalidateCloudFrontObject,
   putS3Object,
 } from "./s3-object-storage";
 
@@ -291,19 +293,22 @@ export function createProfileImageStorage(
    * 이 모듈이 만든 이미지 URL이 가리키는 파일 한 건을 삭제합니다.
    * 저장소 설정이 바뀐 뒤에도 이전 방식의 이미지를 정리할 수 있도록 현재 설정이 아니라 URL 모양으로 저장 위치를 판정합니다.
    * 외부 URL, 다른 역할의 prefix, UUID 이름이 아닌 경로는 소유하지 않은 것으로 보고 건드리지 않습니다.
+   * @returns S3 객체를 삭제했으면 그 key, local 파일이거나 삭제 대상이 아니면 null
    */
-  async function removeStoredProfileImage(imageUrl: string): Promise<void> {
+  async function removeStoredProfileImage(imageUrl: string): Promise<string | null> {
     if (imageUrl.startsWith(publicUrlPrefix)) {
       const fileName = imageUrl.slice(publicUrlPrefix.length);
 
-      if (!OWNED_FILE_NAME_PATTERN.test(fileName) || path.basename(fileName) !== fileName) return;
+      if (!OWNED_FILE_NAME_PATTERN.test(fileName) || path.basename(fileName) !== fileName) {
+        return null;
+      }
 
       try {
         await unlink(path.join(uploadDirectory, fileName));
       } catch (error: unknown) {
         if (!isMissingFileError(error)) throw error;
       }
-      return;
+      return null;
     }
 
     const key = findCloudFrontObjectKey(imageUrl);
@@ -312,13 +317,17 @@ export function createProfileImageStorage(
       !key?.startsWith(s3KeyPrefix) ||
       !OWNED_FILE_NAME_PATTERN.test(key.slice(s3KeyPrefix.length))
     ) {
-      return;
+      return null;
     }
 
     await deleteS3Object(key);
+    return key;
   }
 
-  /** 요청 처리에 실패한 신규 업로드를 삭제하며 저장 전이거나 이미 없는 파일은 성공으로 처리합니다. */
+  /**
+   * 요청 처리에 실패한 신규 업로드를 삭제하며 저장 전이거나 이미 없는 파일은 성공으로 처리합니다.
+   * 이 이미지의 주소는 클라이언트에 응답된 적이 없어 CloudFront에 캐시되지 않았으므로 무효화는 요청하지 않습니다.
+   */
   async function removeUploadedProfileImage(file?: Express.Multer.File): Promise<void> {
     if (!file) return;
 
@@ -329,14 +338,36 @@ export function createProfileImageStorage(
     savedImageUrls.delete(file);
   }
 
-  /** DB 반영 후 교체되거나 더는 쓰지 않는 기존 이미지를 삭제합니다. */
+  /**
+   * DB 반영 후 교체되거나 더는 쓰지 않는 기존 이미지(프로필 수정·회원 탈퇴)를 삭제합니다.
+   * S3 이미지는 이미 공개된 주소라 CloudFront에 캐시되어 있을 수 있으므로 삭제 후 캐시 무효화도 요청합니다.
+   * @param imageUrl DB에 저장되어 있던 이전 이미지 URL이며 null이면 아무것도 하지 않습니다
+   * @returns 정리 시도가 끝나면 resolve하며 삭제·무효화 실패로 reject하지 않습니다
+   * @sideeffect 무효화 요청이 실패하면 console.error로 고정 문구만 기록합니다(AWS 오류 원문·URL 미포함).
+   */
   async function removeReplacedProfileImage(imageUrl: string | null): Promise<void> {
     if (!imageUrl) return;
 
+    let deletedS3Key: string | null;
+
     try {
-      await removeStoredProfileImage(imageUrl);
+      deletedS3Key = await removeStoredProfileImage(imageUrl);
     } catch {
       // DB 변경은 이미 완료되었으므로 정리 실패로 API 성공을 되돌리지 않습니다.
+      // 원본이 남아 있으면 무효화해도 다음 요청에서 다시 캐시되므로 무효화도 건너뜁니다.
+      return;
+    }
+
+    if (!deletedS3Key) return;
+
+    try {
+      await invalidateCloudFrontObject(deletedS3Key);
+    } catch {
+      // 원본은 이미 삭제되었고 DB도 반영되었으므로 API는 성공으로 둡니다. 캐시된 사본은 만료 때까지 남습니다.
+      // AWS 오류 원문에는 계정·배포 ARN이 포함될 수 있어 운영자가 원인을 추적할 고정 문구만 남깁니다.
+      console.error(
+        "프로필 이미지의 CloudFront 캐시 무효화 요청에 실패했습니다. cloudfront:CreateInvalidation 권한과 CLOUDFRONT_DISTRIBUTION_ID를 확인해 주세요.",
+      );
     }
   }
 

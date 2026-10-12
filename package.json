@@ -32,6 +32,7 @@
   },
   "homepage": "https://github.com/kimchanhee0309/Moving-BE-Team1#readme",
   "dependencies": {
+    "@aws-sdk/client-cloudfront": "^3.1149.0",
     "@aws-sdk/client-s3": "^3.1142.0",
     "@aws-sdk/s3-request-presigner": "^3.1142.0",
     "@prisma/adapter-pg": "^7.10.0",
@@ -44,9 +45,9 @@
     "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
+    "multer-s3": "^3.0.1",
     "node-cron": "^4.6.0",
     "nodemailer": "^10.0.12",
-    "multer-s3": "^3.0.1",
     "pg": "^8.23.0",
     "sharp": "^0.35.4",
     "swagger-jsdoc": "^6.3.0",

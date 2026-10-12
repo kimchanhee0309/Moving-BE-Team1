@@ -7,6 +7,7 @@ jest.mock("../../src/common/uploads/s3-object-storage", () => ({
   deleteS3Object: jest.fn(),
   findCloudFrontObjectKey: jest.fn(),
   getCloudFrontUrl: jest.fn((key: string) => `https://d111111abcdef8.cloudfront.net/${key}`),
+  invalidateCloudFrontObject: jest.fn(),
   putS3Object: jest.fn(),
 }));
 
