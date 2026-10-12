@@ -42,6 +42,11 @@ const PNG_SIGNATURE = Buffer.from([
 ]);
 // 이 모듈이 만든 파일 이름(UUID + 허용 확장자)만 삭제 대상으로 인정합니다.
 const OWNED_FILE_NAME_PATTERN = /^[0-9a-f-]{36}\.(?:jpg|png|webp)$/;
+// 첫 무효화 요청이 실패한 뒤 다시 시도할 때까지의 대기 시간(ms)입니다. 배열 길이가 최대 재시도 횟수입니다.
+// 일시적 네트워크 오류와 TooManyInvalidationsInProgress(동시 진행 한도 초과)는 잠시 뒤 풀리므로 간격을 늘려 가며 시도합니다.
+const INVALIDATION_RETRY_DELAYS_MS = [5_000, 30_000, 120_000] as const;
+const INVALIDATION_FAILURE_LOG_MESSAGE =
+  "프로필 이미지의 CloudFront 캐시 무효화 요청에 실패했습니다. cloudfront:CreateInvalidation 권한과 CLOUDFRONT_DISTRIBUTION_ID를 확인해 주세요.";
 
 /** 역할별 저장 위치와 공개 URL 계약을 주입하는 설정입니다. */
 export interface ProfileImageStorageConfig {
@@ -76,6 +81,33 @@ function normalizePublicUrlPrefix(prefix: string): string {
 function normalizeS3KeyPrefix(prefix: string): string {
   const withoutLeadingSlash = prefix.replace(/^\/+/, "");
   return withoutLeadingSlash.endsWith("/") ? withoutLeadingSlash : `${withoutLeadingSlash}/`;
+}
+
+/**
+ * 실패한 캐시 무효화를 응답과 분리해 백그라운드에서 다시 요청합니다.
+ * 원본과 DB 값이 이미 지워져 이후 요청에서는 이 key를 다시 알아낼 수 없으므로, 포기하기 전에 정해진 횟수만큼 재시도합니다.
+ * @param key 이미 S3에서 삭제한 객체의 key
+ * @param attempt 지금까지 실패한 재시도 횟수이며 INVALIDATION_RETRY_DELAYS_MS의 index로 씁니다
+ * @sideeffect 모든 재시도가 실패하면 console.error로 고정 문구만 기록합니다(AWS 오류 원문·key 미포함).
+ * @remarks 대기 중인 재시도는 프로세스 메모리에만 있어 서버가 재시작되면 사라집니다.
+ * 재시작 뒤에도 보장하려면 DB outbox가 필요하며 이는 Schema 변경이라 이 모듈의 범위 밖입니다.
+ */
+function retryCloudFrontInvalidation(key: string, attempt = 0): void {
+  const delay = INVALIDATION_RETRY_DELAYS_MS[attempt];
+
+  if (delay === undefined) {
+    // AWS 오류 원문에는 계정·배포 ARN이 포함될 수 있어 운영자가 원인을 추적할 고정 문구만 남깁니다.
+    console.error(INVALIDATION_FAILURE_LOG_MESSAGE);
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    invalidateCloudFrontObject(key).catch(() => {
+      retryCloudFrontInvalidation(key, attempt + 1);
+    });
+  }, delay);
+  // 대기 중인 재시도가 서버 종료를 붙잡지 않게 합니다.
+  timer.unref();
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -343,7 +375,7 @@ export function createProfileImageStorage(
    * S3 이미지는 이미 공개된 주소라 CloudFront에 캐시되어 있을 수 있으므로 삭제 후 캐시 무효화도 요청합니다.
    * @param imageUrl DB에 저장되어 있던 이전 이미지 URL이며 null이면 아무것도 하지 않습니다
    * @returns 정리 시도가 끝나면 resolve하며 삭제·무효화 실패로 reject하지 않습니다
-   * @sideeffect 무효화 요청이 실패하면 console.error로 고정 문구만 기록합니다(AWS 오류 원문·URL 미포함).
+   * @sideeffect 무효화 요청이 실패하면 응답을 기다리게 하지 않고 백그라운드에서 재시도하며, 끝내 실패하면 고정 문구만 기록합니다.
    */
   async function removeReplacedProfileImage(imageUrl: string | null): Promise<void> {
     if (!imageUrl) return;
@@ -363,11 +395,9 @@ export function createProfileImageStorage(
     try {
       await invalidateCloudFrontObject(deletedS3Key);
     } catch {
-      // 원본은 이미 삭제되었고 DB도 반영되었으므로 API는 성공으로 둡니다. 캐시된 사본은 만료 때까지 남습니다.
-      // AWS 오류 원문에는 계정·배포 ARN이 포함될 수 있어 운영자가 원인을 추적할 고정 문구만 남깁니다.
-      console.error(
-        "프로필 이미지의 CloudFront 캐시 무효화 요청에 실패했습니다. cloudfront:CreateInvalidation 권한과 CLOUDFRONT_DISTRIBUTION_ID를 확인해 주세요.",
-      );
+      // 원본은 이미 삭제되었고 DB도 반영되었으므로 API는 성공으로 둡니다.
+      // 여기서 key를 버리면 캐시된 사본이 만료 때까지 남으므로 재시도를 예약합니다.
+      retryCloudFrontInvalidation(deletedS3Key);
     }
   }
 

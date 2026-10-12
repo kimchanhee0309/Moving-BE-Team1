@@ -394,22 +394,63 @@ describe("Profile image storage", () => {
       expect(callOrder).toEqual(["delete", "invalidate"]);
     });
 
-    test("무효화 요청이 실패해도 프로필 수정·탈퇴를 실패시키지 않고 AWS 오류 원문 없이 고정 문구만 기록한다", async () => {
+    test("무효화 요청이 실패하면 프로필 수정·탈퇴는 바로 성공시키고 같은 key로 백그라운드 재시도한다", async () => {
+      const ownedKey = "profile-images/tests/00000000-0000-0000-0000-000000000000.jpg";
+      const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      // 사전 조건: 첫 요청만 일시적 오류로 실패하고 재시도는 성공합니다.
+      jest.mocked(invalidateCloudFrontObject)
+        .mockRejectedValueOnce(new Error("TooManyInvalidationsInProgress"))
+        .mockResolvedValue(true);
+      jest.useFakeTimers();
+
+      try {
+        // 기대 결과: 재시도 대기 시간을 기다리지 않고 API 흐름이 끝납니다.
+        await expect(
+          storage.removeReplacedProfileImage(`${CLOUDFRONT_ORIGIN}${ownedKey}`),
+        ).resolves.toBeUndefined();
+        expect(invalidateCloudFrontObject).toHaveBeenCalledTimes(1);
+
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(invalidateCloudFrontObject).toHaveBeenCalledTimes(2);
+        expect(invalidateCloudFrontObject).toHaveBeenLastCalledWith(ownedKey);
+
+        // 성공한 뒤에는 더 요청하지 않고 실패 로그도 남기지 않습니다.
+        await jest.advanceTimersByTimeAsync(600_000);
+        expect(invalidateCloudFrontObject).toHaveBeenCalledTimes(2);
+        expect(consoleError).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+        consoleError.mockRestore();
+      }
+    });
+
+    test("재시도가 모두 실패하면 요청을 멈추고 AWS 오류 원문 없이 고정 문구만 한 번 기록한다", async () => {
       const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
       jest.mocked(invalidateCloudFrontObject).mockRejectedValue(
         new Error("AccessDenied: arn:aws:cloudfront::123456789012:distribution/ESECRET"),
       );
+      jest.useFakeTimers();
 
-      await expect(
-        storage.removeReplacedProfileImage(
+      try {
+        await storage.removeReplacedProfileImage(
           `${CLOUDFRONT_ORIGIN}profile-images/tests/00000000-0000-0000-0000-000000000000.jpg`,
-        ),
-      ).resolves.toBeUndefined();
+        );
+        // 재시도가 남아 있는 동안에는 아직 실패로 기록하지 않습니다.
+        expect(consoleError).not.toHaveBeenCalled();
 
-      expect(consoleError).toHaveBeenCalledTimes(1);
-      expect(JSON.stringify(consoleError.mock.calls)).not.toContain("ESECRET");
-      expect(JSON.stringify(consoleError.mock.calls)).not.toContain("profile-images/tests");
-      consoleError.mockRestore();
+        // 재시도 간격 5초·30초·2분이 모두 지나면 첫 요청 포함 4번 시도한 상태입니다.
+        await jest.advanceTimersByTimeAsync(5_000 + 30_000 + 120_000);
+        expect(invalidateCloudFrontObject).toHaveBeenCalledTimes(4);
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(consoleError.mock.calls)).not.toContain("ESECRET");
+        expect(JSON.stringify(consoleError.mock.calls)).not.toContain("profile-images/tests");
+
+        await jest.advanceTimersByTimeAsync(600_000);
+        expect(invalidateCloudFrontObject).toHaveBeenCalledTimes(4);
+      } finally {
+        jest.useRealTimers();
+        consoleError.mockRestore();
+      }
     });
 
     test("S3 전환 전에 저장한 local 이미지도 교체되면 디스크에서 정리한다", async () => {
