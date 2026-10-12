@@ -26,7 +26,6 @@ import {
   findMoverBasicInfoInTransaction,
   findMoverMyPageById,
   findMoverRatingGroups,
-  findOtherUserByEmail,
   findOtherUserByPhone,
   runMoverMyPageTransaction,
   updateMoverUser,
@@ -180,7 +179,10 @@ export async function getMoverMyPage(
   return toMoverMyPage(record, ratingGroups);
 }
 
-/** 일반 기본정보를 수정하고 이메일·비밀번호 변경만 현재 비밀번호 검증과 같은 transaction에 연결합니다. */
+/**
+ * 일반 기본정보를 수정하고 비밀번호 변경만 현재 비밀번호 검증과 같은 transaction에 연결합니다.
+ * 가입 이메일은 수정할 수 없으며 다른 값이 오면 EMAIL_CHANGE_NOT_ALLOWED로 거절합니다.
+ */
 export async function updateMoverBasicInfo(
   moverId: string,
   input: UpdateMoverBasicInfoRequestDto,
@@ -199,18 +201,29 @@ export async function updateMoverBasicInfo(
         throw new ForbiddenError("프로필 등록이 필요합니다.", "PROFILE_REQUIRED");
       }
 
-      const isEmailChanging =
-        input.email !== undefined && input.email !== profile.user.email;
-      const isPasswordChanging = input.newPassword !== undefined;
-      const requiresPasswordVerification = isEmailChanging || isPasswordChanging;
+      // 가입 이메일은 로그인 ID이므로 변경할 수 없습니다.
+      // 구버전 화면이 현재 이메일을 그대로 다시 보내는 요청은 허용하고, 다른 값으로 바꾸려는 요청만 거절합니다.
+      if (input.email !== undefined && input.email !== profile.user.email) {
+        throw new BadRequestError(
+          "가입한 이메일은 수정할 수 없습니다.",
+          "EMAIL_CHANGE_NOT_ALLOWED",
+          [{
+            field: "email",
+            reason: "가입한 이메일은 수정할 수 없습니다.",
+            code: "EMAIL_CHANGE_NOT_ALLOWED",
+          }],
+        );
+      }
 
-      if (input.currentPassword !== undefined && !requiresPasswordVerification) {
+      const isPasswordChanging = input.newPassword !== undefined;
+
+      if (input.currentPassword !== undefined && !isPasswordChanging) {
         throw new BadRequestError(
           "입력값을 확인해 주세요.",
           "VALIDATION_ERROR",
           [{
             field: "currentPassword",
-            reason: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+            reason: "현재 비밀번호는 비밀번호를 변경할 때만 입력할 수 있습니다.",
           }],
         );
       }
@@ -220,27 +233,20 @@ export async function updateMoverBasicInfo(
         | undefined;
 
       if (!profile.user.passwordHash) {
-        if (isEmailChanging) {
-          throw new ConflictError(
-            "소셜 로그인 계정은 이메일을 변경할 수 없습니다.",
-            "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
-          );
-        }
-
         if (isPasswordChanging) {
           throw new ConflictError(
             "소셜 로그인 계정은 비밀번호를 변경할 수 없습니다.",
             "PASSWORD_CHANGE_NOT_AVAILABLE",
           );
         }
-      } else if (requiresPasswordVerification) {
+      } else if (isPasswordChanging) {
         if (input.currentPassword === undefined) {
           throw new BadRequestError(
             "입력값을 확인해 주세요.",
             "VALIDATION_ERROR",
             [{
               field: "currentPassword",
-              reason: "이메일 또는 비밀번호 변경에는 현재 비밀번호가 필요합니다.",
+              reason: "비밀번호 변경에는 현재 비밀번호가 필요합니다.",
             }],
           );
         }
@@ -265,21 +271,6 @@ export async function updateMoverBasicInfo(
         };
       }
 
-      if (isEmailChanging && input.email !== undefined) {
-        const owner = await findOtherUserByEmail(
-          transaction,
-          input.email,
-          profile.user.id,
-        );
-
-        if (owner) {
-          throw new ConflictError(
-            "이미 사용 중인 이메일입니다.",
-            "EMAIL_ALREADY_EXISTS",
-          );
-        }
-      }
-
       if (
         input.phone !== undefined &&
         input.phone !== null &&
@@ -301,7 +292,6 @@ export async function updateMoverBasicInfo(
 
       const userChanges = {
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(isEmailChanging && input.email !== undefined ? { email: input.email } : {}),
         ...(input.phone !== undefined ? { phone: input.phone } : {}),
       };
 

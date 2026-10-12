@@ -11,7 +11,6 @@ jest.mock("../../src/modules/mover-mypage/mover-mypage.repository", () => ({
   findMoverBasicInfoInTransaction: jest.fn(),
   findMoverMyPageById: jest.fn(),
   findMoverRatingGroups: jest.fn(),
-  findOtherUserByEmail: jest.fn(),
   findOtherUserByPhone: jest.fn(),
   runMoverMyPageTransaction: jest.fn(),
   updateMoverUser: jest.fn(),
@@ -29,7 +28,6 @@ import {
   findMoverBasicInfoInTransaction,
   findMoverMyPageById,
   findMoverRatingGroups,
-  findOtherUserByEmail,
   findOtherUserByPhone,
   runMoverMyPageTransaction,
   updateMoverUser,
@@ -81,7 +79,6 @@ describe("Mover My Page service", () => {
     jest.mocked(runMoverMyPageTransaction).mockImplementation(async (operation) =>
       operation(transaction),
     );
-    jest.mocked(findOtherUserByEmail).mockResolvedValue(null);
     jest.mocked(findOtherUserByPhone).mockResolvedValue(null);
     jest.mocked(updateMoverUser).mockResolvedValue({ id: userId });
     jest.mocked(updateMoverUserWithPasswordMatch).mockResolvedValue({ count: 1 });
@@ -207,8 +204,8 @@ describe("Mover My Page service", () => {
     await expect(
       updateMoverBasicInfo(moverId, { email: "new@example.com" }),
     ).rejects.toEqual(expect.objectContaining({
-      status: 409,
-      code: "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
+      status: 400,
+      code: "EMAIL_CHANGE_NOT_ALLOWED",
     }));
   });
 
@@ -235,19 +232,22 @@ describe("Mover My Page service", () => {
     });
   });
 
-  test("이메일 변경에서 현재 비밀번호를 생략하면 거절한다", async () => {
+  test("가입 이메일을 다른 값으로 바꾸는 요청은 거절한다", async () => {
     jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
     jest.mocked(findMoverBasicInfoInTransaction).mockResolvedValue(basicRecord);
 
     await expect(
-      updateMoverBasicInfo(moverId, { email: "new@example.com" }),
+      updateMoverBasicInfo(moverId, { email: "new@example.com", currentPassword: "old-pass1!" }),
     ).rejects.toEqual(expect.objectContaining({
       status: 400,
-      code: "VALIDATION_ERROR",
-      details: [expect.objectContaining({ field: "currentPassword" })],
+      code: "EMAIL_CHANGE_NOT_ALLOWED",
+      details: [expect.objectContaining({ field: "email", code: "EMAIL_CHANGE_NOT_ALLOWED" })],
     }));
 
     expect(runMoverMyPageTransaction).toHaveBeenCalledTimes(1);
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(updateMoverUser).not.toHaveBeenCalled();
+    expect(updateMoverUserWithPasswordMatch).not.toHaveBeenCalled();
   });
 
   test("민감정보 변경 없이 전달된 현재 비밀번호를 검증 오류로 거절한다", async () => {
@@ -264,7 +264,7 @@ describe("Mover My Page service", () => {
       code: "VALIDATION_ERROR",
       details: [expect.objectContaining({
         field: "currentPassword",
-        reason: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+        reason: "현재 비밀번호는 비밀번호를 변경할 때만 입력할 수 있습니다.",
       })],
     }));
 
@@ -283,8 +283,8 @@ describe("Mover My Page service", () => {
       updateMoverBasicInfo(moverId, { email: "mover@example.com" }),
     ).rejects.toEqual(expect.objectContaining({
       status: 400,
-      code: "VALIDATION_ERROR",
-      details: [expect.objectContaining({ field: "currentPassword" })],
+      code: "EMAIL_CHANGE_NOT_ALLOWED",
+      details: [expect.objectContaining({ field: "email" })],
     }));
 
     expect(updateMoverUser).not.toHaveBeenCalled();
@@ -300,7 +300,7 @@ describe("Mover My Page service", () => {
 
     await expect(
       updateMoverBasicInfo(moverId, {
-        email: "new@example.com",
+        newPassword: "new-pass2!",
         currentPassword: "old-pass1!",
       }),
     ).rejects.toEqual(expect.objectContaining({
@@ -312,31 +312,29 @@ describe("Mover My Page service", () => {
     expect(updateMoverUserWithPasswordMatch).not.toHaveBeenCalled();
   });
 
-  test("이메일 변경은 현재 비밀번호를 확인하고 기존 hash를 유지한다", async () => {
+  /**
+   * 시나리오: 구버전 화면이 현재 이메일을 그대로 다시 보내면서 이름만 바꿉니다.
+   * 기대 결과: 요청을 허용하되 이메일은 변경 대상에 넣지 않고 현재 비밀번호도 요구하지 않습니다.
+   */
+  test("현재 이메일과 같은 값은 변경 없이 허용한다", async () => {
     jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
-    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
     jest.mocked(findMoverBasicInfoInTransaction)
       .mockResolvedValueOnce(basicRecord)
       .mockResolvedValueOnce({
         ...basicRecord,
-        user: { ...basicRecord.user, email: "new@example.com" },
+        user: { ...basicRecord.user, name: "새이름" },
       });
 
     await expect(
       updateMoverBasicInfo(moverId, {
-        email: "new@example.com",
-        currentPassword: "old-pass1!",
+        email: basicRecord.user.email,
+        name: "새이름",
       }),
-    ).resolves.toMatchObject({ email: "new@example.com" });
+    ).resolves.toMatchObject({ email: basicRecord.user.email, name: "새이름" });
 
-    expect(bcrypt.compare).toHaveBeenCalledWith("old-pass1!", "old-hash");
-    expect(bcrypt.hash).not.toHaveBeenCalled();
-    expect(updateMoverUserWithPasswordMatch).toHaveBeenCalledWith(
-      transaction,
-      userId,
-      "old-hash",
-      { email: "new@example.com", passwordHash: "old-hash" },
-    );
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(updateMoverUser).toHaveBeenCalledWith(transaction, userId, { name: "새이름" });
+    expect(updateMoverUserWithPasswordMatch).not.toHaveBeenCalled();
   });
 
   test("비밀번호 hash가 동시에 바뀌면 전체 transaction을 중단한다", async () => {
@@ -355,25 +353,6 @@ describe("Mover My Page service", () => {
       expect.objectContaining({
         status: 401,
         code: "INVALID_CURRENT_PASSWORD",
-      }),
-    );
-  });
-
-  test("중복 이메일은 409로 거절한다", async () => {
-    jest.mocked(findMoverBasicInfoForUpdate).mockResolvedValue(basicRecord);
-    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
-    jest.mocked(findMoverBasicInfoInTransaction).mockResolvedValue(basicRecord);
-    jest.mocked(findOtherUserByEmail).mockResolvedValue({ id: "other-user" });
-
-    await expect(
-      updateMoverBasicInfo(moverId, {
-        email: "other@example.com",
-        currentPassword: "old-pass1!",
-      }),
-    ).rejects.toEqual(
-      expect.objectContaining({
-        status: 409,
-        code: "EMAIL_ALREADY_EXISTS",
       }),
     );
   });

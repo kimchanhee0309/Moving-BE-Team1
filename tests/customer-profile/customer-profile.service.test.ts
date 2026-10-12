@@ -19,7 +19,6 @@ jest.mock("../../src/modules/customer-profile/customer-profile.repository", () =
   findCustomerProfileById: jest.fn(),
   findCustomerProfileByIdInTransaction: jest.fn(),
   findCustomerProfileForUpdate: jest.fn(),
-  findOtherUserByEmail: jest.fn(),
   findOtherUserByPhone: jest.fn(),
   findRegionByName: jest.fn(),
   findServiceTypesByNames: jest.fn(),
@@ -41,7 +40,6 @@ import {
   createCustomerProfileRecord,
   findCustomerProfileByIdInTransaction,
   findCustomerProfileForUpdate,
-  findOtherUserByEmail,
   findOtherUserByPhone,
   findRegionByName,
   findServiceTypesByNames,
@@ -87,7 +85,6 @@ describe("Customer Profile service", () => {
     jest.mocked(runCustomerProfileTransaction).mockImplementation((operation) =>
       operation(transaction),
     );
-    jest.mocked(findOtherUserByEmail).mockResolvedValue(null);
     jest.mocked(findOtherUserByPhone).mockResolvedValue(null);
   });
 
@@ -161,7 +158,7 @@ describe("Customer Profile service", () => {
     expect(runCustomerProfileTransaction).toHaveBeenCalledTimes(1);
   });
 
-  test("OAuth 계정의 이메일 변경을 409로 거절한다", async () => {
+  test("OAuth 계정도 가입 이메일 변경을 EMAIL_CHANGE_NOT_ALLOWED로 거절한다", async () => {
     const oauthProfile = {
       ...emailProfile,
       user: { ...emailProfile.user, passwordHash: null },
@@ -172,8 +169,9 @@ describe("Customer Profile service", () => {
     await expect(
       updateCustomerProfile("customer-id", { email: "new@example.com" }),
     ).rejects.toMatchObject({
-      code: "OAUTH_EMAIL_CHANGE_NOT_AVAILABLE",
-      status: 409,
+      code: "EMAIL_CHANGE_NOT_ALLOWED",
+      status: 400,
+      details: [expect.objectContaining({ field: "email", code: "EMAIL_CHANGE_NOT_ALLOWED" })],
     });
 
     expect(runCustomerProfileTransaction).toHaveBeenCalledTimes(1);
@@ -205,22 +203,25 @@ describe("Customer Profile service", () => {
     expect(updateCustomerUser).not.toHaveBeenCalled();
   });
 
-  test("이메일 변경에서 현재 비밀번호를 생략하면 최신 profile 확인 후 거절한다", async () => {
+  test("가입 이메일을 다른 값으로 바꾸는 요청은 최신 profile 확인 후 거절한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
     jest.mocked(findCustomerProfileByIdInTransaction).mockResolvedValue(emailProfile);
 
     await expect(
       updateCustomerProfile("customer-id", {
         email: "new@example.com",
+        currentPassword: "Current1!",
       }),
     ).rejects.toMatchObject({
-      code: "VALIDATION_ERROR",
+      code: "EMAIL_CHANGE_NOT_ALLOWED",
       status: 400,
-      details: [expect.objectContaining({ field: "currentPassword" })],
+      details: [expect.objectContaining({ field: "email", code: "EMAIL_CHANGE_NOT_ALLOWED" })],
     });
 
     expect(runCustomerProfileTransaction).toHaveBeenCalledTimes(1);
     expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(updateCustomerUser).not.toHaveBeenCalled();
+    expect(updateCustomerUserWithPasswordMatch).not.toHaveBeenCalled();
   });
 
   test("민감정보 변경 없이 전달된 현재 비밀번호를 검증 오류로 거절한다", async () => {
@@ -237,7 +238,7 @@ describe("Customer Profile service", () => {
       status: 400,
       details: [expect.objectContaining({
         field: "currentPassword",
-        reason: "현재 비밀번호는 이메일 또는 비밀번호를 변경할 때만 입력할 수 있습니다.",
+        reason: "현재 비밀번호는 비밀번호를 변경할 때만 입력할 수 있습니다.",
       })],
     });
 
@@ -245,7 +246,7 @@ describe("Customer Profile service", () => {
     expect(updateCustomerRecord).not.toHaveBeenCalled();
   });
 
-  test("트랜잭션 전에는 같던 이메일이 최신 profile과 다르면 현재 비밀번호를 요구한다", async () => {
+  test("트랜잭션 전에는 같던 이메일이 최신 profile과 다르면 이메일 변경으로 보고 거절한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
     jest.mocked(findCustomerProfileByIdInTransaction).mockResolvedValue({
       ...emailProfile,
@@ -255,8 +256,9 @@ describe("Customer Profile service", () => {
     await expect(
       updateCustomerProfile("customer-id", { email: "customer@example.com" }),
     ).rejects.toMatchObject({
-      code: "VALIDATION_ERROR",
-      details: [expect.objectContaining({ field: "currentPassword" })],
+      code: "EMAIL_CHANGE_NOT_ALLOWED",
+      status: 400,
+      details: [expect.objectContaining({ field: "email", code: "EMAIL_CHANGE_NOT_ALLOWED" })],
     });
 
     expect(updateCustomerUser).not.toHaveBeenCalled();
@@ -272,7 +274,7 @@ describe("Customer Profile service", () => {
 
     await expect(
       updateCustomerProfile("customer-id", {
-        email: "new@example.com",
+        newPassword: "Next1234!",
         currentPassword: "Current1!",
       }),
     ).rejects.toMatchObject({ code: "INVALID_CURRENT_PASSWORD", status: 401 });
@@ -281,32 +283,31 @@ describe("Customer Profile service", () => {
     expect(updateCustomerUserWithPasswordMatch).not.toHaveBeenCalled();
   });
 
-  test("이메일 변경은 현재 비밀번호를 확인하고 기존 hash를 유지한다", async () => {
+  /**
+   * 시나리오: 구버전 화면이 현재 이메일을 그대로 다시 보내면서 이름만 바꿉니다.
+   * 기대 결과: 요청을 허용하되 이메일은 변경 대상에 넣지 않고 현재 비밀번호도 요구하지 않습니다.
+   */
+  test("현재 이메일과 같은 값은 변경 없이 허용한다", async () => {
     jest.mocked(findCustomerProfileForUpdate).mockResolvedValue(emailProfile);
-    jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
-    jest.mocked(updateCustomerUserWithPasswordMatch).mockResolvedValue({ count: 1 });
     jest.mocked(findCustomerProfileByIdInTransaction)
       .mockResolvedValueOnce(emailProfile)
       .mockResolvedValueOnce({
         ...emailProfile,
-        user: { ...emailProfile.user, email: "new@example.com" },
+        user: { ...emailProfile.user, name: "새이름" },
       });
 
     await expect(
       updateCustomerProfile("customer-id", {
-        email: "new@example.com",
-        currentPassword: "Current1!",
+        email: emailProfile.user.email,
+        name: "새이름",
       }),
-    ).resolves.toMatchObject({ email: "new@example.com" });
+    ).resolves.toMatchObject({ email: emailProfile.user.email, name: "새이름" });
 
-    expect(bcrypt.compare).toHaveBeenCalledWith("Current1!", "bcrypt-hash");
-    expect(bcrypt.hash).not.toHaveBeenCalled();
-    expect(updateCustomerUserWithPasswordMatch).toHaveBeenCalledWith(
-      transaction,
-      "user-id",
-      "bcrypt-hash",
-      { email: "new@example.com", passwordHash: "bcrypt-hash" },
-    );
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(updateCustomerUser).toHaveBeenCalledWith(transaction, "user-id", {
+      name: "새이름",
+    });
+    expect(updateCustomerUserWithPasswordMatch).not.toHaveBeenCalled();
   });
 
   test("서비스·지역 프로필 정보는 현재 비밀번호 없이 수정한다", async () => {
