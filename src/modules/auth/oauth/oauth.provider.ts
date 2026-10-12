@@ -2,6 +2,7 @@
  * Google·Kakao·Naver의 authorization URL, code 교환, 최소 프로필 조회를 담당합니다.
  * 공급자 토큰과 원문 응답은 함수 밖으로 반환하거나 저장·로그하지 않습니다.
  */
+import { isReservedWithdrawnAccountName } from "../../../common/constants/withdrawn-account";
 import { BadGatewayError, ServiceUnavailableError } from "../../../common/errors/app-error";
 import { env } from "../../../config/env";
 import type { SocialProvider } from "../../../generated/prisma/enums";
@@ -104,7 +105,9 @@ function normalizeProfile(
 
   const receivedName = typeof nameValue === "string" ? nameValue.trim() : "";
   const fallbackName = email.split("@")[0] || "Moving 사용자";
-  const name = (receivedName || fallbackName).slice(0, 50);
+  // 공급자 이름은 가입 검증을 거치지 않으므로, 탈퇴 계정 표시용 예약어이면 이름이 없는 것으로 보고 대체 이름을 씁니다.
+  const usableName = isReservedWithdrawnAccountName(receivedName) ? "" : receivedName;
+  const name = (usableName || fallbackName).slice(0, 50);
 
   return {
     provider,
