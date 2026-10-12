@@ -142,6 +142,25 @@ function parseCloudFrontDomain(value: string | undefined): string | undefined {
   return domain;
 }
 
+/**
+ * 캐시 무효화 대상 CloudFront 배포 ID를 받습니다. 값이 없으면 무효화를 건너뛰므로 선택 값입니다.
+ * 배포 ID는 E로 시작하는 영문 대문자·숫자이며, 도메인(d1234.cloudfront.net)이나 ARN을 넣으면
+ * 모든 무효화 요청이 조용히 실패하므로 시작 단계에서 거절합니다.
+ */
+function parseCloudFrontDistributionId(value: string | undefined): string | undefined {
+  const distributionId = value?.trim();
+
+  if (!distributionId) return undefined;
+
+  if (!/^E[A-Z0-9]{5,31}$/.test(distributionId)) {
+    throw new Error(
+      "CLOUDFRONT_DISTRIBUTION_ID에는 도메인이 아닌 CloudFront 배포 ID를 설정해야 합니다. 예: E1ABCDEFGHIJKL",
+    );
+  }
+
+  return distributionId;
+}
+
 function parseCorsOrigins(
   value: string | undefined,
   nodeEnvironment: NodeEnvironment,
@@ -252,6 +271,9 @@ const profileImageStorage = parseProfileImageStorageDriver(
 );
 const awsBucketName = getOptionalEnvironmentVariable("AWS_BUCKET_NAME");
 const cloudFrontDomain = parseCloudFrontDomain(process.env.CLOUDFRONT_DOMAIN);
+const cloudFrontDistributionId = parseCloudFrontDistributionId(
+  process.env.CLOUDFRONT_DISTRIBUTION_ID,
+);
 
 // 업로드 요청이 들어온 뒤에야 설정 누락을 알게 되지 않도록 s3 선택 시 필요한 값을 서버 시작 전에 확인합니다.
 // AWS 자격 증명은 여기서 읽지 않습니다. SDK가 AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 또는 EC2 IAM Role에서 직접 찾습니다.
@@ -331,6 +353,9 @@ export const env = {
   AWS_BUCKET_NAME: awsBucketName,
 
   CLOUDFRONT_DOMAIN: cloudFrontDomain,
+
+  // 선택 값입니다. 없으면 이미지를 지울 때 S3 객체만 삭제하고 CloudFront 캐시 무효화는 건너뜁니다.
+  CLOUDFRONT_DISTRIBUTION_ID: cloudFrontDistributionId,
 
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
 

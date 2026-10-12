@@ -1,9 +1,16 @@
 /**
  * 비공개 S3 버킷에 객체를 저장·삭제하고, 그 객체를 공개하는 CloudFront URL과 S3 key를 서로 변환합니다.
  * 처리 흐름: 서버가 S3 API로 직접 올리고 지우며, 브라우저는 CloudFront 주소로만 읽습니다(버킷은 OAC로 CloudFront에만 열려 있음).
+ * 지운 객체가 CloudFront 캐시에 남지 않도록 배포 ID가 설정된 환경에서는 캐시 무효화도 요청합니다.
  * 파일 검증, key 이름 규칙, DB 저장은 호출하는 이미지 저장소 모듈이 담당합니다.
  * AWS 자격 증명은 SDK 기본 체인(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 환경변수 또는 EC2 IAM Role)에서 읽으며 코드·로그에 남기지 않습니다.
  */
+import { randomUUID } from "node:crypto";
+
+import {
+  CloudFrontClient,
+  CreateInvalidationCommand,
+} from "@aws-sdk/client-cloudfront";
 import {
   DeleteObjectCommand,
   PutObjectCommand,
@@ -22,10 +29,14 @@ export interface PutS3ObjectInput {
   contentType: string;
 }
 
-// UUID key는 덮어쓰지 않으므로 브라우저와 CloudFront가 1년간 캐시해도 오래된 이미지가 보이지 않습니다.
-const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+// UUID key는 덮어쓰지 않으므로 CloudFront는 1년(s-maxage)간 캐시합니다. CloudFront는 s-maxage가 있으면 max-age 대신
+// 그 값을 캐시 정책의 최소·최대 TTL 범위 안에서 사용합니다.
+// 브라우저 캐시(max-age)는 1시간으로 줄입니다. 캐시 무효화는 CloudFront 사본만 지우고 브라우저 사본은 지우지 못하므로,
+// 삭제된 이미지가 사용자 기기에서 열리는 시간을 이 값으로 제한합니다.
+const OBJECT_CACHE_CONTROL = "public, max-age=3600, s-maxage=31536000";
 
 let s3Client: S3Client | null = null;
+let cloudFrontClient: CloudFrontClient | null = null;
 
 interface S3Configuration {
   bucket: string;
@@ -55,6 +66,13 @@ function getS3Client(): S3Client {
   // local 저장소만 쓰는 환경에서 불필요한 client를 만들지 않도록 첫 사용 때 생성합니다.
   s3Client ??= new S3Client({ region: env.AWS_REGION });
   return s3Client;
+}
+
+function getCloudFrontClient(): CloudFrontClient {
+  // 무효화를 쓰지 않는 환경에서 불필요한 client를 만들지 않도록 첫 사용 때 생성합니다.
+  // CloudFront는 글로벌 서비스라 SDK가 region 값과 무관하게 글로벌 endpoint로 요청합니다.
+  cloudFrontClient ??= new CloudFrontClient({ region: env.AWS_REGION });
+  return cloudFrontClient;
 }
 
 /**
@@ -97,7 +115,7 @@ export async function putS3Object(input: PutS3ObjectInput): Promise<void> {
       Key: input.key,
       Body: input.body,
       ContentType: input.contentType,
-      CacheControl: IMMUTABLE_CACHE_CONTROL,
+      CacheControl: OBJECT_CACHE_CONTROL,
     }),
   );
 }
@@ -107,10 +125,37 @@ export async function putS3Object(input: PutS3ObjectInput): Promise<void> {
  * @param key 버킷 안의 객체 경로
  * @returns 삭제 완료 Promise이며 이미 없는 객체도 S3가 성공으로 응답합니다
  * @throws 설정 누락 시 IMAGE_STORAGE_NOT_CONFIGURED, AWS 요청 실패 시 SDK 오류
- * @remarks CloudFront에 캐시된 사본은 캐시 만료까지 남을 수 있습니다.
+ * @remarks CloudFront에 캐시된 사본은 그대로 남으므로 공개된 적이 있는 객체는 invalidateCloudFrontObject도 호출합니다.
  */
 export async function deleteS3Object(key: string): Promise<void> {
   const { bucket } = getS3Configuration();
 
   await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+/**
+ * 객체 한 건의 CloudFront 캐시 무효화를 요청합니다.
+ * @param key 버킷 안의 객체 경로이며 CloudFront 경로는 그 앞에 /를 붙인 값입니다
+ * @returns 무효화를 요청했으면 true, CLOUDFRONT_DISTRIBUTION_ID가 없어 건너뛰었으면 false
+ * @throws AWS 요청 실패 시 SDK 오류(권한 cloudfront:CreateInvalidation 누락 포함)
+ * @remarks 요청 접수만 기다리며 전 세계 edge 반영은 이후 수 분에 걸쳐 비동기로 끝납니다.
+ * 경로 1개가 과금 단위(매월 계정 전체 1,000개 무료)이므로 실제로 공개된 적이 있는 객체에만 호출합니다.
+ */
+export async function invalidateCloudFrontObject(key: string): Promise<boolean> {
+  const distributionId = env.CLOUDFRONT_DISTRIBUTION_ID;
+  if (!distributionId) return false;
+
+  await getCloudFrontClient().send(
+    new CreateInvalidationCommand({
+      DistributionId: distributionId,
+      InvalidationBatch: {
+        // 같은 CallerReference의 재요청은 CloudFront가 새 무효화로 처리하지 않으므로 요청마다 고유한 값을 씁니다.
+        CallerReference: randomUUID(),
+        // 경로는 URL 인코딩이 필요하지만 호출부가 넘기는 key는 영문 prefix와 UUID 파일명이라 그대로 사용합니다.
+        Paths: { Quantity: 1, Items: [`/${key}`] },
+      },
+    }),
+  );
+
+  return true;
 }

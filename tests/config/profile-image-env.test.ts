@@ -14,6 +14,7 @@ const IMAGE_ENV_KEYS = [
   "AWS_REGION",
   "AWS_BUCKET_NAME",
   "CLOUDFRONT_DOMAIN",
+  "CLOUDFRONT_DISTRIBUTION_ID",
 ] as const;
 
 function loadEnv(overrides: Partial<Record<(typeof IMAGE_ENV_KEYS)[number], string>>) {
@@ -48,6 +49,34 @@ describe("Profile image storage env", () => {
     expect(env.AWS_REGION).toBe("ap-northeast-2");
     expect(env.AWS_BUCKET_NAME).toBeUndefined();
     expect(env.CLOUDFRONT_DOMAIN).toBeUndefined();
+    expect(env.CLOUDFRONT_DISTRIBUTION_ID).toBeUndefined();
+  });
+
+  test("CloudFront 배포 ID는 선택 값이며 없어도 s3 저장소로 시작한다", () => {
+    const withoutId = loadEnv({
+      PROFILE_IMAGE_STORAGE: "s3",
+      AWS_BUCKET_NAME: "moving-test-bucket",
+      CLOUDFRONT_DOMAIN: "d111111abcdef8.cloudfront.net",
+    });
+    // 기대 결과: 배포 ID가 없으면 무효화만 건너뛰고 서버는 정상 시작합니다.
+    expect(withoutId.CLOUDFRONT_DISTRIBUTION_ID).toBeUndefined();
+
+    const withId = loadEnv({ CLOUDFRONT_DISTRIBUTION_ID: " E1ABCDEFGHIJKL " });
+    expect(withId.CLOUDFRONT_DISTRIBUTION_ID).toBe("E1ABCDEFGHIJKL");
+  });
+
+  test("배포 ID 자리에 도메인·ARN·소문자 값을 넣으면 시작 단계에서 거절한다", () => {
+    for (const distributionId of [
+      "d111111abcdef8.cloudfront.net",
+      "https://d111111abcdef8.cloudfront.net",
+      "arn:aws:cloudfront::123456789012:distribution/E1ABCDEFGHIJKL",
+      "e1abcdefghijkl",
+      "E1AB",
+    ]) {
+      expect(() => loadEnv({ CLOUDFRONT_DISTRIBUTION_ID: distributionId })).toThrow(
+        "CLOUDFRONT_DISTRIBUTION_ID에는 도메인이 아닌 CloudFront 배포 ID를 설정해야 합니다.",
+      );
+    }
   });
 
   test("s3 저장소는 버킷과 CloudFront 도메인이 모두 있어야 시작한다", () => {
