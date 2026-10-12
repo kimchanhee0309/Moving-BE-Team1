@@ -2,6 +2,8 @@
  * Auth Service에 필요한 User 조회·생성, 회원가입 이메일 인증·비밀번호 재설정 기록, 회원 탈퇴 transaction을 Prisma로 수행합니다.
  * HTTP, cookie, JWT 정책은 다루지 않고 필요한 column과 profile 관계만 선택합니다.
  */
+import { randomUUID } from "node:crypto";
+
 import type { Prisma, SocialProvider, UserRole } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 
@@ -159,11 +161,16 @@ export function reserveSignupEmailVerification(
       return null;
     }
 
-    const verification = await transaction.signupEmailVerification.upsert({
+    // 인증 토큰은 이 기록의 id에 묶여 있습니다. 재발송 때 id를 그대로 두면, 새 코드로 다시 인증을 마친 순간
+    // 이전 코드로 받은 토큰도 같은 id·verifiedAt 조건을 만족해 되살아납니다.
+    // 그래서 코드를 보낼 때마다 id를 새로 발급해 이전 토큰이 가리키는 기록이 더는 존재하지 않게 합니다.
+    const verificationId = randomUUID();
+
+    await transaction.signupEmailVerification.upsert({
       where: { email },
-      create: { email, codeHash, sentAt, expiresAt },
-      // 새 코드를 보내면 이전 코드와 그 코드로 받은 인증 토큰을 모두 무효화합니다.
+      create: { id: verificationId, email, codeHash, sentAt, expiresAt },
       update: {
+        id: verificationId,
         codeHash,
         sentAt,
         expiresAt,
@@ -173,11 +180,14 @@ export function reserveSignupEmailVerification(
       select: { id: true },
     });
 
-    return { verificationId: verification.id, previous };
+    return { verificationId, previous };
   });
 }
 
-/** 발송 실패한 예약이 여전히 최신일 때만 직전 인증 상태를 복원하거나 최초 예약을 삭제합니다. */
+/**
+ * 발송 실패한 예약이 여전히 최신일 때만 직전 인증 상태를 복원하거나 최초 예약을 삭제합니다.
+ * 메일이 가지 않았으므로 사용자가 이미 받은 직전 인증 토큰이 계속 유효하도록 id도 직전 값으로 되돌립니다.
+ */
 export function restoreSignupEmailVerification(
   email: string,
   failedCodeHash: string,
@@ -195,6 +205,7 @@ export function restoreSignupEmailVerification(
     return transaction.signupEmailVerification.updateMany({
       where: { email, codeHash: failedCodeHash },
       data: {
+        id: previous.id,
         codeHash: previous.codeHash,
         failedAttempts: previous.failedAttempts,
         expiresAt: previous.expiresAt,

@@ -264,7 +264,14 @@ describe("Signup email verification repository", () => {
       expiresAt,
       resendAllowedAt,
       staleBefore,
-    )).resolves.toEqual({ verificationId: "verification-id", previous });
+    )).resolves.toEqual({ verificationId: expect.any(String), previous });
+    const [upsertArgument] = transaction.signupEmailVerification.upsert.mock.calls[0] ?? [];
+    const newVerificationId: string = upsertArgument?.update.id;
+
+    // 기대 결과: 재발송마다 id를 새로 발급해, 이전 코드로 받은 인증 토큰(이전 id)이 다시 유효해지지 않습니다.
+    expect(newVerificationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(newVerificationId).not.toBe(previous.id);
+    expect(upsertArgument?.create.id).toBe(newVerificationId);
 
     // 기대 결과: lock → 정리 → 조회 순서로 실행해 같은 이메일의 동시 요청이 간격 확인을 건너뛰지 못합니다.
     expect(transaction.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
@@ -276,8 +283,9 @@ describe("Signup email verification repository", () => {
     // 새 코드를 보내면 이전 시도 횟수와 검증 완료 상태(=이전 인증 토큰)를 초기화합니다.
     expect(transaction.signupEmailVerification.upsert).toHaveBeenCalledWith({
       where: { email: "user@example.com" },
-      create: { email: "user@example.com", codeHash: "new-hash", sentAt, expiresAt },
+      create: { id: newVerificationId, email: "user@example.com", codeHash: "new-hash", sentAt, expiresAt },
       update: {
+        id: newVerificationId,
         codeHash: "new-hash",
         sentAt,
         expiresAt,
@@ -331,6 +339,8 @@ describe("Signup email verification repository", () => {
     expect(transaction.signupEmailVerification.updateMany).toHaveBeenCalledWith({
       where: { email: "user@example.com", codeHash: "failed-hash" },
       data: {
+        // 메일이 가지 않았으므로 직전 인증 토큰이 계속 유효하도록 id도 되돌립니다.
+        id: "verification-id",
         codeHash: "old-hash",
         failedAttempts: 2,
         expiresAt: previous.expiresAt,
