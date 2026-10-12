@@ -22,8 +22,9 @@ const emptyQuery: MoverSearchQuery = {
 };
 
 describe("createMoverSearchWhere", () => {
-  test("필터가 없어도 인식 가능한 서비스·지역이 있는 mover만 조회한다", () => {
+  test("필터가 없어도 탈퇴하지 않았고 인식 가능한 서비스·지역이 있는 mover만 조회한다", () => {
     expect(createMoverSearchWhere(emptyQuery)).toEqual({
+      user: { deletedAt: null },
       serviceTypes: {
         some: {
           serviceType: {
@@ -49,6 +50,7 @@ describe("createMoverSearchWhere", () => {
         regions: ["서울"],
       }),
     ).toEqual({
+      user: { deletedAt: null },
       serviceTypes: {
         some: {
           serviceType: {

@@ -7,6 +7,7 @@ import {
   ConflictError,
   NotFoundError,
 } from "../../common/errors/app-error";
+import { toDisplayMoverNickname } from "../../common/constants/withdrawn-account";
 import { prisma } from "../../lib/prisma";
 import { publishNotificationToUser } from "../notification/notification.hub";
 import { encodeReceivedQuoteCursor, encodeReceivedQuoteHistoryCursor } from "./customer-quote.cursor";
@@ -89,7 +90,8 @@ function toQuoteListItem(
     createdAt: record.createdAt.toISOString(),
     mover: {
       id: record.mover.id,
-      nickname: record.mover.nickname,
+      // 완료 이력에 남은 탈퇴 기사님의 닉네임은 고정 문구로 보여 줍니다.
+      nickname: toDisplayMoverNickname(record.mover.nickname),
       profileImageUrl: record.mover.profileImageUrl,
       careerYears: record.mover.careerYears,
       shortIntroduction: record.mover.shortIntroduction,

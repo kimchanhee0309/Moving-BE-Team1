@@ -11,12 +11,15 @@ export interface UserProfileState {
   mover: { id: string } | null;
 }
 
-/** 인증 사용자 존재 여부와 역할별 profile relation을 최소 select로 조회합니다. */
+/**
+ * 인증 사용자 존재 여부와 역할별 profile relation을 최소 select로 조회합니다.
+ * 탈퇴(soft delete) 계정은 row가 남아 있어도 없는 사용자로 취급해, 탈퇴 전에 발급된 토큰으로 profile 기능에 들어오지 못하게 합니다.
+ */
 export function findUserProfileState(
   userId: string,
 ): Promise<UserProfileState | null> {
-  return prisma.user.findUnique({
-    where: { id: userId },
+  return prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
     select: {
       role: true,
       customer: { select: { id: true } },

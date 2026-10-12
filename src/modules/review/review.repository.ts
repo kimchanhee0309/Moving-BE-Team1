@@ -171,10 +171,11 @@ function toNullableAverage(value: number | null): number | null {
 /**
  * 리뷰 대상 기사님이 실제로 존재하는지 확인합니다.
  * 없는 moverId로 공개 목록을 비워 주면 삭제된 프로필과 리뷰 없음이 구분되지 않습니다.
+ * 탈퇴한 기사님의 상세 페이지는 404이므로 그 리뷰 목록도 없는 기사님으로 취급합니다.
  */
 export function findMoverId(moverId: string): Promise<{ id: string } | null> {
-  return prisma.mover.findUnique({
-    where: { id: moverId },
+  return prisma.mover.findFirst({
+    where: { id: moverId, user: { deletedAt: null } },
     select: { id: true },
   });
 }

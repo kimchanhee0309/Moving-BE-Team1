@@ -244,11 +244,15 @@ export function findCancelableMoveRequestsByCustomerId(
   });
 }
 
+/** 지정 요청 대상 기사님을 확인합니다. 탈퇴한 기사님은 요청을 받을 수 없으므로 없는 기사님으로 취급합니다. */
 export function findMoverById(
   id: string,
   client: PrismaClientOrTx = prisma,
 ): Promise<{ id: string } | null> {
-  return client.mover.findUnique({ where: { id }, select: { id: true } });
+  return client.mover.findFirst({
+    where: { id, user: { deletedAt: null } },
+    select: { id: true },
+  });
 }
 
 export function findDesignatedRequestByMoveRequestAndMover(

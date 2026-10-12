@@ -7,6 +7,7 @@ const mockMoveRequestFindFirst = jest.fn();
 const mockMoveRequestFindUnique = jest.fn();
 const mockMoveRequestCreate = jest.fn();
 const mockMoverFindUnique = jest.fn();
+const mockMoverFindFirst = jest.fn();
 const mockDesignatedRequestFindUnique = jest.fn();
 const mockDesignatedRequestCount = jest.fn();
 const mockDesignatedRequestCreate = jest.fn();
@@ -19,7 +20,10 @@ jest.mock("../../src/lib/prisma", () => ({
       findUnique: (...args: unknown[]) => mockMoveRequestFindUnique(...args),
       create: (...args: unknown[]) => mockMoveRequestCreate(...args),
     },
-    mover: { findUnique: (...args: unknown[]) => mockMoverFindUnique(...args) },
+    mover: {
+      findUnique: (...args: unknown[]) => mockMoverFindUnique(...args),
+      findFirst: (...args: unknown[]) => mockMoverFindFirst(...args),
+    },
     designatedRequest: {
       findUnique: (...args: unknown[]) => mockDesignatedRequestFindUnique(...args),
       count: (...args: unknown[]) => mockDesignatedRequestCount(...args),
@@ -145,13 +149,14 @@ describe("Move request repository", () => {
     expect(txFindUnique).not.toHaveBeenCalled();
   });
 
-  test("findMoverById는 id만 select해서 존재 여부를 확인한다", async () => {
-    mockMoverFindUnique.mockResolvedValue(null);
+  test("findMoverById는 탈퇴하지 않은 기사님만 id select로 존재 여부를 확인한다", async () => {
+    mockMoverFindFirst.mockResolvedValue(null);
 
     await findMoverById(MOVER_ID);
 
-    expect(mockMoverFindUnique).toHaveBeenCalledWith({
-      where: { id: MOVER_ID },
+    // 탈퇴한 기사님은 지정 요청 대상이 될 수 없으므로 없는 기사님과 같게 취급합니다.
+    expect(mockMoverFindFirst).toHaveBeenCalledWith({
+      where: { id: MOVER_ID, user: { deletedAt: null } },
       select: { id: true },
     });
   });

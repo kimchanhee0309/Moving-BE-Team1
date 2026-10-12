@@ -72,9 +72,9 @@ export const DB_NAME_TO_MOVER_REGION: Readonly<Record<string, MoverRegion>> = {
 /** 프로필 이미지 한 장의 최대 크기인 5 MiB입니다. */
 export const MOVER_PROFILE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
-/** 기사님 경력 연수의 허용 범위입니다. */
-export const MOVER_CAREER_YEARS_MIN = 0;
-export const MOVER_CAREER_YEARS_MAX = 50;
+/** 기사님 경력 연수의 허용 범위(1~40년)입니다. 범위 밖 값으로 저장된 기존 프로필은 다음 수정 때 이 범위로 맞춰야 합니다. */
+export const MOVER_CAREER_YEARS_MIN = 1;
+export const MOVER_CAREER_YEARS_MAX = 40;
 
 /** 기사님 공개 텍스트 필드의 최대 길이입니다. */
 export const MOVER_NICKNAME_MAX_LENGTH = 50;

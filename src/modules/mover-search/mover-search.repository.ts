@@ -58,6 +58,8 @@ export function createMoverSearchWhere(
   );
 
   return {
+    // 탈퇴(soft delete)한 기사님은 프로필 row가 남아 있어도 목록·추천·상세에서 제외합니다.
+    user: { deletedAt: null },
     ...(query.search
       ? {
           // 부분 일치 ILIKE는 nickname btree를 타지 않습니다. 후속으로 trigram을 검토합니다.
@@ -186,7 +188,8 @@ export function findMoverSearchCardsByIds(
   }
 
   return prisma.mover.findMany({
-    where: { id: { in: moverIds } },
+    // 상세 조회도 이 함수를 쓰므로 탈퇴한 기사님의 상세 주소는 Service에서 404(MOVER_NOT_FOUND)가 됩니다.
+    where: { id: { in: moverIds }, user: { deletedAt: null } },
     select: {
       id: true,
       nickname: true,

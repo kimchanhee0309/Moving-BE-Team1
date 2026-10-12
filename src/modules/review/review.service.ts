@@ -5,6 +5,7 @@
  * 처리 흐름: 입력 수신 → 요청/기사님/상태 검사 → DB 처리 → 응답 DTO 변환
  */
 
+import { toDisplayMoverNickname } from "../../common/constants/withdrawn-account";
 import { ConflictError, NotFoundError } from "../../common/errors/app-error";
 import { MoveRequestStatus } from "../../generated/prisma/enums";
 import type {
@@ -73,7 +74,8 @@ function toPagination(
 function toMoverCard(mover: ReviewMoverCardDto): ReviewMoverCardDto {
   return {
     id: mover.id,
-    nickname: mover.nickname,
+    // 탈퇴한 기사님에게 쓴 리뷰와 완료된 이사는 남기되 닉네임은 고정 문구로 보여 줍니다.
+    nickname: toDisplayMoverNickname(mover.nickname),
     profileImageUrl: mover.profileImageUrl,
   };
 }
