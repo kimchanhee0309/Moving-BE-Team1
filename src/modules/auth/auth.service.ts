@@ -1,5 +1,5 @@
 /**
- * 이메일 회원가입·로그인·세션 복구·회원 탈퇴·토큰 발급·회전 규칙을 처리합니다.
+ * 이메일 회원가입과 가입 전 이메일 인증·로그인·세션 복구·회원 탈퇴·토큰 발급·회전 규칙을 처리합니다.
  * HTTP 객체와 cookie는 다루지 않고, 민감정보를 제거한 DTO·토큰·삭제 결과만 Controller에 반환합니다.
  */
 import {
@@ -9,6 +9,7 @@ import {
   UnauthorizedError,
 } from "../../common/errors/app-error";
 import { createAuthTokens, verifyToken } from "../../common/utils/auth-token";
+import { env } from "../../config/env";
 import { removeReplacedLocalProfileImage } from "../customer-profile/customer-profile.image";
 import {
   createMoveRequestCancelNotifications,
@@ -28,8 +29,12 @@ import type {
   PasswordResetCodeRequestResultDto,
   RefreshAuthResult,
   SignUpRequestDto,
+  SignupEmailCodeRequestDto,
+  SignupEmailCodeResultDto,
+  SignupEmailVerificationResultDto,
   RecoveryVerificationResultDto,
   VerifyPasswordResetCodeRequestDto,
+  VerifySignupEmailCodeRequestDto,
   WithdrawAccountRequestDto,
 } from "./auth.dto";
 import {
@@ -48,8 +53,23 @@ import {
 } from "./auth-password-reset-code";
 import {
   assertPasswordResetEmailConfigured,
+  assertSignupEmailConfigured,
   sendPasswordResetCodeEmail,
+  sendSignupEmailCodeEmail,
 } from "./auth-email";
+import {
+  SIGNUP_EMAIL_CODE_EXPIRES_IN_MS,
+  SIGNUP_EMAIL_CODE_EXPIRES_IN_SECONDS,
+  SIGNUP_EMAIL_CODE_MAX_FAILED_ATTEMPTS,
+  SIGNUP_EMAIL_CODE_RESEND_AFTER_SECONDS,
+  SIGNUP_EMAIL_VERIFICATION_TOKEN_EXPIRES_IN_SECONDS,
+  createSignupEmailCode,
+  createSignupEmailVerificationToken,
+  hashSignupEmailCode,
+  matchesSignupEmailCode,
+  verifySignupEmailVerificationToken,
+  type SignupEmailVerificationPayload,
+} from "./auth-signup-email-verification";
 import { toAuthUserDto } from "./auth.mapper";
 import {
   assertLoginAttemptAllowed,
@@ -58,7 +78,9 @@ import {
 } from "./auth-login-attempt";
 import {
   createEmailUser,
+  createEmailUserInTransaction,
   consumePasswordResetChallenge,
+  consumeSignupEmailVerification,
   deleteRestrictedWithdrawalRelations,
   deleteUserWithAuthState,
   findUserByEmail,
@@ -68,23 +90,224 @@ import {
   findPasswordResetChallengeById,
   findPasswordResetChallengeForCompletion,
   findPasswordResetUserByEmail,
+  findSignupEmailVerificationByEmail,
   markPasswordResetChallengeVerified,
+  markSignupEmailVerificationVerified,
   reservePasswordResetChallenge,
   reservePasswordResetCodeAttempt,
+  reserveSignupEmailCodeAttempt,
+  reserveSignupEmailVerification,
   restorePasswordResetChallenge,
+  restoreSignupEmailVerification,
   runAuthTransaction,
   updateEmailUserPassword,
+  type AuthUserRecord,
 } from "./auth.repository";
 import { hashPassword, verifyPassword } from "./password";
 
+/** 인증 기록 정리 기준입니다. 코드 만료 뒤 1시간이 지나면 인증 토큰(15분)도 이미 만료된 상태입니다. */
+const SIGNUP_EMAIL_VERIFICATION_STALE_AFTER_MS = 60 * 60 * 1000;
+
+function createSignupEmailCodeInvalidError(): UnauthorizedError {
+  return new UnauthorizedError(
+    "인증코드가 올바르지 않습니다.",
+    "EMAIL_VERIFICATION_CODE_INVALID",
+  );
+}
+
+function createSignupEmailCodeExpiredError(): BadRequestError {
+  return new BadRequestError(
+    "인증코드가 만료되었습니다. 새 코드를 요청해 주세요.",
+    "EMAIL_VERIFICATION_CODE_EXPIRED",
+  );
+}
+
+function createSignupEmailCodeAttemptsExceededError(): TooManyRequestsError {
+  return new TooManyRequestsError(
+    "인증코드 확인 횟수를 초과했습니다. 새 코드를 요청해 주세요.",
+    "EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED",
+  );
+}
+
+function createSignupEmailVerificationTokenInvalidError(): BadRequestError {
+  return new BadRequestError(
+    "이메일 인증이 만료되었거나 올바르지 않습니다. 이메일 인증을 다시 진행해 주세요.",
+    "EMAIL_VERIFICATION_TOKEN_INVALID",
+  );
+}
+
 /**
- * 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다.
+ * 가입하려는 이메일로 5분 만료 인증코드를 발송합니다.
+ * @param input 소문자로 정규화된 가입 예정 이메일
+ * @param now 만료·재발송 시간을 계산할 서버 시각
+ * @returns 화면 타이머용 만료·재발송 대기 시간(초)
+ * @throws 이미 가입된 이메일은 EMAIL_ALREADY_EXISTS, 60초 내 재요청은 EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON,
+ * 메일 설정 누락·발송 실패는 각각 EMAIL_VERIFICATION_EMAIL_NOT_CONFIGURED, EMAIL_VERIFICATION_EMAIL_FAILED
+ * @remarks 코드 HMAC을 DB에 저장하고 코드 원문은 메일로만 전송합니다. 발송에 실패하면 예약한 상태를 되돌립니다.
+ */
+export async function requestSignupEmailCode(
+  input: SignupEmailCodeRequestDto,
+  now = new Date(),
+): Promise<SignupEmailCodeResultDto> {
+  // 가입 API도 같은 오류로 가입 여부를 알려 주므로, 받을 수 없는 코드를 보내지 않고 바로 안내합니다.
+  if (await findUserByEmail(input.email)) {
+    throw new ConflictError("이미 사용 중인 이메일입니다.", "EMAIL_ALREADY_EXISTS");
+  }
+
+  assertSignupEmailConfigured();
+
+  const code = createSignupEmailCode();
+  const codeHash = hashSignupEmailCode(input.email, code);
+  const reservation = await reserveSignupEmailVerification(
+    input.email,
+    codeHash,
+    now,
+    new Date(now.getTime() + SIGNUP_EMAIL_CODE_EXPIRES_IN_MS),
+    new Date(now.getTime() - SIGNUP_EMAIL_CODE_RESEND_AFTER_SECONDS * 1000),
+    new Date(now.getTime() - SIGNUP_EMAIL_VERIFICATION_STALE_AFTER_MS),
+  );
+
+  if (!reservation) {
+    throw new TooManyRequestsError(
+      "인증코드는 1분 후 다시 보낼 수 있습니다.",
+      "EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON",
+    );
+  }
+
+  try {
+    await sendSignupEmailCodeEmail(input.email, code);
+  } catch (error: unknown) {
+    // 메일이 가지 않았는데 재발송 대기 60초가 걸리거나 직전 코드가 사라지지 않도록 예약을 되돌립니다.
+    await restoreSignupEmailVerification(
+      input.email,
+      codeHash,
+      reservation.previous,
+    );
+    throw error;
+  }
+
+  return {
+    expiresInSeconds: SIGNUP_EMAIL_CODE_EXPIRES_IN_SECONDS,
+    resendAfterSeconds: SIGNUP_EMAIL_CODE_RESEND_AFTER_SECONDS,
+  };
+}
+
+/**
+ * 6자리 코드의 HMAC·만료·시도 횟수를 확인하고 이메일 인증 토큰을 발급합니다.
+ * @param input 코드를 받은 이메일과 사용자가 입력한 6자리 코드
+ * @param now 만료와 검증 완료 시각에 사용할 서버 시각
+ * @returns 가입 요청에 전달할 15분 만료 이메일 인증 토큰
+ * @throws 불일치·기록 없음·이미 확인됨은 EMAIL_VERIFICATION_CODE_INVALID, 만료는 EMAIL_VERIFICATION_CODE_EXPIRED,
+ * 코드당 5회 초과는 EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED
+ * @remarks 시도 횟수와 verifiedAt을 DB에 원자적으로 갱신합니다. User는 만들지 않습니다.
+ */
+export async function verifySignupEmailCode(
+  input: VerifySignupEmailCodeRequestDto,
+  now = new Date(),
+): Promise<SignupEmailVerificationResultDto> {
+  const verification = await findSignupEmailVerificationByEmail(input.email);
+
+  // 코드를 요청한 적이 없는 이메일과 이미 확인을 마친 코드는 같은 오류로 거절합니다.
+  if (!verification || verification.verifiedAt) {
+    throw createSignupEmailCodeInvalidError();
+  }
+
+  if (verification.expiresAt.getTime() <= now.getTime()) {
+    throw createSignupEmailCodeExpiredError();
+  }
+
+  if (verification.failedAttempts >= SIGNUP_EMAIL_CODE_MAX_FAILED_ATTEMPTS) {
+    throw createSignupEmailCodeAttemptsExceededError();
+  }
+
+  // 병렬 요청이 횟수 제한을 넘지 못하도록 코드 비교 전에 시도 한 건을 먼저 차감합니다.
+  const reservedAttempt = await reserveSignupEmailCodeAttempt(
+    verification.id,
+    verification.codeHash,
+    now,
+    SIGNUP_EMAIL_CODE_MAX_FAILED_ATTEMPTS,
+  );
+
+  if (!reservedAttempt) {
+    // 조회와 예약 사이에 다른 요청이 상태를 바꾼 경우이므로 최신 상태로 사유를 다시 판정합니다.
+    const latest = await findSignupEmailVerificationByEmail(input.email);
+
+    if (latest && !latest.verifiedAt) {
+      if (latest.expiresAt.getTime() <= now.getTime()) {
+        throw createSignupEmailCodeExpiredError();
+      }
+      if (latest.failedAttempts >= SIGNUP_EMAIL_CODE_MAX_FAILED_ATTEMPTS) {
+        throw createSignupEmailCodeAttemptsExceededError();
+      }
+    }
+
+    throw createSignupEmailCodeInvalidError();
+  }
+
+  if (!matchesSignupEmailCode(input.email, input.code, reservedAttempt.codeHash)) {
+    if (reservedAttempt.failedAttempts >= SIGNUP_EMAIL_CODE_MAX_FAILED_ATTEMPTS) {
+      throw createSignupEmailCodeAttemptsExceededError();
+    }
+
+    throw createSignupEmailCodeInvalidError();
+  }
+
+  const verified = await markSignupEmailVerificationVerified(
+    reservedAttempt.id,
+    reservedAttempt.codeHash,
+    now,
+    SIGNUP_EMAIL_CODE_MAX_FAILED_ATTEMPTS,
+  );
+
+  if (verified.count !== 1) {
+    throw createSignupEmailCodeInvalidError();
+  }
+
+  return {
+    emailVerificationToken: createSignupEmailVerificationToken(
+      input.email,
+      reservedAttempt.id,
+    ),
+    expiresInSeconds: SIGNUP_EMAIL_VERIFICATION_TOKEN_EXPIRES_IN_SECONDS,
+  };
+}
+
+/**
+ * 이메일 인증 토큰과 이메일·전화번호 중복을 확인하고 bcrypt hash만 저장한 뒤 인증 토큰을 발급합니다.
  * @param input Validator가 정규화한 회원가입 요청 DTO
  * @returns 공개 사용자와 cookie 설정용 Access/Refresh Token
- * @throws 이메일·전화번호 중복 시 각각 EMAIL_ALREADY_EXISTS, PHONE_ALREADY_EXISTS
- * @remarks User를 생성하며 역할 profile과 cookie는 생성하지 않습니다.
+ * @throws 인증 토큰 누락(필수 전환 후)은 EMAIL_VERIFICATION_REQUIRED, 위조·만료·재사용은 EMAIL_VERIFICATION_TOKEN_INVALID,
+ * 인증한 이메일과 가입 이메일이 다르면 EMAIL_VERIFICATION_EMAIL_MISMATCH,
+ * 이메일·전화번호 중복은 각각 EMAIL_ALREADY_EXISTS, PHONE_ALREADY_EXISTS
+ * @remarks User를 생성하고 사용한 이메일 인증 기록을 삭제합니다. 역할 profile과 cookie는 생성하지 않습니다.
+ * OAuth 가입은 공급자가 이메일을 확인하므로 이 함수를 거치지 않습니다.
  */
 export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
+  // 1) 이메일 인증: 토큰을 보냈다면 호환 기간에도 항상 검증하고, 없으면 플래그에 따라 허용 여부를 정합니다.
+  let emailVerification: SignupEmailVerificationPayload | null = null;
+
+  if (input.emailVerificationToken !== undefined) {
+    emailVerification = verifySignupEmailVerificationToken(
+      input.emailVerificationToken,
+    );
+
+    // 인증을 마친 뒤 가입 양식의 이메일만 바꿔 다른 주소로 가입하는 것을 막습니다.
+    if (emailVerification.email !== input.email) {
+      throw new BadRequestError(
+        "인증한 이메일과 가입 이메일이 다릅니다. 이메일 인증을 다시 진행해 주세요.",
+        "EMAIL_VERIFICATION_EMAIL_MISMATCH",
+        [{ field: "email", reason: "인증한 이메일과 가입 이메일이 다릅니다." }],
+      );
+    }
+  } else if (env.SIGNUP_EMAIL_VERIFICATION_REQUIRED) {
+    throw new BadRequestError(
+      "이메일 인증을 완료해 주세요.",
+      "EMAIL_VERIFICATION_REQUIRED",
+      [{ field: "emailVerificationToken", reason: "이메일 인증이 필요합니다." }],
+    );
+  }
+
+  // 2) 중복 확인
   const [emailUser, phoneUser] = await Promise.all([
     findUserByEmail(input.email),
     findUserByPhone(input.phone),
@@ -98,14 +321,39 @@ export async function signUp(input: SignUpRequestDto): Promise<AuthResult> {
     throw new ConflictError("이미 사용 중인 전화번호입니다.", "PHONE_ALREADY_EXISTS");
   }
 
+  // 3) 사용자 생성
   const passwordHash = await hashPassword(input.password);
-  const user = await createEmailUser({
+  const userData = {
     name: input.name,
     email: input.email,
     phone: input.phone,
     passwordHash,
     role: input.role,
-  });
+  };
+  let user: AuthUserRecord;
+
+  if (emailVerification) {
+    const { verificationId } = emailVerification;
+
+    // 인증 기록 소비와 User 생성을 한 transaction으로 묶어 같은 토큰의 재사용·병렬 가입을 막습니다.
+    // User 생성이 실패하면 소비도 rollback되어 같은 인증 토큰으로 다시 가입을 시도할 수 있습니다.
+    user = await runAuthTransaction(async (transaction) => {
+      const consumed = await consumeSignupEmailVerification(
+        transaction,
+        verificationId,
+        input.email,
+      );
+
+      // 이미 가입에 사용했거나, 인증 뒤 새 코드를 요청해 이전 인증이 무효가 된 토큰입니다.
+      if (consumed.count !== 1) {
+        throw createSignupEmailVerificationTokenInvalidError();
+      }
+
+      return createEmailUserInTransaction(transaction, userData);
+    });
+  } else {
+    user = await createEmailUser(userData);
+  }
 
   return {
     user: toAuthUserDto(user),

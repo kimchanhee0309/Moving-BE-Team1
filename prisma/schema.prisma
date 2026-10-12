@@ -90,6 +90,21 @@ model PasswordResetChallenge {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+/// 가입 전 이메일 소유 확인 기록입니다. 아직 User가 없으므로 userId가 아닌 정규화된 이메일을 기준으로 한 건만 유지합니다.
+model SignupEmailVerification {
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique @db.VarChar(255)
+  codeHash       String    @db.VarChar(64)
+  failedAttempts Int       @default(0)
+  expiresAt      DateTime  @db.Timestamptz(3)
+  sentAt         DateTime  @db.Timestamptz(3)
+  verifiedAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([expiresAt])
+}
+
 model Customer {
   id              String   @id @default(uuid()) @db.Uuid
   userId          String   @unique @db.Uuid

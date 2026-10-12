@@ -6,13 +6,17 @@ jest.mock("../../src/modules/auth/auth.validator", () => ({
   parseConfirmPasswordResetInput: jest.fn(),
   parseLoginInput: jest.fn(),
   parseSignUpInput: jest.fn(),
+  parseSignupEmailCodeInput: jest.fn(),
   parseVerifyPasswordResetCodeInput: jest.fn(),
+  parseVerifySignupEmailCodeInput: jest.fn(),
   parseWithdrawAccountInput: jest.fn(),
 }));
 
 jest.mock("../../src/modules/auth/auth.service", () => ({
   confirmPasswordReset: jest.fn(),
   requestPasswordResetCode: jest.fn(),
+  requestSignupEmailCode: jest.fn(),
+  verifySignupEmailCode: jest.fn(),
   getCurrentUser: jest.fn(),
   login: jest.fn(),
   refreshAuth: jest.fn(),
@@ -56,15 +60,19 @@ import {
   meController,
   optionalSessionController,
   requestPasswordResetCodeController,
+  requestSignupEmailCodeController,
   refreshController,
   signUpController,
   verifyPasswordResetCodeController,
+  verifySignupEmailCodeController,
   withdrawAccountController,
 } from "../../src/modules/auth/auth.controller";
 import { markOptionalSessionRefreshFailure } from "../../src/modules/auth/auth-rate-limit";
 import {
   confirmPasswordReset,
   requestPasswordResetCode,
+  requestSignupEmailCode,
+  verifySignupEmailCode,
   getCurrentUser,
   login,
   refreshAuth,
@@ -78,7 +86,9 @@ import {
   parseConfirmPasswordResetInput,
   parseLoginInput,
   parseSignUpInput,
+  parseSignupEmailCodeInput,
   parseVerifyPasswordResetCodeInput,
+  parseVerifySignupEmailCodeInput,
   parseWithdrawAccountInput,
 } from "../../src/modules/auth/auth.validator";
 
@@ -134,6 +144,44 @@ describe("Auth controller response contract", () => {
       success: true,
       data: { user },
     });
+  });
+
+  test("회원가입 인증코드 발송은 타이머 정보만 200으로 반환하고 쿠키를 만들지 않는다", async () => {
+    const input = { email: "user@example.com" };
+    const result = { expiresInSeconds: 300, resendAfterSeconds: 60 };
+    jest.mocked(parseSignupEmailCodeInput).mockReturnValue(input);
+    jest.mocked(requestSignupEmailCode).mockResolvedValue(result);
+    const response = createResponse();
+
+    await requestSignupEmailCodeController(
+      { body: input } as Request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(requestSignupEmailCode).toHaveBeenCalledWith(input);
+    expect(setAuthCookies).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({ success: true, data: result });
+  });
+
+  test("회원가입 인증코드 확인은 이메일 인증 토큰을 Body로 반환하고 인증 쿠키는 발급하지 않는다", async () => {
+    const input = { email: "user@example.com", code: "123456" };
+    const result = { emailVerificationToken: "verification-token", expiresInSeconds: 900 };
+    jest.mocked(parseVerifySignupEmailCodeInput).mockReturnValue(input);
+    jest.mocked(verifySignupEmailCode).mockResolvedValue(result);
+    const response = createResponse();
+
+    await verifySignupEmailCodeController(
+      { body: input } as Request,
+      response,
+      jest.fn() as NextFunction,
+    );
+
+    expect(verifySignupEmailCode).toHaveBeenCalledWith(input);
+    expect(setAuthCookies).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({ success: true, data: result });
   });
 
   test("현재 사용자 조회는 data.user 형식을 사용한다", async () => {

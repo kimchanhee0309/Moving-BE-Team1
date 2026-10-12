@@ -259,6 +259,13 @@ export const env = {
     nodeEnvironment,
   ),
 
+  // 2단계 배포용 플래그입니다. 인증 화면이 없는 구버전 FE가 남아 있는 동안은 false로 두어
+  // 인증 토큰 없는 가입을 허용하고, 새 FE 배포가 끝난 뒤 true로 바꿔 토큰을 필수로 요구합니다.
+  SIGNUP_EMAIL_VERIFICATION_REQUIRED: parseBoolean(
+    process.env.SIGNUP_EMAIL_VERIFICATION_REQUIRED,
+    false,
+  ),
+
   SMTP_HOST: getOptionalEnvironmentVariable("SMTP_HOST"),
 
   SMTP_PORT: parsePositiveInteger(process.env.SMTP_PORT, 587, "SMTP_PORT"),

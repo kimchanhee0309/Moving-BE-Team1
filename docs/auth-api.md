@@ -19,7 +19,9 @@
 
 | Method | URI | 인증 | 성공 | 주요 오류 |
 | --- | --- | --- | --- | --- |
-| POST | `/auth/signup` | 공개 | `201`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `EMAIL_ALREADY_EXISTS`, `PHONE_ALREADY_EXISTS` |
+| POST | `/auth/signup/email-code` | 공개 | `200`, `data.expiresInSeconds`, `data.resendAfterSeconds` | `VALIDATION_ERROR`, `EMAIL_ALREADY_EXISTS`, `EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON`, `EMAIL_VERIFICATION_EMAIL_NOT_CONFIGURED`, `EMAIL_VERIFICATION_EMAIL_FAILED`, `AUTH_RATE_LIMIT_EXCEEDED` |
+| POST | `/auth/signup/email-code/verify` | 공개 | `200`, `data.emailVerificationToken`, `data.expiresInSeconds` | `VALIDATION_ERROR`, `EMAIL_VERIFICATION_CODE_INVALID`, `EMAIL_VERIFICATION_CODE_EXPIRED`, `EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED`, `AUTH_RATE_LIMIT_EXCEEDED` |
+| POST | `/auth/signup` | 공개 | `201`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `EMAIL_VERIFICATION_REQUIRED`, `EMAIL_VERIFICATION_TOKEN_INVALID`, `EMAIL_VERIFICATION_EMAIL_MISMATCH`, `EMAIL_ALREADY_EXISTS`, `PHONE_ALREADY_EXISTS` |
 | POST | `/auth/login` | 공개 | `200`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `INVALID_CREDENTIALS` |
 | GET | `/auth/me` | Access Cookie | `200`, `data.user` | `ACCESS_TOKEN_MISSING`, `ACCESS_TOKEN_INVALID`, `ACCESS_TOKEN_EXPIRED`, `USER_NOT_FOUND` |
 | DELETE | `/auth/me` | Access Cookie | `200`, `data: null`과 계정·연관 데이터·쿠키 삭제 | `CURRENT_PASSWORD_REQUIRED`, `INVALID_CURRENT_PASSWORD`, `ACCOUNT_AUTH_METHOD_INVALID` |
@@ -29,6 +31,59 @@
 | GET | `/auth/oauth/:provider` | 공개 | `200`, 공급자 URL 또는 `302` 이동 | `VALIDATION_ERROR`, `OAUTH_NOT_CONFIGURED`, `AUTH_RATE_LIMIT_EXCEEDED` |
 | GET | `/auth/oauth/:provider/callback` | State Cookie | 프론트 `/auth/callback`으로 `302` 이동 | 오류 코드를 포함한 프론트 redirect |
 
+## 회원가입 이메일 인증
+
+이메일 가입 전에 입력한 주소의 소유를 6자리 코드로 확인합니다. 가입 전에는 User가 없으므로 인증 기록(`SignupEmailVerification`)은 `userId`가 아닌 정규화된 이메일 기준으로 한 건만 유지합니다. 휴대전화 인증은 하지 않습니다.
+
+1. `POST /auth/signup/email-code` — 인증코드 발송
+
+   ```json
+   { "email": "user@example.com" }
+   ```
+
+   ```json
+   { "success": true, "data": { "expiresInSeconds": 300, "resendAfterSeconds": 60 } }
+   ```
+
+   - 이미 가입된 이메일(OAuth 가입 포함)은 코드를 보내지 않고 `409 EMAIL_ALREADY_EXISTS`로 안내합니다.
+   - 코드는 5분간 유효합니다. 같은 이메일은 60초 뒤에 다시 요청할 수 있고 그 전의 요청은 `429 EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON`입니다.
+   - 새 코드를 보내면 이전 코드와 그 코드로 받은 인증 토큰은 무효가 됩니다.
+   - IP별 1시간 10회로 제한합니다(`429 AUTH_RATE_LIMIT_EXCEEDED`).
+   - 메일 설정 누락은 `503 EMAIL_VERIFICATION_EMAIL_NOT_CONFIGURED`, 발송 실패는 `502 EMAIL_VERIFICATION_EMAIL_FAILED`이며 실패한 요청은 재발송 대기 시간을 소비하지 않습니다.
+
+2. `POST /auth/signup/email-code/verify` — 코드 확인
+
+   ```json
+   { "email": "user@example.com", "code": "012345" }
+   ```
+
+   ```json
+   { "success": true, "data": { "emailVerificationToken": "<JWT>", "expiresInSeconds": 900 } }
+   ```
+
+   - 불일치·요청한 적 없는 이메일·이미 확인한 코드는 `401 EMAIL_VERIFICATION_CODE_INVALID`, 만료는 `400 EMAIL_VERIFICATION_CODE_EXPIRED`입니다.
+   - 코드 한 건당 5회까지 시도할 수 있고 다섯 번째 실패부터 `429 EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED`입니다. 새 코드를 요청하면 횟수가 초기화됩니다.
+   - IP별 1시간 20회로 제한합니다.
+   - `emailVerificationToken`은 인증한 이메일에만 유효한 15분 만료 토큰입니다. 로그인 권한이 없는 가입 전용 값이라 Cookie가 아닌 Body로 전달하며, 이 응답은 인증 쿠키를 발급하지 않습니다.
+
+3. `POST /auth/signup` — 가입 요청에 `emailVerificationToken`을 함께 보냅니다.
+
+   - 토큰의 서명·만료와 토큰 이메일·가입 이메일 일치를 확인합니다. 위조·만료·재사용은 `400 EMAIL_VERIFICATION_TOKEN_INVALID`, 이메일 불일치는 `400 EMAIL_VERIFICATION_EMAIL_MISMATCH`입니다.
+   - 인증 기록 삭제와 User 생성을 한 transaction으로 처리하므로 토큰은 한 번만 사용할 수 있습니다. 전화번호 중복 등으로 가입이 실패하면 기록이 남아 같은 토큰으로 다시 시도할 수 있습니다.
+   - Google·Kakao·Naver OAuth 가입은 공급자가 이메일을 확인하므로 이 인증을 거치지 않습니다. 이 기능 이전에 가입한 계정은 인증된 것으로 간주하며 별도 인증 상태 컬럼을 두지 않습니다.
+
+### 2단계 배포
+
+| 단계 | `SIGNUP_EMAIL_VERIFICATION_REQUIRED` | 토큰 없는 가입 | 토큰을 보낸 가입 |
+| --- | --- | --- | --- |
+| 1. BE 먼저 배포 | `false`(기본값) | 허용(인증 화면이 없는 구버전 FE 호환) | 항상 검증 |
+| 2. 새 FE 배포 후 전환 | `true` | `400 EMAIL_VERIFICATION_REQUIRED` | 항상 검증 |
+
+- 운영 DB에 `SignupEmailVerification` migration을 먼저 적용한 뒤 BE를 배포합니다.
+- 인증코드 HMAC과 인증 토큰 서명은 `PASSWORD_RESET_CODE_SECRET`, `PASSWORD_RESET_TOKEN_SECRET`을 용도 구분값과 함께 재사용하므로 새 Secret은 필요하지 않습니다. 재설정용 코드·토큰과 가입 인증용 코드·토큰은 서로 바꿔 쓸 수 없습니다.
+- 발송 방식은 비밀번호 재설정과 같은 `PASSWORD_RESET_DELIVERY`와 `SMTP_*`를 사용합니다. 필수 전환 뒤에는 SMTP가 준비되지 않으면 이메일 가입 자체가 막히므로 전환 전에 운영 발송을 확인합니다.
+- 코드 만료 뒤 1시간이 지난 인증 기록은 다음 발송 요청 때 함께 삭제해 가입하지 않은 이메일이 계속 쌓이지 않게 합니다.
+
 ## 이메일 회원가입
 
 ```json
@@ -37,10 +92,12 @@
   "email": "user@example.com",
   "phone": "01012345678",
   "password": "Password1!",
-  "role": "CUSTOMER"
+  "role": "CUSTOMER",
+  "emailVerificationToken": "<POST /auth/signup/email-code/verify 응답의 토큰>"
 }
 ```
 
+- `emailVerificationToken`은 호환 기간에는 선택이고 `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true` 전환 뒤 필수입니다. 자세한 흐름은 위 "회원가입 이메일 인증"을 따릅니다.
 - 비밀번호는 8~72바이트이며 영문, 숫자, 특수문자를 각각 포함합니다.
 - 이메일은 소문자로, 전화번호는 하이픈을 제거한 숫자로 저장합니다.
 - 회원가입만으로 Customer/Mover profile을 생성하지 않으므로 최초 응답의 `profileCompleted`는 `false`입니다.
@@ -205,7 +262,7 @@ http://localhost:4000/auth/oauth/naver/callback
 - production의 `FRONTEND_URL`, `OAUTH_CALLBACK_BASE_URL`은 HTTPS만 허용됩니다.
 - production 평문 요청은 설정된 백엔드 HTTPS origin으로 `308` 이동합니다. 실제 TLS 인증서와 종료는 배포 프록시에서 설정합니다.
 - `TRUST_PROXY`는 `true`가 아니라 `false` 또는 실제 reverse proxy hop 수를 사용해 위조된 IP 헤더로 요청 제한을 우회하지 못하게 합니다.
-- 로그인은 IP별 15분에 실패 5회, 회원가입은 1시간에 10회, OAuth 시작은 15분에 20회, callback은 15분에 30회로 제한합니다. Refresh와 선택 세션은 별도 저장소에서 실패 요청만 각각 15분에 30회로 제한합니다.
+- 로그인은 IP별 15분에 실패 5회, 회원가입은 1시간에 10회, 회원가입 인증코드 발송은 1시간에 10회·확인은 1시간에 20회, OAuth 시작은 15분에 20회, callback은 15분에 30회로 제한합니다. Refresh와 선택 세션은 별도 저장소에서 실패 요청만 각각 15분에 30회로 제한합니다.
 - 현재 요청 제한 저장소는 단일 Node 프로세스 메모리입니다. 서버를 여러 인스턴스로 확장할 때는 팀이 승인한 Redis 등 공유 store로 교체해야 합니다.
 - 소비된 OAuth State 기록도 단일 프로세스 메모리이므로 여러 인스턴스 배포에서는 같은 공유 store로 옮겨야 완전한 전역 일회성을 보장합니다.
 
