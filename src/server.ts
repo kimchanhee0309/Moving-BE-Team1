@@ -3,6 +3,10 @@ import type { Server } from "node:http";
 import { app } from "./app";
 import { env } from "./config/env";
 import { prisma } from "./lib/prisma";
+import {
+  startMoveRequestCompletionScheduler,
+  stopMoveRequestCompletionScheduler,
+} from "./modules/move-request/move-request-completion.scheduler";
 import { closeAllNotificationConnections } from "./modules/notification/notification.hub";
 import {
   startMoveDayNotificationScheduler,
@@ -23,6 +27,10 @@ async function startServer(): Promise<void> {
   // MOVE_DAY 알림 cron 스케줄 등록. 실제 대상 판별·발송 로직은
   // modules/notification/move-day.service.ts가 담당하고 여기서는 lifecycle에만 연결한다.
   startMoveDayNotificationScheduler();
+
+  // 이사일이 지난 확정 요청을 완료(COMPLETED)로 바꾸는 cron 등록. 시작 직후에도 한 번 실행해
+  // 서버가 내려가 있던 동안 밀린 전이를 반영한다. 전이 로직은 move-request 모듈이 담당한다.
+  startMoveRequestCompletionScheduler();
 }
 
 async function shutdown(signal: string, exitCode = 0): Promise<void> {
@@ -36,6 +44,7 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
 
   // cron 타이머가 살아있으면 프로세스 종료를 막을 수 있으므로 HTTP 서버를 닫기 전에 정지한다.
   stopMoveDayNotificationScheduler();
+  stopMoveRequestCompletionScheduler();
 
   // SSE는 의도적으로 끝나지 않는 장기 연결이라 server.close()가 끝나길 기다리면 영원히
   // 끝나지 않으므로, 먼저 모든 연결을 강제로 닫아야 한다. 이 호출 이후 각 연결의
