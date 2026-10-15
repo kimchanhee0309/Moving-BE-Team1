@@ -11,10 +11,12 @@
  * 모든 seed 계정의 이메일은 SEED_EMAIL_DOMAIN으로 끝나며, 실행할 때마다 이 도메인의 계정과
  * 그 계정들이 만든 요청·견적·반려·리뷰·알림을 지우고 다시 만듭니다. 대상 DB를 반드시 확인하고 실행합니다.
  *
- * 비밀번호: 로컬 DB(localhost)에서는 LOCAL_SEED_PASSWORD를 기본값으로 씁니다.
- * 저장소가 공개돼 있어 이 기본값은 누구나 알 수 있으므로, 운영 등 로컬이 아닌 DB에 실행할 때는
- * 반드시 SEED_PASSWORD 환경변수로 비밀번호를 지정해야 하며 지정하지 않으면 실행을 거부합니다.
- * 예: SEED_PASSWORD='<운영용 비밀번호>' npx prisma db seed
+ * 비밀번호는 실행할 때 반드시 둘 중 하나로 정합니다. 둘 다 없으면 실행을 거부합니다.
+ * - 로컬 개발 DB: SEED_USE_LOCAL_PASSWORD=true → 이 파일의 LOCAL_SEED_PASSWORD(공개 비밀번호)를 사용
+ *   .env에 한 줄 추가해 두면 매번 붙이지 않아도 됩니다. NODE_ENV=production에서는 이 옵션을 쓸 수 없습니다.
+ * - 운영 등 그 밖의 DB: SEED_PASSWORD='<비공개 비밀번호>' → 그 값을 사용
+ * DB 주소(localhost 등)로 로컬 여부를 추측하지 않습니다. SSH 터널이나 프록시로 운영 DB에 붙어도
+ * 주소는 localhost가 되므로, 공개 비밀번호 사용은 사람이 명시적으로 허용했을 때만 가능하게 합니다.
  */
 import {
   MoveRequestStatus,
@@ -34,20 +36,10 @@ const LOCAL_SEED_PASSWORD = "Moving1234!";
 // 회원가입 검증과 같은 비밀번호 규칙(8자 이상, 영문·숫자·특수문자 각 1개 이상)입니다.
 const SEED_PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s]).{8,}$/;
 
-function isLocalDatabase(databaseUrl: string): boolean {
-  try {
-    const { hostname } = new URL(databaseUrl);
-    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname);
-  } catch {
-    // 주소를 해석하지 못하면 로컬로 단정하지 않습니다.
-    return false;
-  }
-}
-
 /**
  * seed 계정에 쓸 비밀번호를 정합니다.
- * @returns SEED_PASSWORD 환경변수 값, 없고 로컬 DB이면 LOCAL_SEED_PASSWORD
- * @throws 환경변수 값이 비밀번호 규칙에 맞지 않거나, 로컬이 아닌 DB인데 환경변수가 없는 경우
+ * @returns SEED_PASSWORD 환경변수 값, 없으면 SEED_USE_LOCAL_PASSWORD=true일 때 LOCAL_SEED_PASSWORD
+ * @throws SEED_PASSWORD가 규칙에 맞지 않거나, 둘 다 없거나, production에서 공개 비밀번호를 쓰려는 경우
  */
 function resolveSeedPassword(): string {
   const passwordFromEnv = process.env.SEED_PASSWORD?.trim();
@@ -59,10 +51,18 @@ function resolveSeedPassword(): string {
     return passwordFromEnv;
   }
 
-  if (!isLocalDatabase(env.DATABASE_URL)) {
+  if (process.env.SEED_USE_LOCAL_PASSWORD?.trim() !== "true") {
     throw new Error(
-      "로컬이 아닌 DB에 seed를 실행하려면 SEED_PASSWORD 환경변수로 비밀번호를 지정해야 합니다. 저장소의 기본 비밀번호는 공개돼 있습니다.",
+      [
+        "seed 계정 비밀번호를 정해야 합니다.",
+        "- 로컬 개발 DB라면: SEED_USE_LOCAL_PASSWORD=true 를 붙여 실행하거나 .env에 추가하세요.",
+        "- 운영 등 그 밖의 DB라면: SEED_PASSWORD='<비공개 비밀번호>' 로 지정하세요. 저장소의 기본 비밀번호는 공개돼 있습니다.",
+      ].join("\n"),
     );
+  }
+
+  if (env.NODE_ENV === "production") {
+    throw new Error("NODE_ENV=production에서는 공개된 로컬 비밀번호를 쓸 수 없습니다. SEED_PASSWORD로 비공개 비밀번호를 지정하세요.");
   }
 
   return LOCAL_SEED_PASSWORD;
