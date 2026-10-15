@@ -1507,9 +1507,25 @@ async function createMoveRequest(
   for (const moverKey of seed.designatedMovers ?? []) {
     const mover = getRequired(movers, moverKey, "지정 기사님");
 
+    // 앱도 지정 요청을 만들 때는 별도 알림을 보내지 않으므로 지정 기록만 남깁니다.
     await prisma.designatedRequest.create({
       data: { moveRequestId: moveRequest.id, moverId: mover.moverId, createdAt: requestCreatedAt },
     });
+  }
+
+  // 앱(move-request.service의 요청 생성)처럼 고객 지역과 서비스 유형이 모두 맞는 기사님 전원에게
+  // 새 요청 알림을 보냅니다. 이미 견적을 보냈거나 반려한 기사님, 지난 요청의 알림은 읽음으로 둡니다.
+  const actedMoverKeys = new Set([
+    ...[...(seed.proposedQuotes ?? []), ...(seed.declinedQuotes ?? []), ...(seed.confirmedQuote ? [seed.confirmedQuote] : [])].map((quote) => quote.mover),
+    ...(seed.rejections ?? []).map((rejection) => rejection.mover),
+  ]);
+  const customerRegion = getRequired(new Map(CUSTOMER_SEEDS.map((customerSeed) => [customerSeed.key, customerSeed])), seed.customer, "고객").region;
+
+  for (const moverSeed of MOVER_SEEDS) {
+    if (!moverSeed.regions.includes(customerRegion) || !moverSeed.serviceTypes.includes(seed.serviceType)) continue;
+
+    const mover = getRequired(movers, moverSeed.key, "알림 기사님");
+    const isRead = seed.status !== MoveRequestStatus.WAITING || actedMoverKeys.has(moverSeed.key);
 
     notifications.push({
       userId: mover.userId,
@@ -1517,10 +1533,13 @@ async function createMoveRequest(
       type: NotificationType.NEW_MOVE_REQUEST,
       title: "새로운 이사 견적 요청이 도착했습니다.",
       content: "고객님이 새로운 이사 견적을 요청했습니다.",
-      readAt: isPast ? addHours(requestCreatedAt, 1) : null,
+      readAt: isRead ? addHours(requestCreatedAt, 1) : null,
       createdAt: requestCreatedAt,
     });
   }
+
+  // 대기 중 요청에서 가장 최근에 도착한 견적입니다. 이 견적의 알림만 안 읽음으로 둡니다.
+  const latestProposedHours = Math.max(...(seed.proposedQuotes ?? []).map((quote) => quote.hoursAfterRequest));
 
   const createQuote = async (quote: QuoteSeed, status: QuoteStatus) => {
     const mover = getRequired(movers, quote.mover, "견적 기사님");
@@ -1546,7 +1565,10 @@ async function createMoveRequest(
       content: `${mover.nickname} 기사님의 ${serviceTypeLabel} 견적이 도착했어요`,
       params: { moverNickname: mover.nickname, serviceType: seed.serviceType },
       // 대기 중 요청의 가장 최근 견적만 안 읽은 상태로 두어 알림 배지를 확인할 수 있게 합니다.
-      readAt: status === QuoteStatus.PROPOSED ? null : addHours(createdAt, 2),
+      readAt:
+        status === QuoteStatus.PROPOSED && quote.hoursAfterRequest === latestProposedHours
+          ? null
+          : addHours(createdAt, 2),
       createdAt,
     });
 
