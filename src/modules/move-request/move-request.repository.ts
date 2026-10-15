@@ -538,3 +538,36 @@ export function deleteMoveRequestById(
 ): Promise<{ id: string }> {
   return client.moveRequest.delete({ where: { id }, select: { id: true } });
 }
+
+/**
+ * 이사일이 지난 확정(CONFIRMED) 이사 요청을 완료(COMPLETED)로 일괄 전이합니다.
+ *
+ * "이사일이 지났다"는 기준은 `findActiveMoveRequestByCustomerId`와 같습니다. moveDate는 이사일의
+ * UTC 자정 instant로 저장되므로, 오늘 UTC 자정보다 이전인 요청만 대상으로 해 이사 당일 하루 전체는
+ * CONFIRMED로 유지합니다. 두 기준이 같아야 "활성 요청이 아닌데 완료도 아닌" 요청이 생기지 않습니다.
+ *
+ * 조건부 updateMany 한 번으로 처리하므로 여러 번 실행해도 결과가 같고(멱등), 실행 사이에 고객이
+ * 요청을 삭제하거나 다른 실행이 먼저 전이해도 status 조건에 걸리지 않아 중복 전이되지 않습니다.
+ * `@@index([status, moveDate])`를 사용하는 조건입니다.
+ *
+ * @param now 기준 시각(테스트에서 주입 가능하도록 매개변수로 받습니다)
+ * @param client 기본 prisma client. 트랜잭션 안에서 호출할 경우에만 tx를 전달합니다.
+ * @returns 이번 실행에서 COMPLETED로 바뀐 요청 수
+ * @sideeffect MoveRequest.status를 CONFIRMED에서 COMPLETED로 갱신합니다.
+ */
+export async function completePastConfirmedMoveRequests(
+  now: Date,
+  client: PrismaClientOrTx = prisma,
+): Promise<number> {
+  const todayUtcMidnight = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+
+  const { count } = await client.moveRequest.updateMany({
+    where: {
+      status: "CONFIRMED",
+      moveDate: { lt: todayUtcMidnight },
+    },
+    data: { status: "COMPLETED" },
+  });
+
+  return count;
+}
