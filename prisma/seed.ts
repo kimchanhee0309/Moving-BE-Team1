@@ -10,6 +10,11 @@
  *
  * 모든 seed 계정의 이메일은 SEED_EMAIL_DOMAIN으로 끝나며, 실행할 때마다 이 도메인의 계정과
  * 그 계정들이 만든 요청·견적·반려·리뷰·알림을 지우고 다시 만듭니다. 대상 DB를 반드시 확인하고 실행합니다.
+ *
+ * 비밀번호: 로컬 DB(localhost)에서는 LOCAL_SEED_PASSWORD를 기본값으로 씁니다.
+ * 저장소가 공개돼 있어 이 기본값은 누구나 알 수 있으므로, 운영 등 로컬이 아닌 DB에 실행할 때는
+ * 반드시 SEED_PASSWORD 환경변수로 비밀번호를 지정해야 하며 지정하지 않으면 실행을 거부합니다.
+ * 예: SEED_PASSWORD='<운영용 비밀번호>' npx prisma db seed
  */
 import {
   MoveRequestStatus,
@@ -18,11 +23,52 @@ import {
   QuoteStatus,
   UserRole,
 } from "../src/generated/prisma/client";
+import { env } from "../src/config/env";
 import { prisma } from "../src/lib/prisma";
 import { hashPassword } from "../src/modules/auth/password";
 
 const SEED_EMAIL_DOMAIN = "@seed.moving.local";
-const SEED_PASSWORD = "Moving1234!";
+/** 로컬 DB 전용 기본 비밀번호입니다. 공개 저장소에 있으므로 로컬이 아닌 DB에는 쓰지 않습니다. */
+const LOCAL_SEED_PASSWORD = "Moving1234!";
+
+// 회원가입 검증과 같은 비밀번호 규칙(8자 이상, 영문·숫자·특수문자 각 1개 이상)입니다.
+const SEED_PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s]).{8,}$/;
+
+function isLocalDatabase(databaseUrl: string): boolean {
+  try {
+    const { hostname } = new URL(databaseUrl);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname);
+  } catch {
+    // 주소를 해석하지 못하면 로컬로 단정하지 않습니다.
+    return false;
+  }
+}
+
+/**
+ * seed 계정에 쓸 비밀번호를 정합니다.
+ * @returns SEED_PASSWORD 환경변수 값, 없고 로컬 DB이면 LOCAL_SEED_PASSWORD
+ * @throws 환경변수 값이 비밀번호 규칙에 맞지 않거나, 로컬이 아닌 DB인데 환경변수가 없는 경우
+ */
+function resolveSeedPassword(): string {
+  const passwordFromEnv = process.env.SEED_PASSWORD?.trim();
+
+  if (passwordFromEnv) {
+    if (!SEED_PASSWORD_PATTERN.test(passwordFromEnv)) {
+      throw new Error("SEED_PASSWORD는 8자 이상이며 영문·숫자·특수문자를 각각 하나 이상 포함해야 합니다.");
+    }
+    return passwordFromEnv;
+  }
+
+  if (!isLocalDatabase(env.DATABASE_URL)) {
+    throw new Error(
+      "로컬이 아닌 DB에 seed를 실행하려면 SEED_PASSWORD 환경변수로 비밀번호를 지정해야 합니다. 저장소의 기본 비밀번호는 공개돼 있습니다.",
+    );
+  }
+
+  return LOCAL_SEED_PASSWORD;
+}
+
+const SEED_PASSWORD = resolveSeedPassword();
 
 const REVIEW_TEST_CUSTOMER_EMAIL = "aaa123@test.com";
 
@@ -1934,7 +1980,11 @@ async function main(): Promise<void> {
     reviewTestWritten: reviewTestSummary.writtenReviews,
   });
 
-  console.log(`\n로그인 계정 (비밀번호는 모두 이 파일의 SEED_PASSWORD)`);
+  console.log(
+    process.env.SEED_PASSWORD?.trim()
+      ? "\n로그인 계정 (비밀번호는 실행할 때 지정한 SEED_PASSWORD)"
+      : "\n로그인 계정 (비밀번호는 이 파일의 LOCAL_SEED_PASSWORD)",
+  );
   console.table([
     ...CUSTOMER_SEEDS.map((seed) => ({ 역할: "일반 유저", 이메일: seed.email, 이름: seed.name, 확인용: seed.scenario })),
     ...MOVER_SEEDS.map((seed) => ({ 역할: "기사님", 이메일: seed.email, 이름: `${seed.name} (${seed.nickname})`, 확인용: seed.scenario })),
