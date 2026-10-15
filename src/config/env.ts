@@ -1,19 +1,16 @@
-/**
- * 서버 전역 환경변수를 한 곳에서 검증합니다.
- * 인증·스토리지·Redis 설정을 파싱하고 잘못된 설정은 시작 전에 차단합니다.
- * 실제 인프라 연결은 각 lib 모듈이 담당하며 Secret 원문을 로그에 남기지 않습니다.
- */
 import "dotenv/config";
 
+/**
+ * 서버 전역 환경변수를 한 곳에서 검증합니다.
+ * Secret 원문을 로그에 남기지 않으며 잘못된 보안 조합은 서버 시작 전에 차단합니다.
+ */
+
 type NodeEnvironment = "development" | "test" | "production";
+
 type CookieSameSite = "lax" | "strict" | "none";
 type PasswordResetDelivery = "console" | "smtp";
-
-/** local: 서버 디스크, s3: S3에 저장하고 CloudFront URL로 공개합니다. */
+/** local: 서버 디스크(/uploads), s3: 비공개 S3 버킷에 저장하고 CloudFront URL로 공개합니다. */
 type ProfileImageStorageDriver = "local" | "s3";
-
-/** standalone: 단일 endpoint 연결, cluster: Cluster topology 기반 연결입니다. */
-type RedisMode = "standalone" | "cluster";
 
 function getRequiredEnvironmentVariable(name: string): string {
   const value = process.env[name]?.trim();
@@ -83,7 +80,7 @@ function parseBoolean(
     return false;
   }
 
-  throw new Error("boolean 환경변수에는 true 또는 false만 사용할 수 있습니다.");
+  throw new Error(`boolean 환경변수에는 true 또는 false만 사용할 수 있습니다.`);
 }
 
 function parseCookieSameSite(value: string | undefined): CookieSameSite {
@@ -91,7 +88,7 @@ function parseCookieSameSite(value: string | undefined): CookieSameSite {
 
   if (sameSite !== "lax" && sameSite !== "strict" && sameSite !== "none") {
     throw new Error(
-      "COOKIE_SAME_SITE 값은 lax, strict, none 중 하나여야 합니다.",
+      `COOKIE_SAME_SITE 값은 lax, strict, none 중 하나여야 합니다.`,
     );
   }
 
@@ -109,9 +106,7 @@ function parsePasswordResetDelivery(
   }
 
   if (nodeEnvironment === "production" && delivery === "console") {
-    throw new Error(
-      "production 환경에서는 PASSWORD_RESET_DELIVERY=console을 사용할 수 없습니다.",
-    );
+    throw new Error("production 환경에서는 PASSWORD_RESET_DELIVERY=console을 사용할 수 없습니다.");
   }
 
   return delivery;
@@ -131,20 +126,14 @@ function parseProfileImageStorageDriver(
 
 /**
  * CloudFront 배포 도메인을 hostname으로만 받습니다.
- * scheme이나 경로가 섞이면 이미지 URL과 삭제 대상 판정이 어긋나므로 거절합니다.
+ * scheme이나 경로가 섞이면 DB에 저장하는 이미지 URL과 삭제 대상 판정이 어긋나므로 시작 단계에서 거절합니다.
  */
 function parseCloudFrontDomain(value: string | undefined): string | undefined {
   const domain = value?.trim().toLowerCase();
 
-  if (!domain) {
-    return undefined;
-  }
+  if (!domain) return undefined;
 
-  if (
-    !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(
-      domain,
-    )
-  ) {
+  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) {
     throw new Error(
       "CLOUDFRONT_DOMAIN에는 https://와 경로를 뺀 도메인만 설정해야 합니다. 예: d1234abcd.cloudfront.net",
     );
@@ -154,17 +143,14 @@ function parseCloudFrontDomain(value: string | undefined): string | undefined {
 }
 
 /**
- * 캐시 무효화 대상 CloudFront 배포 ID를 받습니다.
- * 값이 없으면 무효화를 건너뛰므로 선택 값입니다.
+ * 캐시 무효화 대상 CloudFront 배포 ID를 받습니다. 값이 없으면 무효화를 건너뛰므로 선택 값입니다.
+ * 배포 ID는 E로 시작하는 영문 대문자·숫자이며, 도메인(d1234.cloudfront.net)이나 ARN을 넣으면
+ * 모든 무효화 요청이 조용히 실패하므로 시작 단계에서 거절합니다.
  */
-function parseCloudFrontDistributionId(
-  value: string | undefined,
-): string | undefined {
+function parseCloudFrontDistributionId(value: string | undefined): string | undefined {
   const distributionId = value?.trim();
 
-  if (!distributionId) {
-    return undefined;
-  }
+  if (!distributionId) return undefined;
 
   if (!/^E[A-Z0-9]{5,31}$/.test(distributionId)) {
     throw new Error(
@@ -209,12 +195,11 @@ function parseTrustProxy(
   }
 
   const proxyHops = Number(value);
-
   if (Number.isInteger(proxyHops) && proxyHops > 0) {
     return proxyHops;
   }
 
-  // true는 임의 X-Forwarded-For를 신뢰할 수 있으므로 허용하지 않습니다.
+  // true는 임의 X-Forwarded-For를 신뢰해 IP 요청 제한을 우회할 수 있으므로 허용하지 않습니다.
   throw new Error("TRUST_PROXY는 false 또는 신뢰할 proxy hop 수여야 합니다.");
 }
 
@@ -248,84 +233,6 @@ function parseHttpOrigin(
 
 function getOptionalEnvironmentVariable(name: string): string | undefined {
   return process.env[name]?.trim() || undefined;
-}
-
-/**
- * Redis 접속 방식을 검증합니다.
- * @param value standalone 또는 cluster
- * @returns 검증된 연결 모드
- * @throws 지원하지 않는 모드
- */
-function parseRedisMode(value: string | undefined): RedisMode {
-  const mode = value?.trim().toLowerCase() || "standalone";
-
-  if (mode !== "standalone" && mode !== "cluster") {
-    throw new Error("REDIS_MODE는 standalone 또는 cluster여야 합니다.");
-  }
-
-  return mode;
-}
-
-/**
- * Redis 접속 URL과 인증정보 인코딩을 검증합니다.
- * @param value redis:// 또는 rediss:// URL
- * @returns 검증된 URL
- * @throws 누락, 잘못된 protocol·port·경로·인코딩
- * @remarks ElastiCache와 로컬 설정을 맞추기 위해 DB 0만 허용합니다.
- */
-function parseRedisUrl(value: string | undefined): string {
-  const redisUrl = value?.trim();
-
-  if (!redisUrl) {
-    throw new Error("REDIS_URL 환경변수가 설정되지 않았습니다.");
-  }
-
-  try {
-    const parsed = new URL(redisUrl);
-    const port = parsed.port ? Number(parsed.port) : 6379;
-
-    if (
-      !["redis:", "rediss:"].includes(parsed.protocol) ||
-      !parsed.hostname ||
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65535 ||
-      !["", "/", "/0"].includes(parsed.pathname) ||
-      parsed.search ||
-      parsed.hash
-    ) {
-      throw new Error("INVALID_REDIS_URL");
-    }
-
-    // Cluster 연결에서는 URL 인증정보를 직접 해석하므로 인코딩도 검증합니다.
-    decodeURIComponent(parsed.username);
-    decodeURIComponent(parsed.password);
-  } catch {
-    // URL에는 비밀번호가 포함될 수 있으므로 원문을 오류에 넣지 않습니다.
-    throw new Error(
-      "REDIS_URL은 DB 0을 사용하는 redis:// 또는 rediss:// 접속 URL이어야 합니다.",
-    );
-  }
-
-  return redisUrl;
-}
-
-/**
- * 프로젝트·환경별 Redis namespace를 검증합니다.
- * @param value moving:development 같은 prefix
- * @returns 끝에 콜론이 없는 prefix
- * @throws 누락 또는 허용되지 않은 문자
- */
-function parseRedisKeyPrefix(value: string | undefined): string {
-  const prefix = value?.trim();
-
-  if (!prefix || !/^[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)*$/.test(prefix)) {
-    throw new Error(
-      "REDIS_KEY_PREFIX는 moving:development처럼 지정해야 합니다.",
-    );
-  }
-
-  return prefix;
 }
 
 const nodeEnvironment = parseNodeEnvironment(process.env.NODE_ENV);
@@ -362,17 +269,14 @@ if (!corsOrigins.includes(frontendUrl)) {
 const profileImageStorage = parseProfileImageStorageDriver(
   process.env.PROFILE_IMAGE_STORAGE,
 );
-
 const awsBucketName = getOptionalEnvironmentVariable("AWS_BUCKET_NAME");
-
 const cloudFrontDomain = parseCloudFrontDomain(process.env.CLOUDFRONT_DOMAIN);
-
 const cloudFrontDistributionId = parseCloudFrontDistributionId(
   process.env.CLOUDFRONT_DISTRIBUTION_ID,
 );
 
-// s3 설정 누락은 업로드 요청 시점이 아니라 서버 시작 전에 확인합니다.
-// AWS 자격 증명은 SDK의 환경변수 또는 IAM Role 처리를 사용합니다.
+// 업로드 요청이 들어온 뒤에야 설정 누락을 알게 되지 않도록 s3 선택 시 필요한 값을 서버 시작 전에 확인합니다.
+// AWS 자격 증명은 여기서 읽지 않습니다. SDK가 AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 또는 EC2 IAM Role에서 직접 찾습니다.
 if (profileImageStorage === "s3" && (!awsBucketName || !cloudFrontDomain)) {
   throw new Error(
     "PROFILE_IMAGE_STORAGE=s3에는 AWS_BUCKET_NAME과 CLOUDFRONT_DOMAIN이 필요합니다.",
@@ -423,7 +327,8 @@ export const env = {
     nodeEnvironment,
   ),
 
-  // 구버전 FE가 남아 있는 동안 false로 두고 인증 화면 배포 후 전환합니다.
+  // 2단계 배포용 플래그입니다. 인증 화면이 없는 구버전 FE가 남아 있는 동안은 false로 두어
+  // 인증 토큰 없는 가입을 허용하고, 새 FE 배포가 끝난 뒤 true로 바꿔 토큰을 필수로 요구합니다.
   SIGNUP_EMAIL_VERIFICATION_REQUIRED: parseBoolean(
     process.env.SIGNUP_EMAIL_VERIFICATION_REQUIRED,
     false,
@@ -449,7 +354,7 @@ export const env = {
 
   CLOUDFRONT_DOMAIN: cloudFrontDomain,
 
-  // 없으면 CloudFront 캐시 무효화를 건너뜁니다.
+  // 선택 값입니다. 없으면 이미지를 지울 때 S3 객체만 삭제하고 CloudFront 캐시 무효화는 건너뜁니다.
   CLOUDFRONT_DISTRIBUTION_ID: cloudFrontDistributionId,
 
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN?.trim() || undefined,
@@ -470,19 +375,13 @@ export const env = {
     "REFRESH_TOKEN_MAX_AGE_MS",
   ),
 
-  TRUST_PROXY: parseTrustProxy(process.env.TRUST_PROXY, nodeEnvironment),
+  TRUST_PROXY: parseTrustProxy(
+    process.env.TRUST_PROXY,
+    nodeEnvironment,
+  ),
 
   SWAGGER_ENABLED: parseBoolean(
     process.env.SWAGGER_ENABLED,
     nodeEnvironment !== "production",
   ),
-
-  // 로컬·ElastiCache 구성에 따라 연결 구현을 선택합니다.
-  REDIS_MODE: parseRedisMode(process.env.REDIS_MODE),
-
-  // rediss://를 사용하면 TLS 연결이 활성화됩니다.
-  REDIS_URL: parseRedisUrl(process.env.REDIS_URL),
-
-  // 같은 환경의 모든 백엔드 인스턴스에서 같은 값을 사용합니다.
-  REDIS_KEY_PREFIX: parseRedisKeyPrefix(process.env.REDIS_KEY_PREFIX),
 } as const;
