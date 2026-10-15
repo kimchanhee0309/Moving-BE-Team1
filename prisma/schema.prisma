@@ -1,0 +1,345 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CUSTOMER
+  MOVER
+}
+
+enum SocialProvider {
+  NAVER
+  GOOGLE
+  KAKAO
+}
+
+// 이메일 인증 뒤 추가 확인에만 사용하는 고정 복구 질문입니다.
+enum PasswordRecoveryQuestion {
+  CHILDHOOD_NICKNAME
+  MEMORABLE_PLACE
+  PERSONAL_PHRASE
+}
+
+enum MoveRequestStatus {
+  WAITING
+  CONFIRMED
+  COMPLETED
+}
+
+enum QuoteStatus {
+  PROPOSED
+  REJECTED
+  CONFIRMED
+}
+
+enum NotificationType {
+  NEW_QUOTE
+  QUOTE_CONFIRMED
+  NEW_MOVE_REQUEST
+  MOVE_DAY
+  MOVE_REQUEST_CANCELED // 신규: WAITING 요청이 취소됨(대기 중이던 PROPOSED 견적 기사님들에게)
+  CONFIRMED_MOVE_CANCELED // 신규: CONFIRMED 요청이 취소됨(확정 기사님에게)
+  QUOTE_CANCELED_BY_MOVER_WITHDRAWAL // 신규: 기사님 탈퇴로 대기 중이던 견적이 삭제됨(견적을 받은 고객에게)
+}
+
+model User {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  role               UserRole
+  name               String                    @db.VarChar(50)
+  passwordHash       String?                   @db.VarChar(255)
+  recoveryQuestion   PasswordRecoveryQuestion?
+  recoveryAnswerHash String?                   @db.VarChar(255)
+  email              String                    @unique @db.VarChar(255)
+  phone              String?                   @unique @db.VarChar(20)
+  socialProvider     SocialProvider?
+  socialId           String?                   @db.VarChar(255)
+  /// 탈퇴 시각입니다. 값이 있으면 탈퇴 계정이며 이름·이메일·전화번호·인증 수단은 탈퇴 즉시 익명화됩니다. 리뷰와 완료된 견적 보존을 위해 row는 삭제하지 않습니다.
+  deletedAt          DateTime?                 @db.Timestamptz(3)
+  createdAt          DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                  @updatedAt @db.Timestamptz(3)
+
+  customer               Customer?
+  mover                  Mover?
+  notifications          Notification[]
+  passwordResetChallenge PasswordResetChallenge?
+
+  @@unique([socialProvider, socialId])
+  @@index([role])
+}
+
+model PasswordResetChallenge {
+  id                     String    @id @default(uuid()) @db.Uuid
+  userId                 String    @unique @db.Uuid
+  codeHash               String    @db.VarChar(64)
+  failedAttempts         Int       @default(0)
+  recoveryAnswerAttempts Int       @default(0)
+  expiresAt              DateTime  @db.Timestamptz(3)
+  sentAt                 DateTime  @db.Timestamptz(3)
+  verifiedAt             DateTime? @db.Timestamptz(3)
+  consumedAt             DateTime? @db.Timestamptz(3)
+  createdAt              DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// 가입 전 이메일 소유 확인 기록입니다. 아직 User가 없으므로 userId가 아닌 정규화된 이메일을 기준으로 한 건만 유지합니다.
+model SignupEmailVerification {
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique @db.VarChar(255)
+  codeHash       String    @db.VarChar(64)
+  failedAttempts Int       @default(0)
+  expiresAt      DateTime  @db.Timestamptz(3)
+  sentAt         DateTime  @db.Timestamptz(3)
+  verifiedAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([expiresAt])
+}
+
+model Customer {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @db.Uuid
+  profileImageUrl String?  @db.Text
+  regionId        String   @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  region Region @relation(fields: [regionId], references: [id], onDelete: Restrict)
+
+  serviceTypes CustomerServiceType[]
+  moveRequests MoveRequest[]
+  reviews      Review[]
+  favorites    Favorite[]
+
+  @@index([regionId])
+}
+
+model Mover {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique @db.Uuid
+  profileImageUrl   String?  @db.Text
+  nickname          String   @unique @db.VarChar(50)
+  careerYears       Int
+  shortIntroduction String   @db.VarChar(255)
+  description       String   @db.Text
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  serviceTypes       MoverServiceType[]
+  regions            MoverRegion[]
+  designatedRequests DesignatedRequest[]
+  quotes             Quote[]
+  reviews            Review[]
+  favorites          Favorite[]
+  requestRejections  RequestRejection[]
+
+  @@index([nickname])
+}
+
+model ServiceType {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique @db.VarChar(30)
+
+  customerServiceTypes CustomerServiceType[]
+  moverServiceTypes    MoverServiceType[]
+  moveRequests         MoveRequest[]
+}
+
+model Region {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique @db.VarChar(30)
+
+  customers    Customer[]
+  moverRegions MoverRegion[]
+}
+
+model CustomerServiceType {
+  id            String @id @default(uuid()) @db.Uuid
+  customerId    String @db.Uuid
+  serviceTypeId String @db.Uuid
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([customerId, serviceTypeId])
+  @@index([serviceTypeId])
+}
+
+model MoverServiceType {
+  id            String @id @default(uuid()) @db.Uuid
+  moverId       String @db.Uuid
+  serviceTypeId String @db.Uuid
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([moverId, serviceTypeId])
+  @@index([serviceTypeId])
+}
+
+model MoverRegion {
+  id       String @id @default(uuid()) @db.Uuid
+  moverId  String @db.Uuid
+  regionId String @db.Uuid
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  region Region @relation(fields: [regionId], references: [id], onDelete: Restrict)
+
+  @@unique([moverId, regionId])
+  @@index([regionId])
+}
+
+model MoveRequest {
+  id            String            @id @default(uuid()) @db.Uuid
+  customerId    String            @db.Uuid
+  serviceTypeId String            @db.Uuid
+  moveDate      DateTime          @db.Timestamptz(3)
+  fromAddress   String            @db.VarChar(255)
+  toAddress     String            @db.VarChar(255)
+  status        MoveRequestStatus @default(WAITING)
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Restrict)
+
+  designatedRequests DesignatedRequest[]
+  quotes             Quote[]
+  review             Review?
+  notifications      Notification[]
+  requestRejections  RequestRejection[]
+
+  @@index([customerId, status])
+  @@index([serviceTypeId, moveDate])
+  @@index([status, moveDate])
+}
+
+model DesignatedRequest {
+  id            String   @id @default(uuid()) @db.Uuid
+  moveRequestId String   @db.Uuid
+  moverId       String   @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  @@unique([moveRequestId, moverId])
+  @@index([moverId])
+}
+
+model Quote {
+  id            String      @id @default(uuid()) @db.Uuid
+  moveRequestId String      @db.Uuid
+  moverId       String      @db.Uuid
+  price         Int?
+  comment       String?     @db.Text
+  status        QuoteStatus @default(PROPOSED)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  notifications Notification[]
+
+  @@unique([moveRequestId, moverId])
+  @@index([moveRequestId, status])
+  @@index([moverId, status])
+  @@index([status, createdAt])
+}
+
+model Review {
+  id            String   @id @default(uuid()) @db.Uuid
+  customerId    String   @db.Uuid
+  moveRequestId String   @unique @db.Uuid
+  moverId       String   @db.Uuid
+  rating        Int
+  content       String   @db.Text
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([moverId, createdAt])
+}
+
+model Favorite {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
+  moverId    String   @db.Uuid
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  mover Mover @relation(fields: [moverId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, moverId])
+  @@index([moverId])
+}
+
+model Notification {
+  id            String           @id @default(uuid()) @db.Uuid
+  userId        String           @db.Uuid
+  moveRequestId String?          @db.Uuid
+  quoteId       String?          @db.Uuid
+  type          NotificationType
+  title         String           @db.VarChar(100)
+  content       String           @db.Text
+  /// 다국어 화면에서 알림 문장을 조립할 변수(예: moverNickname, serviceType). 기존 알림과 변수 없는 알림은 null입니다.
+  params        Json?
+  readAt        DateTime?        @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  moveRequest MoveRequest? @relation(fields: [moveRequestId], references: [id], onDelete: SetNull)
+  quote       Quote?       @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt, createdAt])
+  @@index([moveRequestId])
+  @@index([quoteId])
+}
+
+/// 기사님이 견적 요청을 반려한 기록이며 모든 관계 식별자는 참조 대상과 같은 PostgreSQL UUID를 사용한다.
+model RequestRejection {
+  id            String   @id @default(uuid()) @db.Uuid
+  moveRequestId String   @db.Uuid
+  moverId       String   @db.Uuid
+  reason        String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  moveRequest MoveRequest @relation(fields: [moveRequestId], references: [id])
+  mover       Mover       @relation(fields: [moverId], references: [id])
+
+  @@unique([moveRequestId, moverId])
+  @@index([moverId, createdAt])
+}

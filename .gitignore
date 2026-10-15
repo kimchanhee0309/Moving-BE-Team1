@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+coverage/
+src/generated/
+
+# local uploads (development only; production storage will use S3)
+/uploads/
+
+# environment
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# AI agent config (개인 로컬 전용, .claude/skills는 팀 공용이라 제외)
+.claude/agents/

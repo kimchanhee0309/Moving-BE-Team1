@@ -1,0 +1,144 @@
+/**
+ * 이메일 인증·선택 세션·회원 탈퇴 API의 입력과 외부 응답 DTO를 정의합니다.
+ * passwordHash와 토큰 원문 같은 내부 인증 정보는 응답 DTO에 포함하지 않습니다.
+ */
+import type { UserRole } from "../../generated/prisma/enums";
+import type { AuthTokens } from "../../common/utils/auth-token";
+
+/** POST /auth/signup에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
+export interface SignUpRequestDto {
+  /** 1~50자의 표시 이름입니다. */
+  name: string;
+  /** 소문자로 정규화된 고유 이메일이며 최대 255자입니다. */
+  email: string;
+  /** 하이픈을 제거한 대한민국 휴대전화 번호입니다. */
+  phone: string;
+  /** 8자 이상·bcrypt 허용 범위 이내의 평문이며 응답과 로그에 포함하지 않습니다. */
+  password: string;
+  /** 가입할 계정 유형이며 CUSTOMER 또는 MOVER입니다. */
+  role: UserRole;
+  /**
+   * 이메일 인증코드 확인 뒤 받은 15분 만료 토큰입니다.
+   * SIGNUP_EMAIL_VERIFICATION_REQUIRED=false인 호환 기간에는 생략할 수 있지만, 보내면 항상 검증합니다.
+   */
+  emailVerificationToken?: string;
+}
+
+/** POST /auth/signup/email-code에서 인증코드를 받을 가입 예정 이메일입니다. */
+export interface SignupEmailCodeRequestDto {
+  /** 소문자로 정규화된 이메일이며 최대 255자입니다. */
+  email: string;
+}
+
+/** 인증코드 발송 결과이며 화면의 만료·재발송 타이머에 사용합니다. */
+export interface SignupEmailCodeResultDto {
+  /** 인증코드 유효 시간(초)입니다. */
+  expiresInSeconds: number;
+  /** 같은 이메일로 다시 요청할 수 있을 때까지의 대기 시간(초)입니다. */
+  resendAfterSeconds: number;
+}
+
+/** POST /auth/signup/email-code/verify에서 확인할 이메일과 6자리 코드입니다. */
+export interface VerifySignupEmailCodeRequestDto {
+  /** 코드를 받은 소문자 정규화 이메일입니다. */
+  email: string;
+  /** 메일로 받은 6자리 숫자 코드입니다. */
+  code: string;
+}
+
+/** 코드 확인 성공 결과이며 가입 요청의 emailVerificationToken으로 그대로 전달합니다. */
+export interface SignupEmailVerificationResultDto {
+  /** 인증한 이메일에만 유효한 일회성 토큰입니다. */
+  emailVerificationToken: string;
+  /** 토큰 유효 시간(초)입니다. */
+  expiresInSeconds: number;
+}
+
+/** POST /auth/login에서 Validator 검증 후 Service에 전달하는 요청 DTO입니다. */
+export interface LoginRequestDto {
+  /** 소문자로 정규화된 이메일입니다. */
+  email: string;
+  /** 자격 증명 확인에만 사용하며 응답과 로그에 포함하지 않습니다. */
+  password: string;
+  /** 로그인 화면에서 선택한 계정 유형입니다. */
+  role: UserRole;
+}
+
+/** DELETE /auth/me에서 이메일 계정 재인증에 사용하는 요청 DTO입니다. */
+export interface WithdrawAccountRequestDto {
+  /** 이메일 계정은 필수이며 OAuth 계정은 생략할 수 있는 현재 비밀번호입니다. */
+  currentPassword?: string;
+}
+
+/** 비밀번호 재설정 인증코드 요청에서 확인하는 본인 입력입니다. 로그인 ID가 이메일이라 별도 아이디 찾기 API는 두지 않습니다. */
+export interface AccountRecoveryRequestDto {
+  name: string;
+  email: string;
+  role: UserRole;
+}
+
+/** 만료 전 재설정 토큰으로 새 비밀번호를 저장하는 요청입니다. */
+export interface ConfirmPasswordResetRequestDto {
+  token: string;
+  newPassword: string;
+}
+
+/** POST /auth/recovery/password/code/verify에서 검증할 challenge와 숫자 코드입니다. */
+export interface VerifyPasswordResetCodeRequestDto {
+  challengeId: string;
+  code: string;
+}
+
+/** 코드 발송 요청 결과이며 OAuth·불일치에는 challenge를 발급하지 않습니다. */
+export interface PasswordResetCodeRequestResultDto {
+  delivery: "EMAIL" | "SOCIAL" | "NONE";
+  challengeId: string | null;
+  expiresInSeconds: number | null;
+  resendAfterSeconds: number | null;
+}
+
+export interface RecoveryVerificationResultDto {
+  resetToken: string;
+}
+
+/** Auth API가 외부에 공개하는 사용자 정보이며 내부 hash와 token은 포함하지 않습니다. */
+export interface AuthUserDto {
+  /** User UUID입니다. */
+  id: string;
+  /** 화면에 표시할 사용자 이름입니다. */
+  name: string;
+  /** null이 될 수 없는 로그인 이메일입니다. */
+  email: string;
+  /** OAuth 계정에서는 null일 수 있는 휴대전화 번호입니다. */
+  phone: string | null;
+  /** 사용자 계정 유형입니다. */
+  role: UserRole;
+  /** 역할에 해당하는 Customer 또는 Mover relation의 존재 여부입니다. */
+  profileCompleted: boolean;
+}
+
+/** Controller가 공개 사용자 응답과 HttpOnly cookie 설정을 분리하기 위한 내부 인증 결과입니다. */
+export interface AuthResult {
+  /** 응답 body의 data.user로 반환할 공개 사용자입니다. */
+  user: AuthUserDto;
+  /** Controller가 cookie로만 전달하며 JSON에 포함하지 않는 Access/Refresh Token입니다. */
+  tokens: AuthTokens;
+}
+
+/** 명시적 갱신 요청이 유효 Access를 재발급하지 않도록 회전 여부를 표현합니다. */
+export interface RefreshAuthResult {
+  /** Access 또는 회전된 Refresh로 확인한 최신 사용자입니다. */
+  user: AuthUserDto;
+  /** Access가 유효하면 null, Refresh를 소비해 회전했으면 새 쿠키용 토큰입니다. */
+  tokens: AuthTokens | null;
+}
+
+/** 선택적 세션 복구가 비회원과 로그인 사용자를 같은 200 계약으로 반환하기 위한 결과입니다. */
+export interface OptionalAuthSessionResult {
+  /** 유효한 Access 또는 Refresh Token으로 확인한 사용자이며 비회원은 null입니다. */
+  user: AuthUserDto | null;
+  /** Refresh Token으로 복구했을 때만 Controller가 새 쿠키를 발급합니다. */
+  tokens: AuthTokens | null;
+  /** 만료·위변조·삭제 사용자 쿠키가 있었다면 브라우저에서 정리해야 합니다. */
+  shouldClearCookies: boolean;
+}

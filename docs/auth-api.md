@@ -1,0 +1,367 @@
+# Auth API 명세
+
+이 문서는 이메일 Auth 구현과 Swagger의 실제 계약을 요약합니다. 모든 JSON 응답은 공통 `success/data` 또는 `success/error` 형식을 사용하며 JWT는 Body가 아닌 HttpOnly Cookie로만 전달합니다.
+
+다른 담당 API에서 인증·역할·프로필 guard와 공통 응답을 적용하는 방법은 [팀 도메인 API의 Auth 연동 기준](./auth-integration-guide.md)을 따릅니다. 담당 API 명세가 작성 중이어도 이 Auth 계약을 기준으로 병렬 개발할 수 있습니다.
+
+## 공통 사용자 DTO
+
+| 필드 | 타입 | nullable | 설명 |
+| --- | --- | --- | --- |
+| `id` | UUID string | 불가 | User 식별자 |
+| `name` | string | 불가 | 사용자 이름 |
+| `email` | string | 불가 | 소문자로 정규화된 이메일 |
+| `phone` | string | 가능 | 숫자로 정규화된 휴대전화 번호 |
+| `role` | `CUSTOMER` \| `MOVER` | 불가 | 가입 역할 |
+| `profileCompleted` | boolean | 불가 | 역할별 Customer/Mover relation 존재 여부 |
+
+## 엔드포인트
+
+| Method | URI | 인증 | 성공 | 주요 오류 |
+| --- | --- | --- | --- | --- |
+| POST | `/auth/signup/email-code` | 공개 | `200`, `data.expiresInSeconds`, `data.resendAfterSeconds` | `VALIDATION_ERROR`, `EMAIL_ALREADY_EXISTS`, `EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON`, `EMAIL_VERIFICATION_EMAIL_NOT_CONFIGURED`, `EMAIL_VERIFICATION_EMAIL_FAILED`, `AUTH_RATE_LIMIT_EXCEEDED` |
+| POST | `/auth/signup/email-code/verify` | 공개 | `200`, `data.emailVerificationToken`, `data.expiresInSeconds` | `VALIDATION_ERROR`, `EMAIL_VERIFICATION_CODE_INVALID`, `EMAIL_VERIFICATION_CODE_EXPIRED`, `EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED`, `AUTH_RATE_LIMIT_EXCEEDED` |
+| POST | `/auth/signup` | 공개 | `201`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `EMAIL_VERIFICATION_REQUIRED`, `EMAIL_VERIFICATION_TOKEN_INVALID`, `EMAIL_VERIFICATION_EMAIL_MISMATCH`, `EMAIL_ALREADY_EXISTS`, `PHONE_ALREADY_EXISTS` |
+| POST | `/auth/login` | 공개 | `200`, `data.user`와 인증 쿠키 | `VALIDATION_ERROR`, `INVALID_CREDENTIALS` |
+| GET | `/auth/me` | Access Cookie | `200`, `data.user` | `ACCESS_TOKEN_MISSING`, `ACCESS_TOKEN_INVALID`, `ACCESS_TOKEN_EXPIRED`, `USER_NOT_FOUND` |
+| DELETE | `/auth/me` | Access Cookie | `200`, `data: null`과 계정·연관 데이터·쿠키 삭제 | `CURRENT_PASSWORD_REQUIRED`, `INVALID_CURRENT_PASSWORD`, `ACCOUNT_AUTH_METHOD_INVALID` |
+| POST | `/auth/refresh` | 선택적 Access + Refresh Cookie | `200`, `data.user`; 필요한 경우에만 회전된 인증 쿠키 | `ACCESS_TOKEN_INVALID`, `REFRESH_TOKEN_MISSING`, `REFRESH_TOKEN_INVALID`, `REFRESH_TOKEN_EXPIRED` |
+| POST | `/auth/refresh/session` | 선택적 Access/Refresh Cookie | `200`, `data.user` 또는 정상 비회원 `user: null` | `AUTH_RATE_LIMIT_EXCEEDED` |
+| POST | `/auth/logout` | 공개 | `200`, `data: null`과 쿠키 삭제 | 없음 |
+| GET | `/auth/oauth/:provider` | 공개 | `200`, 공급자 URL 또는 `302` 이동 | `VALIDATION_ERROR`, `OAUTH_NOT_CONFIGURED`, `AUTH_RATE_LIMIT_EXCEEDED` |
+| GET | `/auth/oauth/:provider/callback` | State Cookie | 프론트 `/auth/callback`으로 `302` 이동 | 오류 코드를 포함한 프론트 redirect |
+
+## 회원가입 이메일 인증
+
+이메일 가입 전에 입력한 주소의 소유를 6자리 코드로 확인합니다. 가입 전에는 User가 없으므로 인증 기록(`SignupEmailVerification`)은 `userId`가 아닌 정규화된 이메일 기준으로 한 건만 유지합니다. 휴대전화 인증은 하지 않습니다.
+
+1. `POST /auth/signup/email-code` — 인증코드 발송
+
+   ```json
+   { "email": "user@example.com" }
+   ```
+
+   ```json
+   { "success": true, "data": { "expiresInSeconds": 300, "resendAfterSeconds": 60 } }
+   ```
+
+   - 이미 가입된 이메일(OAuth 가입 포함)은 코드를 보내지 않고 `409 EMAIL_ALREADY_EXISTS`로 안내합니다.
+   - 코드는 5분간 유효합니다. 같은 이메일은 60초 뒤에 다시 요청할 수 있고 그 전의 요청은 `429 EMAIL_VERIFICATION_CODE_RESEND_TOO_SOON`입니다.
+   - 새 코드를 보내면 이전 코드와 그 코드로 받은 인증 토큰은 무효가 됩니다.
+   - IP별 1시간 10회로 제한합니다(`429 AUTH_RATE_LIMIT_EXCEEDED`).
+   - 메일 설정 누락은 `503 EMAIL_VERIFICATION_EMAIL_NOT_CONFIGURED`, 발송 실패는 `502 EMAIL_VERIFICATION_EMAIL_FAILED`이며 실패한 요청은 재발송 대기 시간을 소비하지 않습니다.
+
+2. `POST /auth/signup/email-code/verify` — 코드 확인
+
+   ```json
+   { "email": "user@example.com", "code": "012345" }
+   ```
+
+   ```json
+   { "success": true, "data": { "emailVerificationToken": "<JWT>", "expiresInSeconds": 900 } }
+   ```
+
+   - 불일치·요청한 적 없는 이메일·이미 확인한 코드는 `401 EMAIL_VERIFICATION_CODE_INVALID`, 만료는 `400 EMAIL_VERIFICATION_CODE_EXPIRED`입니다.
+   - 코드 한 건당 5회까지 시도할 수 있고 다섯 번째 실패부터 `429 EMAIL_VERIFICATION_CODE_ATTEMPTS_EXCEEDED`입니다. 새 코드를 요청하면 횟수가 초기화됩니다.
+   - IP별 1시간 20회로 제한합니다.
+   - `emailVerificationToken`은 인증한 이메일에만 유효한 15분 만료 토큰입니다. 로그인 권한이 없는 가입 전용 값이라 Cookie가 아닌 Body로 전달하며, 이 응답은 인증 쿠키를 발급하지 않습니다.
+
+3. `POST /auth/signup` — 가입 요청에 `emailVerificationToken`을 함께 보냅니다.
+
+   - 토큰의 서명·만료와 토큰 이메일·가입 이메일 일치를 확인합니다. 위조·만료·재사용은 `400 EMAIL_VERIFICATION_TOKEN_INVALID`, 이메일 불일치는 `400 EMAIL_VERIFICATION_EMAIL_MISMATCH`입니다.
+   - 인증 기록 삭제와 User 생성을 한 transaction으로 처리하므로 토큰은 한 번만 사용할 수 있습니다. 전화번호 중복 등으로 가입이 실패하면 기록이 남아 같은 토큰으로 다시 시도할 수 있습니다.
+   - Google·Kakao·Naver OAuth 가입은 공급자가 이메일을 확인하므로 이 인증을 거치지 않습니다. 이 기능 이전에 가입한 계정은 인증된 것으로 간주하며 별도 인증 상태 컬럼을 두지 않습니다.
+
+### 2단계 배포
+
+| 단계 | `SIGNUP_EMAIL_VERIFICATION_REQUIRED` | 토큰 없는 가입 | 토큰을 보낸 가입 |
+| --- | --- | --- | --- |
+| 1. BE 먼저 배포 | `false`(기본값) | 허용(인증 화면이 없는 구버전 FE 호환) | 항상 검증 |
+| 2. 새 FE 배포 후 전환 | `true` | `400 EMAIL_VERIFICATION_REQUIRED` | 항상 검증 |
+
+- 운영 DB에 `SignupEmailVerification` migration을 먼저 적용한 뒤 BE를 배포합니다.
+- 인증코드 HMAC과 인증 토큰 서명은 `PASSWORD_RESET_CODE_SECRET`, `PASSWORD_RESET_TOKEN_SECRET`을 용도 구분값과 함께 재사용하므로 새 Secret은 필요하지 않습니다. 재설정용 코드·토큰과 가입 인증용 코드·토큰은 서로 바꿔 쓸 수 없습니다.
+- 발송 방식은 비밀번호 재설정과 같은 `PASSWORD_RESET_DELIVERY`와 `SMTP_*`를 사용합니다. 필수 전환 뒤에는 SMTP가 준비되지 않으면 이메일 가입 자체가 막히므로 전환 전에 운영 발송을 확인합니다.
+- 코드 만료 뒤 1시간이 지난 인증 기록은 다음 발송 요청 때 함께 삭제해 가입하지 않은 이메일이 계속 쌓이지 않게 합니다.
+
+## 이메일 회원가입
+
+```json
+{
+  "name": "홍길동",
+  "email": "user@example.com",
+  "phone": "01012345678",
+  "password": "Password1!",
+  "role": "CUSTOMER",
+  "emailVerificationToken": "<POST /auth/signup/email-code/verify 응답의 토큰>"
+}
+```
+
+- `emailVerificationToken`은 호환 기간에는 선택이고 `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true` 전환 뒤 필수입니다. 자세한 흐름은 위 "회원가입 이메일 인증"을 따릅니다.
+- 비밀번호는 8~72바이트이며 영문, 숫자, 특수문자를 각각 포함합니다.
+- 이메일은 소문자로, 전화번호는 하이픈을 제거한 숫자로 저장합니다.
+- 회원가입만으로 Customer/Mover profile을 생성하지 않으므로 최초 응답의 `profileCompleted`는 `false`입니다.
+- 회원가입 성공 시 로그인과 동일하게 Access/Refresh Cookie를 발급하므로 즉시 인증이 필요한 프로필 등록 API를 호출할 수 있습니다.
+
+회원가입·로그인·현재 사용자 조회·토큰 갱신의 사용자 응답은 다음 형식으로 통일합니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "홍길동",
+      "email": "user@example.com",
+      "phone": "01012345678",
+      "role": "CUSTOMER",
+      "profileCompleted": false
+    }
+  }
+}
+```
+
+## 이메일 로그인과 쿠키
+
+로그인은 이메일·비밀번호·역할을 모두 확인합니다. 실패 원인을 구분해 계정 존재 여부를 노출하지 않고 `INVALID_CREDENTIALS`로 통일합니다.
+
+| 쿠키 | Path | HttpOnly | 기본 만료 |
+| --- | --- | --- | --- |
+| `accessToken` | `/` | true | 30분 |
+| `refreshToken` | `/auth/refresh` | true | 7일 |
+
+로그인·회원가입·OAuth와 Refresh는 승인된 MVP 계약대로 DB session/token을 저장하지 않는 stateless JWT 방식입니다. 각 JWT에는 DB에 저장하지 않는 임의 `jti`를 넣어 같은 초에 재발급해도 새 문자열로 회전합니다. 다만 서버 저장소가 없으므로 이미 발급된 Refresh Token의 재사용 감지와 즉시 폐기는 보장하지 않습니다. 이 보장이 필요해지면 공유 세션 저장소, 배포 마이그레이션, 다중 인스턴스 동시성 정책을 먼저 팀 계약으로 승인해야 합니다.
+
+이번 변경 이전에 발급된 JWT에는 `sessionId`, `refreshTokenId`가 없습니다. 서버는 `sub`, `role`, `tokenType`, 서명, issuer, 만료만 필수로 검증하고 알 수 없는 추가 claim은 무시하므로 기존 Access/Refresh Token은 각각 남은 30분/7일 수명 동안 호환됩니다.
+
+`POST /auth/refresh`는 유효한 Access가 함께 오면 토큰을 재발급하지 않고 현재 `data.user`만 반환합니다. Access가 없거나 `ACCESS_TOKEN_EXPIRED`인 경우에만 Refresh를 사용합니다. 위조·서명 오류·잘못된 payload의 Access는 유효한 Refresh가 함께 있어도 `ACCESS_TOKEN_INVALID`로 거절합니다.
+
+### 공개 페이지 세션 복구
+
+`POST /auth/refresh/session`은 전역 프론트 Provider가 공개 페이지에서도 사용할 수 있는 선택적 세션 확인 endpoint입니다. 경로가 기존 Refresh Cookie의 `/auth/refresh` 범위 안에 있으므로 Cookie Path를 넓히지 않습니다.
+
+- Access Token이 유효하면 사용자만 반환하고 토큰을 불필요하게 회전하지 않습니다.
+- Access Token이 없거나 만료됐고 Refresh Token이 유효하면 두 토큰을 회전하고 사용자를 반환합니다.
+- 인증 쿠키가 없는 비회원은 오류가 아니라 `200`, `{ "user": null }`로 반환합니다.
+- 만료 Access만 유효한 Refresh로 복구합니다. 위조·서명 오류 Access, 만료·위조 Refresh, 삭제된 사용자 토큰은 쿠키를 지우고 정상 비회원으로 정리하며 로그인 상태를 만들지 않습니다.
+- 정상 비회원 확인, 유효한 Access 확인, 유효한 Refresh 복원은 요청 제한 횟수에서 제외하며 잘못된 Refresh Token 시도만 IP별 15분에 30회로 제한합니다.
+- 선택 세션과 강제 Refresh는 서로 다른 요청 제한 저장소를 사용하므로 한 경로의 호출이 다른 경로의 제한 횟수를 소비하지 않습니다.
+- 보호된 `GET /auth/me`, `POST /auth/refresh` 및 다른 보호 API의 기존 401 계약은 그대로 유지합니다.
+
+### 세션 확인과 명시적 갱신의 구분
+
+- `POST /auth/refresh/session`은 공개 화면의 앱 초기화용 선택적 세션 확인입니다. 인증 실패도 `200`, `user: null`로 정리합니다.
+- `POST /auth/refresh`는 보호 API가 `ACCESS_TOKEN_MISSING` 또는 `ACCESS_TOKEN_EXPIRED`를 반환한 뒤 프론트가 한 번 호출하는 명시적 갱신입니다. 실패는 구체적인 401 오류 코드로 반환합니다.
+- `/auth/refresh/session`은 REST resource 이름으로는 모호하지만, Refresh Cookie `Path=/auth/refresh`와 기존 프론트 호환성을 위해 이번 변경에서는 유지합니다. 추후 URL을 바꾸려면 Cookie Path와 전역 Provider 호출을 함께 이관해야 합니다.
+
+## 회원 탈퇴
+
+`DELETE /auth/me`는 Access Token으로 확인한 본인의 계정만 탈퇴 처리합니다.
+
+이메일·비밀번호 계정 요청:
+
+```json
+{
+  "currentPassword": "Password1!"
+}
+```
+
+OAuth 계정 요청은 빈 객체 또는 Body 생략을 허용합니다. OAuth 재인증은 현재 MVP 범위에 포함하지 않습니다.
+
+- 이메일 계정의 비밀번호 누락은 `400 CURRENT_PASSWORD_REQUIRED`, 불일치는 `401 INVALID_CURRENT_PASSWORD`입니다.
+- 탈퇴는 **soft delete**입니다. `User.deletedAt`에 탈퇴 시각을 기록하고 row는 남기되 개인정보는 탈퇴 즉시 익명화합니다. 탈퇴 계정은 복구할 수 없습니다.
+- 최신 User의 비밀번호 hash와 인증 수단을 transaction 안에서 확인하고 같은 인증 상태인 User만 조건부로 탈퇴 처리합니다.
+
+### 탈퇴가 거절되는 경우
+
+- 견적이 확정됐고 이사일이 아직 지나지 않은 이사가 있으면 `409 WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE`로 거절합니다. 고객은 본인의 확정 요청, 기사님은 본인의 확정 견적이 대상이며 이사일 기준은 UTC 자정입니다.
+- 그사이 인증 수단이 바뀌었거나 같은 계정의 탈퇴가 동시에 끝났다면 `409 ACCOUNT_STATE_CHANGED`입니다.
+
+### 동시 요청 처리
+
+- 대기 중인 요청·견적을 지우기 전에 견적 확정과 같은 `MoveRequest` row 잠금을 잡고 상태를 다시 읽습니다. 탈퇴 도중 견적이 확정되면 삭제하지 않고 `409 WITHDRAWAL_BLOCKED_BY_CONFIRMED_MOVE`로 거절합니다.
+- 탈퇴와 프로필·기본정보 생성·수정은 같은 `User` row 잠금으로 한 줄로 실행됩니다. 탈퇴가 먼저 끝나면 뒤따른 수정은 `401 USER_NOT_FOUND`로 거절되어 익명화된 정보가 되살아나지 않습니다.
+
+### 익명화하는 값
+
+| 대상 | 처리 |
+| --- | --- |
+| `User.name` | 일반 유저 `탈퇴한 회원`, 기사님 `탈퇴한 기사님` |
+| `User.email` | `withdrawn-{userId}@withdrawn.invalid` (원래 이메일은 unique에서 풀려 즉시 재가입 가능) |
+| `User.phone`, `passwordHash`, `socialProvider`, `socialId`, 복구 질문·답변 | `null` (같은 SNS 계정으로도 새 계정 가입 가능) |
+| `Customer.profileImageUrl` | `null`, 이미지 파일 삭제. 이용 서비스 선택 삭제 |
+| `Mover.profileImageUrl` | `null`, 이미지 파일 삭제 |
+| `Mover.nickname` | `탈퇴한 기사님#{userId hex}`로 저장하고 응답에서는 `탈퇴한 기사님`으로 표시 (nickname이 unique라 유일한 값이 필요) |
+| `Mover.shortIntroduction`, `description` | 빈 문자열. 활동 지역·서비스 유형 삭제 |
+| 본인 `Notification`, 비밀번호 재설정 코드 | 삭제 |
+
+### 남기는 데이터와 삭제하는 데이터
+
+| 구분 | 남김 | 삭제 |
+| --- | --- | --- |
+| 고객 탈퇴 | 완료됐거나 이사일이 지난 확정 요청과 그 견적, 작성한 리뷰, 찜 | 확정 전 대기 중인 이사 요청과 거기에 달린 견적·지정·반려 기록 |
+| 기사님 탈퇴 | 확정된 견적(완료 이력), 받은 리뷰, 받은 찜 | 확정되지 않은 견적(대기·반려), 대기 요청의 지정, 본인의 반려 기록 |
+
+- 고객의 대기 요청을 삭제할 때 견적을 보낸 기사님에게 `MOVE_REQUEST_CANCELED`(reason `WITHDRAWAL`) 알림을 보냅니다.
+- 기사님의 대기 견적을 삭제할 때 견적을 받은 고객에게 `QUOTE_CANCELED_BY_MOVER_WITHDRAWAL`(params `moverNickname`) 알림을 보냅니다.
+
+### 탈퇴 뒤의 조회
+
+- 탈퇴 전에 발급된 토큰은 `/auth/me`와 Refresh, profile guard에서 각각 `USER_NOT_FOUND`, `REFRESH_TOKEN_INVALID`, `USER_NOT_FOUND`로 거절됩니다.
+- 탈퇴한 기사님은 기사님 찾기 목록·추천과 찜 목록에서 제외되고, 상세·리뷰 목록·찜 추가·지정 요청은 `404 MOVER_NOT_FOUND`입니다.
+- 탈퇴한 기사님이 남는 화면(고객의 견적 이력, 작성한 리뷰)의 닉네임은 `탈퇴한 기사님`, 탈퇴한 고객이 남는 화면(기사님의 견적·받은 리뷰)의 이름은 `탈퇴한 회원`입니다.
+- 성공 후 Access/Refresh Cookie를 삭제합니다.
+
+`POST /auth/logout`도 stateless 계약에 따라 현재 브라우저의 두 HttpOnly Cookie만 만료시킵니다. Refresh Cookie는 요청 경로가 `/auth/refresh`라 로그아웃 요청에는 포함되지 않지만, 응답은 발급 때와 같은 Path로 해당 Cookie를 삭제합니다. 서버 폐기 저장소가 없으므로 로그아웃 전에 별도로 복사된 Refresh Token의 즉시 무효화는 보장하지 않습니다.
+
+## 공통 오류 details
+
+필드 검증 오류가 있을 때만 다음 배열을 포함합니다.
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "요청값이 올바르지 않습니다.",
+    "details": [
+      { "field": "email", "reason": "올바른 이메일 형식이 아닙니다." }
+    ]
+  }
+}
+```
+
+## OAuth 가입·로그인
+
+지원 공급자는 `google`, `kakao`, `naver`입니다. 프론트는 역할별 가입·로그인 화면에서 다음과 같이 시작 URL을 요청합니다.
+
+```text
+GET /auth/oauth/google?role=CUSTOMER&format=json
+GET /auth/oauth/kakao?role=MOVER&redirect=/requests&format=json
+```
+
+`format=json`의 성공 응답은 공통 형식입니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://공급자-인증-주소"
+  }
+}
+```
+
+`format`을 생략하면 백엔드가 공급자 인증 화면으로 바로 `302` 이동합니다. `role`은 `CUSTOMER` 또는 `MOVER`만 허용하며 `redirect`는 외부 URL, 인증 화면 경로, 역슬래시 및 제어문자가 없는 동일 사이트 경로만 허용합니다.
+
+### 공급자 Callback
+
+로컬 백엔드 주소가 `http://localhost:4000`일 때 공급자 콘솔에 정확히 다음 URI를 등록합니다.
+
+```text
+http://localhost:4000/auth/oauth/google/callback
+http://localhost:4000/auth/oauth/kakao/callback
+http://localhost:4000/auth/oauth/naver/callback
+```
+
+운영에서는 `OAUTH_CALLBACK_BASE_URL`의 HTTPS origin으로 바꿉니다. callback은 공급자 고유 ID, 이메일, 이름/닉네임만 사용하고 공급자 Access Token과 원문 응답을 저장하지 않습니다.
+
+처리 순서는 다음과 같습니다.
+
+1. `socialProvider + socialId`가 있으면 기존 OAuth 사용자로 로그인합니다.
+2. 기존 OAuth 사용자의 역할과 시작 화면 역할이 다르면 `ROLE_MISMATCH`로 중단합니다.
+3. 신규 계정인데 이메일이 없으면 `OAUTH_EMAIL_REQUIRED`로 중단합니다.
+4. 같은 이메일의 기존 계정이 있으면 자동 연결하지 않고 `OAUTH_ACCOUNT_CONFLICT`로 중단합니다.
+5. 신규 OAuth 사용자는 nullable password와 phone을 유지한 `User`만 만들고 역할 profile은 생성하지 않습니다.
+6. 기존 Auth 유틸로 서비스 Access/Refresh JWT Cookie를 발급합니다.
+7. 프론트 `/auth/callback`으로 이동하고 프론트가 `/auth/me`로 세션 및 `profileCompleted`를 확인합니다.
+
+### OAuth State
+
+- Node `crypto.randomBytes(32)`로 예측 불가능한 nonce를 생성합니다.
+- 역할, 공급자, 선택 redirect, 10분 만료시간을 담은 문맥을 HMAC-SHA256으로 서명합니다.
+- 서명 문맥은 공급자 callback 경로 전용 HttpOnly, SameSite=Lax 쿠키에만 저장합니다.
+- callback에서 query nonce, 쿠키 서명, 만료, 공급자를 모두 확인합니다.
+- 검증 시도 직후 쿠키를 삭제하고 소비한 nonce를 만료까지 프로세스 메모리에 기록해 같은 흐름의 재사용을 거절합니다.
+- State는 로그인 JWT가 아니며 공급자 callback query의 역할이나 redirect는 신뢰하지 않습니다.
+
+### OAuth 오류 redirect
+
+브라우저 callback 오류는 JSON 대신 `${FRONTEND_URL}/auth/callback?error=<code>`로 이동합니다. 공급자 error description, token, stack trace, 사용자 정보는 URL에 포함하지 않습니다.
+
+주요 코드는 `OAUTH_CANCELLED`, `OAUTH_INVALID_STATE`, `OAUTH_EMAIL_REQUIRED`, `OAUTH_ACCOUNT_CONFLICT`, `ROLE_MISMATCH`, `OAUTH_PROVIDER_ERROR`입니다.
+
+## 보안·운영 설정
+
+- `.env`는 Git에 포함하지 않고 `.env.example`에는 변수 이름만 둡니다.
+- `CORS_ORIGINS`는 허용 프론트 origin 목록이며 `FRONTEND_URL`도 반드시 그 목록에 포함되어야 합니다.
+- production의 `FRONTEND_URL`, `OAUTH_CALLBACK_BASE_URL`은 HTTPS만 허용됩니다.
+- production 평문 요청은 설정된 백엔드 HTTPS origin으로 `308` 이동합니다. 실제 TLS 인증서와 종료는 배포 프록시에서 설정합니다.
+- `TRUST_PROXY`는 `true`가 아니라 `false` 또는 실제 reverse proxy hop 수를 사용해 위조된 IP 헤더로 요청 제한을 우회하지 못하게 합니다.
+- 로그인은 IP별 15분에 실패 5회, 회원가입은 1시간에 10회, 회원가입 인증코드 발송은 1시간에 10회·확인은 1시간에 20회, OAuth 시작은 15분에 20회, callback은 15분에 30회로 제한합니다. Refresh와 선택 세션은 별도 저장소에서 실패 요청만 각각 15분에 30회로 제한합니다.
+- 현재 요청 제한 저장소는 단일 Node 프로세스 메모리입니다. 서버를 여러 인스턴스로 확장할 때는 팀이 승인한 Redis 등 공유 store로 교체해야 합니다.
+- 소비된 OAuth State 기록도 단일 프로세스 메모리이므로 여러 인스턴스 배포에서는 같은 공유 store로 옮겨야 완전한 전역 일회성을 보장합니다.
+
+필수 OAuth 환경변수는 다음과 같습니다. 실제 값은 문서·로그·Swagger에 넣지 않습니다.
+
+```text
+FRONTEND_URL
+OAUTH_CALLBACK_BASE_URL
+GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+KAKAO_CLIENT_ID / KAKAO_CLIENT_SECRET
+NAVER_CLIENT_ID / NAVER_CLIENT_SECRET
+```
+
+### Vercel 프론트엔드와 AWS 백엔드
+
+권장 구성은 서비스 소유 도메인의 하위 도메인을 두 플랫폼에 연결하는 방식입니다.
+
+```text
+https://app.example.com  → Vercel
+https://api.example.com  → AWS
+```
+
+두 주소가 같은 상위 사이트를 사용하면 API는 cross-origin이지만 cookie 관점에서는 same-site이므로 다음 구성이 가능합니다.
+
+```env
+CORS_ORIGINS=https://app.example.com
+FRONTEND_URL=https://app.example.com
+OAUTH_CALLBACK_BASE_URL=https://api.example.com
+COOKIE_DOMAIN=
+COOKIE_SECURE=true
+COOKIE_SAME_SITE=lax
+TRUST_PROXY=실제_AWS_PROXY_HOP_수
+```
+
+`COOKIE_DOMAIN`은 비워 API host 전용 cookie로 제한합니다. 프론트 fetch는 반드시 `credentials: "include"`를 사용하며 현재 공통 API client에 적용되어 있습니다. OAuth 공급자 Console callback도 `https://api.example.com/auth/oauth/{provider}/callback`으로 등록합니다.
+
+Vercel 기본 도메인과 AWS 기본 도메인을 그대로 사용하면 서로 완전히 다른 site이므로 인증 쿠키에는 `COOKIE_SAME_SITE=none`과 `COOKIE_SECURE=true`가 필요합니다. 이 방식은 브라우저의 third-party cookie 제한 영향을 받을 수 있어 장기 운영에서는 같은 서비스 도메인의 `app`/`api` 하위 도메인 구성을 우선합니다. 어느 방식이든 CORS에는 정확한 Vercel 운영 origin만 등록하고 wildcard와 credentials를 함께 사용하지 않습니다.
+
+## 비밀번호 재설정
+
+- 로그인 ID가 이메일이므로 별도 아이디 찾기 API(`POST /auth/recovery/account`)는 제공하지 않습니다. SNS 가입 계정 여부는 아래 인증코드 요청의 `delivery: SOCIAL`로 안내합니다.
+- 이메일 회원가입에서는 복구 질문을 받지 않습니다. 배포 중 구버전 프론트가 질문·답변을 보내도 두 필드는 무시하며 저장하지 않습니다.
+- `POST /auth/recovery/password/code`: 이름·이메일·역할이 일치하는 이메일 계정에 6자리 인증코드를 보냅니다. 코드는 5분간 유효하고 60초 뒤 재발송할 수 있으며 IP별 1시간 5회로 제한합니다.
+- 위 endpoint는 이메일 계정에 `delivery: EMAIL`과 challenge ID를, OAuth 계정에 `delivery: SOCIAL`을, 불일치 계정에 `delivery: NONE`을 반환합니다. OAuth 계정은 Google·Kakao·Naver 공급자의 계정 복구 흐름을 사용합니다.
+- `POST /auth/recovery/password/code/verify`: challenge ID와 6자리 코드를 확인하고 성공하면 15분 만료 재설정 토큰을 반환합니다. challenge별 5회 및 IP별 1시간 5회로 대입을 제한합니다.
+- 코드 검증 응답은 `resetToken`만 반환합니다. 구버전 프론트가 `recoveryQuestion` 누락을 질문 없음으로 처리할 수 있도록 백엔드를 먼저 배포합니다.
+- `POST /auth/recovery/password/confirm`: 토큰 서명·만료·현재 비밀번호 hash 버전·검증된 challenge를 확인합니다. 과거에 질문을 등록한 계정도 이메일 코드만으로 진행하며 구버전 프론트의 `recoveryAnswer`는 무시합니다. challenge와 토큰은 한 번만 사용할 수 있습니다.
+- 인증코드 원문은 메일로만 전송하고 DB에는 사용자 ID와 별도 Secret으로 생성한 HMAC만 저장합니다. 기존 비밀번호는 표시하지 않고 새 비밀번호만 설정합니다.
+- 로그인은 이메일·역할별 5번째 실패 응답부터 15분 동안 `LOGIN_ATTEMPTS_EXCEEDED`로 제한하며, 별도로 IP별 요청 제한도 적용합니다. 다중 서버 운영 시 공용 rate-limit store를 연결해야 동일한 제한이 전체 인스턴스에 적용됩니다.
+
+재설정 토큰 서명에는 다른 JWT 비밀키와 분리한 환경변수가 필요합니다.
+
+```text
+PASSWORD_RESET_TOKEN_SECRET=32자 이상의 별도 비밀키
+PASSWORD_RESET_CODE_SECRET=32자 이상의 별도 비밀키
+PASSWORD_RESET_DELIVERY=console 또는 smtp
+SMTP_HOST=smtp 공급자 host
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=smtp 사용자
+SMTP_PASS=smtp 비밀번호
+SMTP_FROM=발신자 표시명과 주소
+```
+
+로컬 개발에서는 `PASSWORD_RESET_DELIVERY=console`로 설정해 인증코드를 백엔드 터미널에서 확인할 수 있습니다. 이 모드는 production 환경에서 서버 시작 단계에 거절됩니다. 실제 발송 환경에서는 `smtp`로 설정하고 모든 `SMTP_*` 값을 연결합니다.
+
+질문 관련 DB 열과 적용된 migration은 호환성을 위해 이번 배포에서 유지합니다. 새 요청은 해당 열을 읽거나 쓰지 않으며, 데이터 삭제가 수반되는 열 제거는 구버전 인스턴스 종료와 데이터 보존 정책 확인 뒤 별도 migration으로 진행합니다.
