@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="./public/favicon.svg" width="120" alt="무빙 로고" />
-</p>
-
 <h1 align="center">무빙 (Moving)</h1>
 
 <p align="center">
