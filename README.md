@@ -945,11 +945,3 @@ http://localhost:4000/api-docs
 - 부하 테스트를 통한 병목 구간 측정 및 최적화
 
 ---
-
-## 프로젝트 회고
-
-> 프로젝트 회고 링크 또는 내용을 여기에 추가해 주세요.
-
-[프로젝트 회고 바로가기](RETROSPECTIVE_URL)
-message.txt
-28KB
